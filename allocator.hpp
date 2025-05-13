@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <iostream>
 #include <vector>
+#include <memory>
+#include "containers.hpp"
 
 using u32 = uint32_t;
 class StackAllocator
@@ -65,40 +67,57 @@ private:
 template <typename T>
 class PoolAllocator
 {
-    public:
-        PoolAllocator(u32 count) : capacity_{count}
-        {
-            block_size_ = sizeof(T);
-            memory_ = new char[capacity_ * block_size_];
-            freelist_.reserve(capacity_);
-            for (int i = 0; i < count; ++i) {
-                freelist_.emplace_back(memory_ + i * block_size_);
-            }
-            freeindex_ = 0;
-        }
-        ~PoolAllocator()
-        {
-            delete[] memory_;
-        }
+public:
+    PoolAllocator(u32 count) : capacity_{count}
+    {
+        u32 alignment = alignof(T);
+        std::cout << alignment << std::endl;
+        block_size_ = ((sizeof(T) + alignment - 1) / alignment) * alignment;
+        size_t total_size = block_size_ * capacity_ + alignment;
+        raw_memory_ = new char[total_size];
+        void* raw_ptr = static_cast<void*>(raw_memory_);
+        memory_ = static_cast<char *>(std::align(alignment, block_size_ * capacity_, raw_ptr, total_size));
 
-        T* alloc()
+        head_ = nullptr;
+        for (u32 i = 0; i < capacity_; ++i)
         {
-            if (freeindex_ >= capacity_)
-                return nullptr;
-            char* result = freelist_[freeindex_];
-            ++freeindex_;
-            return reinterpret_cast<T*>(result);
+            FreeBlock *block = reinterpret_cast<FreeBlock *>(memory_ + i * block_size_);
+            block->next = head_;
+            head_ = block;
         }
+    }
 
-        void free(T* ptr)
-        {
-            if (freeindex_ == 0)
-                return;
-            --freeindex_;
-            freelist_[freeindex_] = reinterpret_cast<char*>(ptr);
-        }
-    private:
-        char* memory_;
-        u32 block_size_, freeindex_, capacity_;
-        std::vector<char*> freelist_;
+    ~PoolAllocator()
+    {
+        delete[] raw_memory_;
+    }
+
+    T *alloc()
+    {
+        if (head_ == nullptr)
+            return nullptr;
+        T *ptr = reinterpret_cast<T *>(head_);
+        head_ = head_->next;
+        return ptr;
+    }
+
+    void free(T *ptr)
+    {
+        if (ptr == nullptr)
+            return;
+        FreeBlock *block = reinterpret_cast<FreeBlock *>(ptr);
+        block->next = head_;
+        head_ = block;
+    }
+
+    u32 capacity() const
+    {
+        return capacity_;
+    }
+
+private:
+    char *raw_memory_;
+    char *memory_;
+    u32 block_size_, capacity_;
+    FreeBlock *head_;
 };
