@@ -1,6 +1,6 @@
 #include <iostream>
 #include "allocator.hpp"
-
+#include "math.hpp"
 struct Particle
 {
     int x,y;
@@ -21,5 +21,10 @@ int main()
         Particle* alloc = particle_allocator.alloc();
         std::cout << alloc << std::endl;
     }
+    using vec2i = Vector2<int>;
+    vec2i test {0,1};
+
+    test[0] = 1;
+    std::cout << test[0] << std::endl;
     return 0;
 }
