@@ -1,4 +1,5 @@
 #include <stdexcept>
+#include <cmath>
 
 template <typename T>
 class Vector2
@@ -10,26 +11,28 @@ class Vector2
         {
             vec_[0] += vec.vec_[0];
             vec_[1] += vec.vec_[1];
+            return *this;
         }
 
         Vector2<T>& operator-=(Vector2<T>& vec)
         {
             vec_[0] -= vec.vec_[0];
             vec_[1] -= vec.vec_[1];
+            return *this;
         }
 
         Vector2<T>& operator*=(Vector2<T>& vec)
         {
             vec_[0] *= vec.vec_[0];
             vec_[1] *= vec.vec_[1];
+            return *this;
         }
 
-        Vector2<T>& operator/=(Vector2<T>& vec)
-        {
-            if (vec.vec_[0] == 0 || vec.vec_[1])
-                throw std::runtime_error("floating point exception\n");
-            vec_[0] /= vec.vec_[0];
-            vec_[1] /= vec.vec_[1];
+        Vector2<T>& operator*=(T scalar)
+        {   
+            vec_[0] *= scalar;
+            vec_[1] *= scalar;
+            return *this;
         }
 
         Vector2<T> operator+(Vector2<T>& vec) const
@@ -46,12 +49,10 @@ class Vector2
         {
             return {vec_[0] * vec.vec_[0],vec_[1] * vec.vec_[1]};
         }
-
-        Vector2<T> operator/(Vector2<T>& vec) const
+        
+        Vector2<T> operator*(T scalar) const
         {
-            if (vec.vec_[0] == 0 || vec.vec_[1] == 0)
-               throw std::runtime_error("floating point exception\n"); 
-            return {vec_[0] / vec.vec_[0],vec_[1] / vec.vec_[1]};
+            return {vec_[0] * scalar, vec_[1] * scalar};
         }
 
         T& operator[](int index)
@@ -61,12 +62,23 @@ class Vector2
             return vec_[index];
         }
 
-        const T operator[](int index) const
+        T operator[](int index) const
         {
             if (index > 1)
                 throw std::runtime_error("out of bounds\n");
             return vec_[index];
         }
+
+        T dot(Vector2<T> vec) const
+        {
+            return vec_[0] * vec.vec_[0] + vec_[1] * vec.vec_[1]; 
+        }
+        
+        T magnitude() const
+        {
+            return std::sqrt(vec_[0] * vec_[0] + vec_[1] * vec_[1]);
+        }
+
 
     private:
         T vec_[2];

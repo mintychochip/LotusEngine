@@ -22,9 +22,9 @@ int main()
         std::cout << alloc << std::endl;
     }
     using vec2i = Vector2<int>;
-    vec2i test {0,1};
-
-    test[0] = 1;
-    std::cout << test[0] << std::endl;
+    vec2i test {15,1};
+    vec2i test2 {1,2};
+    test2 *= test;
+    std::cout << test2.magnitude();
     return 0;
 }
