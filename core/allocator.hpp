@@ -1,3 +1,5 @@
+#pragma once
+
 #include <cstdint>
 #include <cstddef>
 #include <cstdlib>
@@ -65,17 +67,32 @@ private:
 };
 
 template <typename T>
+union PoolAllocationBlock
+{
+    T *member;
+    FreeBlock *block;
+};
+
+template <typename T>
+struct PoolAllocation
+{
+    u32 nblocks;
+    T *member;
+    FreeBlock *block;
+    PoolAllocation(u32 nblocks, PoolAllocationBlock<T> block) : nblocks{nblocks}, member{block.member}, block{block.block} {}    
+};
+
+template <typename T>
 class PoolAllocator
 {
 public:
-    PoolAllocator(u32 count) : capacity_{count}
+    explicit PoolAllocator(u32 count) : capacity_{count}, allocations_{0}
     {
         u32 alignment = alignof(T);
-        std::cout << alignment << std::endl;
-        block_size_ = ((sizeof(T) + alignment - 1) / alignment) * alignment;
+        block_size_ = std::max(sizeof(T), sizeof(FreeBlock));
         size_t total_size = block_size_ * capacity_ + alignment;
         raw_memory_ = new char[total_size];
-        void* raw_ptr = static_cast<void*>(raw_memory_);
+        void *raw_ptr = static_cast<void *>(raw_memory_);
         memory_ = static_cast<char *>(std::align(alignment, block_size_ * capacity_, raw_ptr, total_size));
 
         head_ = nullptr;
@@ -92,22 +109,37 @@ public:
         delete[] raw_memory_;
     }
 
-    T *alloc()
+    PoolAllocation<T> alloc(u32 blocks = 1)
     {
-        if (head_ == nullptr)
-            return nullptr;
-        T *ptr = reinterpret_cast<T *>(head_);
-        head_ = head_->next;
-        return ptr;
+        if (head_ == nullptr || blocks + allocations_ > capacity_)
+            return {0, {nullptr}};
+        FreeBlock *allocation_head = head_;
+        FreeBlock *current = head_;
+        for (u32 i = 1; i < blocks; ++i)
+        {
+            current = current->next;
+        }
+        head_ = current->next;
+        current->next = nullptr;
+        allocations_ += blocks;
+        PoolAllocationBlock<T> ab;
+        ab.block = allocation_head;
+        return {blocks, ab};
     }
 
-    void free(T *ptr)
+    void free(PoolAllocation<T> allocation)
     {
-        if (ptr == nullptr)
+        if (allocation.block == nullptr || allocation.nblocks == 0)
             return;
-        FreeBlock *block = reinterpret_cast<FreeBlock *>(ptr);
-        block->next = head_;
-        head_ = block;
+        FreeBlock *start = allocation.block;
+        FreeBlock *last = start;
+        for (u32 i = 1; i < allocation.nblocks; ++i)
+        {
+            last = last->next;
+        }
+        last->next = head_;
+        head_ = start;
+        allocations_ -= allocation.nblocks;
     }
 
     u32 capacity() const
@@ -118,6 +150,6 @@ public:
 private:
     char *raw_memory_;
     char *memory_;
-    u32 block_size_, capacity_;
+    u32 block_size_, capacity_, allocations_;
     FreeBlock *head_;
 };

@@ -1,4 +1,5 @@
 #include <iostream>
+#include <string>
 #include "allocator.hpp"
 #include "math.hpp"
 struct Particle
@@ -16,15 +17,11 @@ int main()
         *alloc = count++;
         std::cout << *alloc << std::endl;
     }
-    PoolAllocator<Particle> particle_allocator {10};   
-    for (int i = 0; i < 10; ++i) {
-        Particle* alloc = particle_allocator.alloc();
-        std::cout << alloc << std::endl;
-    }
-    using vec2i = Vector2<int>;
-    vec2i test {15,1};
-    vec2i test2 {1,2};
-    test2 *= test;
-    std::cout << test2.magnitude();
+    PoolAllocator<Particle> particle_allocator {1024};
+    for (int i = 0; i < 10; i++) {
+        PoolAllocation<Particle> alloc = particle_allocator.alloc(1024);
+        std::cout << alloc.member << ' ' << alloc.nblocks << std::endl;
+        particle_allocator.free(alloc);
+    }    
     return 0;
 }
