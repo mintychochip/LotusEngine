@@ -2,9 +2,10 @@
 #include <string>
 #include "allocator.hpp"
 #include "math.hpp"
-struct Particle
+#include "component_pool.hpp"
+struct Transform
 {
-    int x,y;
+    Vector2<float> pos;
 };
 
 int main()
@@ -17,11 +18,17 @@ int main()
         *alloc = count++;
         std::cout << *alloc << std::endl;
     }
-    PoolAllocator<Particle> particle_allocator {1024};
-    for (int i = 0; i < 10; i++) {
-        PoolAllocation<Particle> alloc = particle_allocator.alloc(1024);
-        std::cout << alloc.member << ' ' << alloc.nblocks << std::endl;
-        particle_allocator.free(alloc);
-    }    
+    LinearAllocator pallocator {MB(25)};
+    ComponentPool<Transform> pool (pallocator,32);
+    Transform* tc = pool.assign(1);
+    tc->pos[0] = 1;
+    tc->pos[1] = 1.5f;
+
+    std::cout << tc->pos << std::endl;
+    pool.remove(1);
+    tc = pool.assign(1);
+    tc->pos[0] = 2;
+    std::cout << tc->pos << std::endl;
+
     return 0;
 }

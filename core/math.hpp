@@ -1,5 +1,6 @@
 #pragma once 
 
+#include <iostream>
 #include <stdexcept>
 #include <cmath>
 
@@ -81,6 +82,11 @@ class Vector2
             return std::sqrt(vec_[0] * vec_[0] + vec_[1] * vec_[1]);
         }
 
+        friend std::ostream& operator<<(std::ostream& out, const Vector2<T>& vec)
+        {
+            out << '(' << vec[0] << ", " << vec[1] << ')';
+            return out;
+        }
 
     private:
         T vec_[2];

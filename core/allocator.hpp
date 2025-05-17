@@ -8,8 +8,9 @@
 #include <vector>
 #include <memory>
 #include "containers.hpp"
-
+#include "utils.hpp"
 using u32 = uint32_t;
+using u64 = uint64_t;
 class StackAllocator
 {
 public:
@@ -79,7 +80,7 @@ struct PoolAllocation
     u32 nblocks;
     T *member;
     FreeBlock *block;
-    PoolAllocation(u32 nblocks, PoolAllocationBlock<T> block) : nblocks{nblocks}, member{block.member}, block{block.block} {}    
+    PoolAllocation(u32 nblocks, PoolAllocationBlock<T> block) : nblocks{nblocks}, member{block.member}, block{block.block} {}
 };
 
 template <typename T>
@@ -94,7 +95,6 @@ public:
         raw_memory_ = new char[total_size];
         void *raw_ptr = static_cast<void *>(raw_memory_);
         memory_ = static_cast<char *>(std::align(alignment, block_size_ * capacity_, raw_ptr, total_size));
-
         head_ = nullptr;
         for (u32 i = 0; i < capacity_; ++i)
         {
@@ -152,4 +152,75 @@ private:
     char *memory_;
     u32 block_size_, capacity_, allocations_;
     FreeBlock *head_;
+};
+
+class LinearAllocator
+{
+public:
+    explicit LinearAllocator(size_t max_size) : raw_memory_{new char[max_size]}, allocated_{0}
+    {
+        size_t space = max_size;
+        void *raw_ptr = static_cast<void *>(raw_memory_);
+        void *aligned_memory = std::align(alignof(std::max_align_t), 1, raw_ptr, space);
+        if (aligned_memory == nullptr)
+        {
+            delete[] raw_memory_;
+            throw std::bad_alloc();
+        }
+        memory_ = static_cast<char *>(aligned_memory);
+        capacity_ = space;
+    }
+
+    ~LinearAllocator()
+    {
+        delete[] raw_memory_;
+    }
+
+    template <typename T>
+    T *alloc(size_t count)
+    {
+        size_t size = sizeof(T) * count;
+        size_t alignment = alignof(T);
+        void *allocation = allocate(size, alignment);
+        return reinterpret_cast<T *>(allocation);
+    }
+
+    void *allocate(size_t size, size_t alignment = alignof(std::max_align_t))
+    {
+        char *current = memory_ + allocated_;
+        size_t space = capacity_ - allocated_;
+        void *current_ptr = static_cast<void *>(current);
+        void *aligned_ptr = std::align(alignment, size, current_ptr, space);
+        if (!aligned_ptr)
+        {
+            return nullptr;
+        }
+        allocated_ = reinterpret_cast<char *>(aligned_ptr) - memory_ + size;
+        return aligned_ptr;
+    }
+
+    void clear()
+    {
+        allocated_ = 0;
+    }
+
+    inline u32 capacity() const
+    {
+        return capacity_;
+    }
+
+    inline u32 allocated() const
+    {
+        return allocated_;
+    }
+
+    inline u32 remaining() const
+    {
+        return capacity() - allocated();
+    }
+
+private:
+    char *memory_, *raw_memory_;
+    size_t max_size_;
+    u32 capacity_, allocated_; // max size in bytes
 };
