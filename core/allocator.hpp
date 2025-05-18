@@ -157,35 +157,32 @@ private:
 class LinearAllocator
 {
 public:
-    explicit LinearAllocator(size_t max_size) : raw_memory_{new char[max_size]}, allocated_{0}
+    explicit LinearAllocator(u32 max_size) : raw_memory_{malloc(max_size)}, allocated_{0}
     {
         size_t space = max_size;
-        void *raw_ptr = static_cast<void *>(raw_memory_);
-        void *aligned_memory = std::align(alignof(std::max_align_t), 1, raw_ptr, space);
-        if (aligned_memory == nullptr)
+        void *aligned = std::align(alignof(std::max_align_t), 1, raw_memory_, space);
+        if (!aligned)
         {
-            delete[] raw_memory_;
+            free(raw_memory_);
             throw std::bad_alloc();
         }
-        memory_ = static_cast<char *>(aligned_memory);
+        memory_ = static_cast<char *>(aligned);
         capacity_ = space;
     }
 
     ~LinearAllocator()
     {
-        delete[] raw_memory_;
+        free(raw_memory_);
     }
 
     template <typename T>
-    T *alloc(size_t count)
+    T *alloc(u32 count)
     {
-        size_t size = sizeof(T) * count;
-        size_t alignment = alignof(T);
-        void *allocation = allocate(size, alignment);
+        void *allocation = alloc(sizeof(T) * count, alignof(T));
         return reinterpret_cast<T *>(allocation);
     }
 
-    void *allocate(size_t size, size_t alignment = alignof(std::max_align_t))
+    void *alloc(size_t size, size_t alignment = alignof(std::max_align_t))
     {
         char *current = memory_ + allocated_;
         size_t space = capacity_ - allocated_;
@@ -195,6 +192,7 @@ public:
         {
             return nullptr;
         }
+        std::cout << "allocation made: " << size << std::endl;
         allocated_ = reinterpret_cast<char *>(aligned_ptr) - memory_ + size;
         return aligned_ptr;
     }
@@ -220,7 +218,8 @@ public:
     }
 
 private:
-    char *memory_, *raw_memory_;
+    void *raw_memory_;
+    char *memory_;
     size_t max_size_;
     u32 capacity_, allocated_; // max size in bytes
 };
