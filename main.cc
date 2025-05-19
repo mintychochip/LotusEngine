@@ -2,7 +2,7 @@
 #include <string>
 #include "allocator.hpp"
 #include "math.hpp"
-#include "component.hpp"
+#include "registry.hpp"
 struct Transform
 {
     Vector2<float> pos;
@@ -14,31 +14,19 @@ struct Physics
 };
 int main()
 {
-    // StackAllocator allocator{1024};
-    // int count = 0;
-    // while (allocator.allocated() < allocator.size())
-    // {
-    //     int *alloc = allocator.alloc<int>();
-    //     *alloc = count++;
-    //     std::cout << *alloc << std::endl;
-    // }
     LinearAllocator pallocator {KB(25)};
     ComponentManager component_manager {pallocator,256};
-    auto [transform,physics] = component_manager.assign<Transform,Physics>(0);
+    EntityManager emanager {256};
+    Entity entity = emanager.create();
+    auto [transform,physics] = component_manager.assign<Transform,Physics>(entity);
+    for (int i = 0; i < 255; i++) {
+        std::cout << emanager.active() << ' ' << emanager.free() << std::endl;
+        entity = emanager.create();
+        emanager.remove(entity);
+    }
+    emanager.remove(entity);
+    std::cout << emanager.create().id;
     std::cout << transform->pos << std::endl;
-    // auto tc = component_manager.assign<Transform>(0);
-    // std::cout << tc->pos;
-    // ComponentPool pool(pallocator, 1024, sizeof(Transform),alignof(Transform));
-    // for (int i = 0; i < pool.capacity(); ++i) {
-    //     Transform* tc = reinterpret_cast<Transform*>(pool.assign(i));
-    //     tc->pos[0] = i;
-    //     tc->pos[1] = 15 * i;
-    // }
-
-    // for (char* component : pool) {
-    //     Transform* tc = reinterpret_cast<Transform*>(component);
-    //     std::cout << tc->pos << std::endl;
-    // }
-
+    std::cout << pallocator.remaining() << std::endl;
     return 0;
 }

@@ -3,9 +3,6 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstdlib>
-#include <stdlib.h>
-#include <iostream>
-#include <vector>
 #include <memory>
 #include "containers.hpp"
 #include "utils.hpp"
@@ -29,7 +26,6 @@ public:
         auto size = sizeof(T);
         if (top_ + size > memory_ + size_)
         {
-            std::cout << "here";
             return nullptr;
         }
         T *ptr = reinterpret_cast<T *>(top_);
@@ -192,7 +188,6 @@ public:
         {
             return nullptr;
         }
-        std::cout << "allocation made: " << size << std::endl;
         allocated_ = reinterpret_cast<char *>(aligned_ptr) - memory_ + size;
         return aligned_ptr;
     }
