@@ -1,29 +1,20 @@
 cmake_minimum_required(VERSION 3.10)
 project(lotus)
 
-# Enable testing
-enable_testing()
+# Set C++ standard
+set(CMAKE_CXX_STANDARD 17)
 
-# Add main program
-add_executable(lotus main.cc)
-target_include_directories(lotus PRIVATE core)
-target_include_directories(lotus PRIVATE ecs)
+# Add the main executable
+add_executable(lotus src/main.cc)
 
-# Add GoogleTest
-add_subdirectory(googletest)
+# Include core and ecs directories
+target_include_directories(lotus PRIVATE src/core)
+target_include_directories(lotus PRIVATE src/ecs)
+# Add GLFW (assuming it's added as a submodule or installed system-wide)
+add_subdirectory(dependencies/glfw)
 
-# Collect all .cc test files in the test/ folder
-file(GLOB TEST_SOURCES test/*.cc)
+# Find OpenGL
+find_package(OpenGL REQUIRED)
 
-# Add the test executable with all collected sources
-add_executable(unit_tests ${TEST_SOURCES})
-
-# Include the core/ directory for headers like "core/math.hpp"
-target_include_directories(unit_tests PRIVATE core)
-
-# Link GoogleTest libraries
-target_link_libraries(unit_tests gtest gtest_main)
-
-# Register tests with CTest
-include(GoogleTest)
-gtest_discover_tests(unit_tests)
+# Link the necessary libraries
+target_link_libraries(lotus glfw OpenGL::GL)
