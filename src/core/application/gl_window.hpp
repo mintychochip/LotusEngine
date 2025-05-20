@@ -6,20 +6,16 @@
 #include <cstdint>
 #include <iostream>
 
-#include "window.h"
 #include "core/allocator.hpp"
 
-class GLWindow : public IWindow<GLFWwindow>
+class GLWindow 
 {
 public:
-    GLWindow(int x, int y, GLFWwindow *window) : 
-        IWindow<GLFWwindow>(x, y, window), 
-        width_{x}, height_{y}, window_{window} {}
-
-    static GLWindow* create(LinearAllocator& allocator, int x, int y, const std::string &title,
-                           GLFWmonitor *monitor, GLFWwindow *window)
+    
+    static GLWindow *create(LinearAllocator& allocator, int x, int y, const std::string &title,
+                            GLFWmonitor *monitor, GLFWwindow *window)
     {
-        GLFWwindow *w = glfwCreateWindow(x, y, "test", monitor, window);
+        GLFWwindow *w = glfwCreateWindow(x, y, title.c_str(), monitor, window);
         return allocator.construct<GLWindow>(x,y,w);
     }
 
@@ -50,7 +46,8 @@ public:
 
     void update()
     {
-        if (window_) {
+        if (window_)
+        {
             glfwSwapBuffers(window_);
             glfwPollEvents();
         }
@@ -67,7 +64,7 @@ public:
         width_ = width;
         height_ = height;
         if (window_)
-            glfwSetWindowSize(window_,width_,height_);
+            glfwSetWindowSize(window_, width_, height_);
     }
 
     void get_size(int &width, int &height)
@@ -76,13 +73,14 @@ public:
         height = height_;
     }
 
-    GLFWwindow *handle()
+    GLFWwindow *get_handle()
     {
         return window_;
     }
-    
 
 private:
+    friend class LinearAllocator;
+    GLWindow(int x, int y, GLFWwindow *window) : width_{x}, height_{y}, window_{window} {}
     int width_, height_;
     GLFWwindow *window_;
 };

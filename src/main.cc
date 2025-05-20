@@ -36,7 +36,7 @@ void test()
 }
 int main()
 {
-    Application& application = Application::get();
+    GLApplication& application = GLApplication::get();
     application.run();
     test();
     return 0;
