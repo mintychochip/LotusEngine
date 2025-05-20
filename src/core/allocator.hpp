@@ -171,8 +171,15 @@ public:
         free(raw_memory_);
     }
 
+    template <typename T, typename... Args>
+    T *construct(Args&&... args)
+    {
+        void *mem = alloc(sizeof(T),alignof(T));
+        return new (mem) T(std::forward<Args>(args)...);
+    }
+
     template <typename T>
-    T *alloc(u32 count)
+    T *alloc(u32 count = 1)
     {
         void *allocation = alloc(sizeof(T) * count, alignof(T));
         return reinterpret_cast<T *>(allocation);
