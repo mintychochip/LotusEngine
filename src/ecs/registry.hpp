@@ -4,8 +4,8 @@
 #include <cstring>
 #include <queue>
 #include <vector>
-#include "allocator.hpp"
-#include "utils.hpp"
+#include "core/allocator.hpp"
+#include "core/utils.hpp"
 #include "containers/component_pool.hpp"
 #include "containers/entity.hpp"
 

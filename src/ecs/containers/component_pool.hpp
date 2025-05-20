@@ -2,7 +2,7 @@
 
 #include <mutex>
 #include <shared_mutex>
-#include "allocator.hpp"
+#include "core/allocator.hpp"
 
 class ComponentPool
 {
