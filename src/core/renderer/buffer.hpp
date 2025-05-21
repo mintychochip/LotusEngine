@@ -165,16 +165,15 @@ public:
         glBindBuffer(GL_ARRAY_BUFFER,id);
     }
 
-    static void unbind()
-    {
-        glBindBuffer(GL_ARRAY_BUFFER,0);
-    }
-
     void destroy()
     {
         glDeleteBuffers(count_,ids_);
     }
     
+    static void unbind()
+    {
+        glBindBuffer(GL_ARRAY_BUFFER,0);
+    }
 
     ~VertexBuffer()
     {

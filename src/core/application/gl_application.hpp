@@ -55,7 +55,8 @@ public:
         float vertices[] = {
             0.0f, 0.5f,
             -0.5f, -0.5f,
-            0.5f, -0.5f};
+            0.5f, -0.5f
+        };
 
         VertexAttributeLayout layout;
         layout.addAttribute(2, GL_FLOAT, GL_FALSE);
