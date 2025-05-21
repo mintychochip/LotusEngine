@@ -25,3 +25,4 @@ target_sources(lotus PRIVATE src/glad.c)
 # Link the necessary libraries
 target_link_libraries(lotus glfw OpenGL::GL)
 message(STATUS "Include directories for lotus: ${CMAKE_SOURCE_DIR}/src/core, ${CMAKE_SOURCE_DIR}/src/ecs")
+file(COPY ${CMAKE_SOURCE_DIR}/shaders DESTINATION ${CMAKE_BINARY_DIR})

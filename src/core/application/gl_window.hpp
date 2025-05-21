@@ -8,69 +8,72 @@
 
 #include "core/allocator.hpp"
 
-class GLWindow 
+class GLWindow
 {
 public:
-    
-    static GLWindow *create(LinearAllocator& allocator, int x, int y, const std::string &title,
+    static GLWindow *create(LinearAllocator &allocator, int x, int y, const std::string &title,
                             GLFWmonitor *monitor, GLFWwindow *window)
     {
         GLFWwindow *w = glfwCreateWindow(x, y, title.c_str(), monitor, window);
-        return allocator.construct<GLWindow>(x,y,w);
+        if (!w)
+        {
+            return nullptr;
+        }
+        return allocator.construct<GLWindow>(x, y, w);
     }
 
     void close(bool force)
     {
-        if (window_)
-            glfwSetWindowShouldClose(window_, force);
+        glfwSetWindowShouldClose(window_, force);
     }
 
     int should_close()
     {
-        if (window_)
-            return glfwWindowShouldClose(window_);
-        return true;
+        return glfwWindowShouldClose(window_);
     }
 
     void swap_buffers()
     {
-        if (window_)
-            glfwSwapBuffers(window_);
+        glfwSwapBuffers(window_);
     }
 
     void clear()
     {
-        if (window_)
-            glClear(GL_COLOR_BUFFER_BIT);
+        glClear(GL_COLOR_BUFFER_BIT);
     }
 
     void update()
     {
-        if (window_)
-        {
-            glfwSwapBuffers(window_);
-            glfwPollEvents();
-        }
+        glfwSwapBuffers(window_);
+        glfwPollEvents();
     }
 
     void set_title(const std::string &title)
     {
-        if (window_)
-            glfwSetWindowTitle(window_, title.c_str());
+        glfwSetWindowTitle(window_, title.c_str());
     }
 
     void set_size(int width, int height)
     {
         width_ = width;
         height_ = height;
-        if (window_)
-            glfwSetWindowSize(window_, width_, height_);
+        glfwSetWindowSize(window_, width_, height_);
     }
 
     void get_size(int &width, int &height)
     {
         width = width_;
         height = height_;
+    }
+
+    int set_current()
+    {
+        glfwMakeContextCurrent(window_);
+        if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
+            std::cerr << "failed to initialize GLAD\n";
+            return 0;
+        }
+        return 1;
     }
 
     GLFWwindow *get_handle()

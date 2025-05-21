@@ -21,9 +21,9 @@ public:
         delete[] memory_;
     }
     template <typename T>
-    T *alloc()
+    T *alloc(u32 count = 1)
     {
-        auto size = sizeof(T);
+        auto size = sizeof(T) * count;
         if (top_ + size > memory_ + size_)
         {
             return nullptr;
