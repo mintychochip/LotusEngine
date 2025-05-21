@@ -17,14 +17,14 @@ public:
 
     void on_start()
     {
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
         if (!glfwInit())
         {
             std::cerr << "failed to initialize glfw\n"
                       << std::endl;
             exit(-1);
         }
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     }
 
     void on_close()

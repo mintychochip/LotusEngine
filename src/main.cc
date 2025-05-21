@@ -10,6 +10,7 @@ void framebuffer_size_callback(GLFWwindow *window, int width, int height)
 }
 
 int main() {
+    std::cout << glGetString(GL_VERSION) << std::endl;
     GLApplication &application = GLApplication::get();
     application.run();
     // Initialize GLFW
