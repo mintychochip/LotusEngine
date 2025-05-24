@@ -1,11 +1,17 @@
+#pragma once
+
 #include <iostream>
+#include <cstdlib>
 #include <atomic>
+#include <thread>
 #include <glad/glad.h>
 #include <glfw/glfw3.h>
 #include "core/allocator.hpp"
 #include "core/application/gl_window.hpp"
 #include "core/renderer/shader.hpp"
 #include "core/renderer/buffer.hpp"
+#include "core/renderer/texture.hpp"
+#include "core/assets/asset_manager.hpp"
 class GLApplication
 {
 public:
@@ -25,6 +31,7 @@ public:
         }
         glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
         glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+        glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     }
 
     void on_close()
@@ -36,12 +43,22 @@ public:
     void run()
     {
         on_start();
-
         LinearAllocator pallocator{KB(50)}; // more space for 2 windows
-
         window_ = GLWindow::create(pallocator, 800, 600, "Simone", nullptr, nullptr);
         window_->set_current(); // Make context current once
-
+        AssetManager<GLTexture> manager;
+        GLTextureSettings settings {GL_LINEAR,GL_LINEAR,GL_REPEAT,GL_REPEAT};
+        std::thread update([&manager]{
+            while(1) {
+                manager.poll();
+                std::this_thread::sleep_for(std::chrono::milliseconds(500)); // 0.5 seconds
+            }
+            exit(0);
+        });
+        manager.create("cat","assets/kian.png",settings);
+        manager.acquire("cat",[](const GLTexture& texture){
+            std::cout << texture.path();
+        });
         Shader vertex = Shader::create("shaders/test.vert", VERTEX);
         Shader fragment = Shader::create("shaders/test.frag", FRAGMENT);
         ShaderProgram program = ShaderProgram::create(vertex, fragment);
@@ -53,10 +70,7 @@ public:
         }
 
         float vertices[] = {
-            0.0f, 0.5f,
-            -0.5f, -0.5f,
-            0.5f, -0.5f
-        };
+            0.0f, 0.5f, -0.5f, -0.5f, 0.5f, -0.5f};
 
         VertexAttributeLayout layout;
         layout.addAttribute(2, GL_FLOAT, GL_FALSE);
@@ -88,9 +102,10 @@ public:
         vao->destroy(); // Clean up VAO
         vbo->destroy();
         on_close(); // Handle clean-up
+        update.join();
     }
-
 private:
+    GLApplication() {}
     std::atomic<bool> done_;
     GLWindow *window_;
 };

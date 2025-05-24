@@ -42,12 +42,6 @@ public:
         glClear(GL_COLOR_BUFFER_BIT);
     }
 
-    void update()
-    {
-        glfwSwapBuffers(window_);
-        glfwPollEvents();
-    }
-
     void set_title(const std::string &title)
     {
         glfwSetWindowTitle(window_, title.c_str());

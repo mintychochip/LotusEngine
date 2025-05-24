@@ -39,6 +39,7 @@ public:
         std::string shader_source = shader_::read_file(file_path);
         if (shader_source.empty())
             return Shader{0};
+        std::cout << shader_source << std::endl;
         GLenum gl_shader_type = shader_::shader_type_to_gl(shader_type);
         GLuint shader_id = shader_::compile_shader(shader_source, gl_shader_type);
         if (!shader_id)

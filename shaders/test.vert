@@ -1,7 +1,10 @@
 #version 330 core
 layout(location = 0) in vec2 aPos;
-uniform mat4 uProjection;
+
+out vec2 color;
+// 0.0f, 0.5f, -0.5f, -0.5f, 0.5f, -0.5f
 
 void main() {
-    gl_Position = uProjection * vec4(aPos, 0.0, 1.0);
+    color = aPos;
+    gl_Position = vec4(aPos, 0.0, 1.0);
 }
