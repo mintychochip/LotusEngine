@@ -1,23 +1,20 @@
 /**
 **********************************************************************************************************************************************************************************************************************************
-* @file:	asset.hpp
+* @file:	vertex.hpp
 * @author:	mintychochip
-* @date:	2025年05月23日 18:41:00 Friday
+* @date:	2025年05月25日 00:36:56 Sunday
 * @brief:	
 **********************************************************************************************************************************************************************************************************************************
 **/
 
 #pragma once
 
-#include <filesystem>
-#include <string>
+#include <glad/glad.h>
+#include <glfw/glfw3.h>
+#include <glm/glm.hpp>
 
-class Asset
+struct Vertex
 {
-public:
-    const std::string &path() const { return path_; }
-protected:
-    Asset(const std::string& path) : path_{path} {}
-    std::string path_;
-    std::filesystem::file_time_type last_write;
+    glm::vec3 position;
+    glm::vec2 uv;
 };

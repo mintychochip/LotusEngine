@@ -9,13 +9,7 @@
 #include <fstream>
 #include <sstream>
 #include "core/allocator.hpp"
-
-enum ShaderType
-{
-    VERTEX,
-    FRAGMENT,
-    GEOMETRY
-};
+#include "core/assets/asset.hpp"
 
 class Shader;
 class ShaderProgram;
@@ -24,29 +18,32 @@ namespace shader_
 {
     std::string read_file(const std::string &file_path);
     GLuint compile_shader(std::string &source, GLenum shader_type);
-    GLenum shader_type_to_gl(ShaderType shader_type);
     GLint get_uniform_location(GLuint shader_id, const std::string &name);
     GLuint link_program(Shader *shaders[], GLuint count);
     bool invalid_shader(Shader &shader);
     bool invalid_program(const ShaderProgram &program);
 }
 
-class Shader
+class Shader : public Asset
 {
 public:
-    static Shader create(const std::string &file_path, ShaderType shader_type)
+    Shader(const std::string &path, GLenum shader_type) : Asset{path}, shader_type_{shader_type} , shader_id_{0}
     {
-        std::string shader_source = shader_::read_file(file_path);
-        if (shader_source.empty())
-            return Shader{0};
-        std::cout << shader_source << std::endl;
-        GLenum gl_shader_type = shader_::shader_type_to_gl(shader_type);
-        GLuint shader_id = shader_::compile_shader(shader_source, gl_shader_type);
-        if (!shader_id)
-        {
-            return Shader{0};
+        load();
+    }
+
+    void load()
+    {
+        std::cout << shader_type_ << ' ' << GL_FRAGMENT_SHADER << std::endl;
+        if (shader_id_ != 0) {
+            glDeleteShader(shader_id_);
+            shader_id_ = 0;
         }
-        return Shader{shader_id};
+        std::string source = shader_::read_file(path_);
+        if (source.empty())
+            return;
+        shader_id_ = shader_::compile_shader(source,shader_type_);
+        std::cout << shader_id_ << std::endl;
     }
 
     GLuint get_id() const { return shader_id_; }
@@ -54,19 +51,13 @@ public:
     void attach(GLuint program) { glAttachShader(program, shader_id_); }
     void detach(GLuint program) { glDetachShader(program, shader_id_); }
 
-    void destroy()
+    ~Shader()
     {
-        if (shader_id_)
-        {
-            glDeleteShader(shader_id_);
-            shader_id_ = 0;
-        }
+        glDeleteShader(shader_id_);
+        shader_id_ = 0;
     }
-
-    ~Shader() { destroy(); }
-
 private:
-    Shader(GLuint shader_id) : shader_id_{shader_id} {}
+    GLenum shader_type_;
     GLuint shader_id_;
 };
 
@@ -177,7 +168,7 @@ namespace shader_
         const char *source_str = source.c_str();
         glShaderSource(shader, 1, &source_str, nullptr);
         glCompileShader(shader);
-
+        std::cout << source << shader << std::endl;
         GLint status;
         glGetShaderiv(shader, GL_COMPILE_STATUS, &status);
         if (!status)
@@ -196,21 +187,6 @@ namespace shader_
         return shader;
     }
 
-    GLenum shader_type_to_gl(ShaderType shader_type)
-    {
-        switch (shader_type)
-        {
-        case VERTEX:
-            return GL_VERTEX_SHADER;
-        case FRAGMENT:
-            return GL_FRAGMENT_SHADER;
-        case GEOMETRY:
-            return GL_GEOMETRY_SHADER;
-        default:
-            return 0;
-        }
-    }
-
     GLint get_uniform_location(GLuint shader_id, const std::string &name)
     {
         return glGetUniformLocation(shader_id, name.c_str());
@@ -219,7 +195,6 @@ namespace shader_
     GLuint link_program(Shader *shaders[], GLuint count)
     {
         GLuint program = glCreateProgram();
-        std::cout << program;
         for (GLuint i = 0; i < count; ++i)
         {
             shaders[i]->attach(program);
@@ -253,7 +228,6 @@ namespace shader_
 
     bool invalid_program(const ShaderProgram &program)
     {
-        std::cout << program.program_id() << std::flush;
         return !(program.program_id() && program.fragment_id() && program.vertex_id());
     }
 }

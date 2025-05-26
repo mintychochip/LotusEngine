@@ -1,3 +1,12 @@
+/**
+**********************************************************************************************************************************************************************************************************************************
+* @file:	gl_application.hpp
+* @author:
+* @date:	2025年05月23日 19:47:52 Friday
+* @brief:
+**********************************************************************************************************************************************************************************************************************************
+**/
+
 #pragma once
 
 #include <iostream>
@@ -9,9 +18,34 @@
 #include "core/allocator.hpp"
 #include "core/application/gl_window.hpp"
 #include "core/renderer/shader.hpp"
-#include "core/renderer/buffer.hpp"
 #include "core/renderer/texture.hpp"
-#include "core/assets/asset_manager.hpp"
+#include "core/renderer/vertex_batch.hpp"
+// #include "core/assets/asset_manager.hpp"
+#include "core/renderer/vertex_array.hpp"
+#include "core/renderer/vertex_buffer.hpp"
+#include "core/renderer/vertex_batch.hpp"
+
+struct Quad
+{
+    struct Vertex
+    {
+        glm::vec2 pos;
+        glm::vec3 color;
+    };
+
+    using VertexType = Vertex;
+};
+
+GLuint random_ub()
+{
+    return rand() % 256;
+}
+
+glm::vec3 color()
+{
+    return glm::vec3(random_ub(), random_ub(), random_ub()) / 255.0f;
+}
+
 class GLApplication
 {
 public:
@@ -32,6 +66,7 @@ public:
         glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
         glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
         glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+        srand(std::time(nullptr));
     }
 
     void on_close()
@@ -43,24 +78,14 @@ public:
     void run()
     {
         on_start();
-        LinearAllocator pallocator{KB(50)}; // more space for 2 windows
+        LinearAllocator pallocator{KB(1)}; // more space for 2 windows
         window_ = GLWindow::create(pallocator, 800, 600, "Simone", nullptr, nullptr);
         window_->set_current(); // Make context current once
-        AssetManager<GLTexture> manager;
-        GLTextureSettings settings {GL_LINEAR,GL_LINEAR,GL_REPEAT,GL_REPEAT};
-        std::thread update([&manager]{
-            while(1) {
-                manager.poll();
-                std::this_thread::sleep_for(std::chrono::milliseconds(500)); // 0.5 seconds
-            }
-            exit(0);
-        });
-        manager.create("cat","assets/kian.png",settings);
-        manager.acquire("cat",[](const GLTexture& texture){
-            std::cout << texture.path();
-        });
-        Shader vertex = Shader::create("shaders/test.vert", VERTEX);
-        Shader fragment = Shader::create("shaders/test.frag", FRAGMENT);
+        glViewport(0,0,800,600);
+        GLTextureSettings settings{GL_LINEAR, GL_LINEAR, GL_REPEAT, GL_REPEAT};
+
+        Shader vertex{"shaders/test.vert", GL_VERTEX_SHADER};
+        Shader fragment{"shaders/test.frag", GL_FRAGMENT_SHADER};
         ShaderProgram program = ShaderProgram::create(vertex, fragment);
 
         if (shader_::invalid_program(program))
@@ -68,16 +93,13 @@ public:
             std::cerr << "shader program creation failed\n";
             return; // Gracefully exit
         }
+        
+        StackAllocator allocator{KB(1024)};
+        lotus::AttributeLayout layout{allocator.alloc<lotus::Attribute_>(2), 2, sizeof(Quad::VertexType)};
+        layout.add(2, GL_FLOAT, GL_FALSE, 0);
+        layout.add(3, GL_FLOAT, GL_FALSE, 2 * sizeof(float));
+        lotus::VertexBatch<Quad> batch = {allocator.alloc<Quad::VertexType>(9), 9, GL_STATIC_DRAW, layout};
 
-        float vertices[] = {
-            0.0f, 0.5f, -0.5f, -0.5f, 0.5f, -0.5f};
-
-        VertexAttributeLayout layout;
-        layout.addAttribute(2, GL_FLOAT, GL_FALSE);
-
-        VertexBuffer *vbo = VertexBuffer::create(pallocator, 1, sizeof(vertices), vertices, GL_STATIC_DRAW);
-        vbo->bind(0);
-        VertexArray *vao = VertexArray::create(pallocator, 1, layout);
         if (!window_->get_handle())
         {
             std::cerr << "Failed to create one or more windows\n";
@@ -86,24 +108,54 @@ public:
 
         double lastTime = glfwGetTime();
         int frameCount = 0;
+        glClearColor(0.0f, 0.0f, 0.2f, 1.0f);
+        double lastUpdate = glfwGetTime();       // time of last update
+        const double updateInterval = 1.0 / 10.0; // 5 times per second
+
         while (!window_->should_close())
         {
+            double now = glfwGetTime();
+
             window_->clear();
-
             program.bind();
-            vao->bind(0);
+            // Only update vertices every 1/5th second
+            if (now - lastUpdate >= updateInterval)
+            {
+                batch.clear();
+                auto c = color();
+                // Triangle 1 — top center
+                batch.push_vertex({{  0.0f,  0.6f}, c});
+                batch.push_vertex({{ -0.3f,  0.0f}, c});
+                batch.push_vertex({{  0.3f,  0.0f}, c});
 
-            glDrawArrays(GL_TRIANGLES, 0, 3);
+
+                // Triangle 2 — bottom left
+                batch.push_vertex({{ -0.3f,  0.0f}, c});
+                batch.push_vertex({{ -0.6f, -0.6f}, c});
+                batch.push_vertex({{  0.0f, -0.6f}, c});
+
+
+                // Triangle 3 — bottom right
+                batch.push_vertex({{  0.3f,  0.0f}, c});
+                batch.push_vertex({{  0.0f, -0.6f}, c});
+                batch.push_vertex({{  0.6f, -0.6f}, c});
+
+
+                batch.forward();
+
+                lastUpdate = now;
+            } else {
+                batch.draw();
+            }
+
 
             window_->swap_buffers();
             glfwPollEvents();
         }
-
-        vao->destroy(); // Clean up VAO
-        vbo->destroy();
         on_close(); // Handle clean-up
-        update.join();
+        // update.join();
     }
+
 private:
     GLApplication() {}
     std::atomic<bool> done_;

@@ -61,8 +61,6 @@ struct GLTextureSettings
 class GLTexture : public Asset
 {
 public:
-    GLTexture(GLTexture&&) noexcept = default;
-    GLTexture &operator=(GLTexture&&) noexcept = default;
     GLTexture(const std::string &path, GLTextureSettings &settings) : Asset{path}, settings_{settings}
     {
         glGenTextures(1, &id_);
@@ -91,11 +89,6 @@ public:
         glTexImage2D(id_, 0, image_format_, width_, height_, 0, image_format_, GL_UNSIGNED_BYTE, buffer);
         glGenerateMipmap(id_);
         stbi_image_free(buffer);
-    }
-
-    void reload()
-    {
-        load();
     }
 
     ~GLTexture()

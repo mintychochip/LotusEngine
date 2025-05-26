@@ -1,23 +1,16 @@
 /**
 **********************************************************************************************************************************************************************************************************************************
-* @file:	asset.hpp
+* @file:	material.hpp
 * @author:	mintychochip
-* @date:	2025年05月23日 18:41:00 Friday
+* @date:	2025年05月24日 15:41:27 Saturday
 * @brief:	
 **********************************************************************************************************************************************************************************************************************************
 **/
-
 #pragma once
+#include <glad/glad.h>
+#include <glfw/glfw3.h>
 
-#include <filesystem>
-#include <string>
-
-class Asset
+class Material
 {
-public:
-    const std::string &path() const { return path_; }
-protected:
-    Asset(const std::string& path) : path_{path} {}
-    std::string path_;
-    std::filesystem::file_time_type last_write;
+    GLuint shader_program;
 };
