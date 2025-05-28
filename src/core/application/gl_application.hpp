@@ -70,7 +70,6 @@ public:
         window_ = GLWindow::create(pallocator, Global::get().width(),Global::get().height(), "Simone", nullptr, nullptr);
         window_->set_current(); // Make context current once
         glViewport(0,0,Global::get().width(),Global::get().height());
-        GLTextureSettings settings{GL_LINEAR, GL_LINEAR, GL_REPEAT, GL_REPEAT};
 
         Shader vertex{"shaders/test.vert", GL_VERTEX_SHADER};
         Shader fragment{"shaders/test.frag", GL_FRAGMENT_SHADER};
@@ -85,7 +84,8 @@ public:
         StackAllocator allocator{KB(1024)};
         lotus::AttributeLayout layout{allocator.alloc<lotus::Attribute_>(1), 1, sizeof(lotus::Quad::VertexType)};
         layout.add(2, GL_FLOAT, GL_FALSE, 0);
-        lotus::VertexBatch<lotus::Quad> batch(allocator.alloc<lotus::Quad::VertexType>(9), 9, 
+        lotus::VertexBatch<lotus::Quad> batch(
+            allocator.alloc<lotus::Quad::VertexType>(9), 9, 
             allocator.alloc<lotus::Quad::QuadUniformData>(9), 9,
             allocator.alloc<u32>(9), 9,
             GL_STATIC_DRAW, layout);
@@ -99,20 +99,20 @@ public:
         double lastTime = glfwGetTime();
         int frameCount = 0;
        
+        batch.push_vertex({{-0.3f,  0.3f}}); 
+        batch.push_vertex({{ 0.3f,  0.3f}}); 
+        batch.push_vertex({{ 0.3f, -0.3f}}); 
+        batch.push_vertex({{-0.3f, -0.3f}});
+        batch.push_element({2, 1, 0});
+        batch.push_element({0, 3, 2});
+        
         glClearColor(0.0f, 0.0f, 0.2f, 1.0f);
         while (!window_->should_close())
         {
             window_->clear();
             program.bind();
-            batch.clear();
-            batch.push_uniform({{color()}});
-            batch.push_vertex({{-0.3f,  0.3f}}); 
-            batch.push_vertex({{ 0.3f,  0.3f}}); 
-            batch.push_vertex({{ 0.3f, -0.3f}}); 
-            batch.push_vertex({{-0.3f, -0.3f}});
-            batch.push_element({2, 1, 0});
-            batch.push_element({0, 3, 2});
-
+            batch.clear(lotus::BatchBufferType::UNIFORM_BUFFER);
+            batch.push_uniform({color()});
             batch.forward();
             batch.draw();
             window_->swap_buffers();
