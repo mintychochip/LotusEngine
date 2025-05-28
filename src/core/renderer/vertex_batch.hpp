@@ -3,7 +3,7 @@
 * @file:	vertex_batch.hpp
 * @author:	mintychochip
 * @date:	2025年05月26日 01:09:40 Monday
-* @brief:	
+* @brief:
 **********************************************************************************************************************************************************************************************************************************
 **/
 #pragma once
@@ -12,82 +12,97 @@
 #include <glfw/glfw3.h>
 #include <cstdint>
 #include <iostream>
-#include <core/renderer/vertex_buffer.hpp>
-#include <core/renderer/vertex_array.hpp>
+#include "core/renderer/buffer.hpp"
+#include "core/renderer/vertex_array.hpp"
+#include "core/utils/types.hpp"
+#pragma once
+
+#include <glad/glad.h>
+#include <glm/glm.hpp>
+#include <cstdint>
+#include <iostream>
+#include "core/renderer/buffer.hpp"
+#include "core/renderer/vertex_array.hpp"
+#include "core/utils/types.hpp"
+
 namespace lotus
 {
     template <typename DrawableT>
     class VertexBatch
     {
-        using u32 = uint32_t;
         using VertexType = typename DrawableT::VertexType;
+        using UniformDataType = typename DrawableT::UniformDataType;
 
     public:
-        VertexBatch(VertexType *buffer, u32 max_vertices, GLenum usage, AttributeLayout& layout)
-            : buffer_{buffer}, 
-            vbo_{static_cast<GLsizeiptr>(max_vertices * sizeof(VertexType)), usage}, 
-            max_vertices_{max_vertices}, 
-            count_{0} 
+        VertexBatch(
+            VertexType* vertex_data, u32 max_vertices,
+            UniformDataType* uniform_data, u32 max_uniforms,
+            u32* element_data, u32 max_elements,
+            GLenum usage, AttributeLayout& layout
+        )
+            : vertex_data_(vertex_data), uniform_data_(uniform_data), element_data_(element_data),
+              max_vertices_(max_vertices), max_uniforms_(max_uniforms), max_elements_(max_elements),
+              vertex_count_(0), uniform_count_(0), element_count_(0),
+              vbo_{GL_ARRAY_BUFFER, max_vertices * sizeof(VertexType), usage},
+              ebo_{GL_ELEMENT_ARRAY_BUFFER, max_elements * sizeof(u32), usage},
+              ubo_{max_uniforms * sizeof(UniformDataType), usage}
         {
+            assert(max_elements % 3 == 0 && "Element buffer size must be a multiple of 3.");
             vao_.bind();
             vbo_.bind();
             layout.apply(vao_);
         }
 
-        void begin()
+        void push_vertex(const VertexType& v)
         {
-            count_ = 0;
+            assert(vertex_count_ < max_vertices_);
+            vertex_data_[vertex_count_++] = v;
         }
 
-        void push_vertex(const VertexType& vertex)
+        void push_uniform(const UniformDataType& u)
         {
-            if (count_ >= max_vertices_)
-                return;
-            std::cout << count_ << std::endl;
-            buffer_[count_++] = vertex;
+            assert(uniform_count_ < max_uniforms_);
+            uniform_data_[uniform_count_++] = u;
+        }
+
+        void push_element(const glm::uvec3& tri)
+        {
+            assert(element_count_ + 3 <= max_elements_);
+            element_data_[element_count_++] = tri[0];
+            element_data_[element_count_++] = tri[1];
+            element_data_[element_count_++] = tri[2];
         }
 
         void clear()
         {
-            count_ = 0;
+            vertex_count_ = 0;
+            uniform_count_ = 0;
+            element_count_ = 0;
         }
 
-        /*
-            Moves data in 'buffer_' from CPU memory to GPU memory
-        */
         void forward()
         {
-            vbo_.move(buffer_, static_cast<GLsizeiptr>(count_ * sizeof(VertexType)), 0);
+            if (!vbo_.empty()) vbo_.move(vertex_data_, vertex_count_ * sizeof(VertexType), 0);
+            if (!ubo_.empty()) ubo_.move(uniform_data_, uniform_count_ * sizeof(UniformDataType), 0);
+            if (!ebo_.empty()) ebo_.move(element_data_, element_count_ * sizeof(u32), 0);
         }
 
         void draw()
         {
             vao_.bind();
-            glDrawArrays(GL_TRIANGLES, 0, count_);
+            glDrawElements(GL_TRIANGLES, element_count_, GL_UNSIGNED_INT, nullptr);
         }
 
     private:
-        VertexBuffer vbo_;
+        VertexType* vertex_data_;
+        UniformDataType* uniform_data_;
+        u32* element_data_;
+
+        u32 max_vertices_, max_uniforms_, max_elements_;
+        u32 vertex_count_, uniform_count_, element_count_;
+
+        Buffer vbo_, ebo_;
+        UniformBuffer ubo_;
         VertexArray vao_;
-        VertexType *buffer_;
-        u32 max_vertices_, count_;
-    };
-
-    template <typename DrawableT>
-    class VertexBatchFactory
-    {
-        using u32 = uint32_t;
-        using VertexType = typename DrawableT::VertexType;
-        public:
-            VertexBatchFactory(u32 max_vertices) : max_vertices_{max_vertices}, allocator_{max_vertices} {}
-
-            VertexBatch<DrawableT> create(u32 max_vertices, GLenum usage, AttributeLayout& layout)
-            {
-                auto allocation = allocator_.alloc(max_vertices);
-                return {allocation.member, max_vertices, usage, layout};
-            }
-        private:
-            PoolAllocator<VertexType> allocator_;
-            u32 max_vertices_;
     };
 }

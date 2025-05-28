@@ -63,7 +63,6 @@ private:
 
 class ShaderProgram
 {
-    using u32 = uint32_t;
 
 public:
     static ShaderProgram create(Shader &vertex, Shader &fragment)

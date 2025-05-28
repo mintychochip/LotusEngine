@@ -20,22 +20,9 @@
 #include "core/renderer/shader.hpp"
 #include "core/renderer/texture.hpp"
 #include "core/renderer/vertex_batch.hpp"
-// #include "core/assets/asset_manager.hpp"
+#include "core/renderer/buffer.hpp"
 #include "core/renderer/vertex_array.hpp"
-#include "core/renderer/vertex_buffer.hpp"
-#include "core/renderer/vertex_batch.hpp"
-
-struct Quad
-{
-    struct Vertex
-    {
-        glm::vec2 pos;
-        glm::vec3 color;
-    };
-
-    using VertexType = Vertex;
-};
-
+#include "core/renderer/drawable.hpp"
 GLuint random_ub()
 {
     return rand() % 256;
@@ -67,6 +54,7 @@ public:
         glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
         glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
         srand(std::time(nullptr));
+        Global::get().width(1024).height(768);
     }
 
     void on_close()
@@ -79,9 +67,9 @@ public:
     {
         on_start();
         LinearAllocator pallocator{KB(1)}; // more space for 2 windows
-        window_ = GLWindow::create(pallocator, 800, 600, "Simone", nullptr, nullptr);
+        window_ = GLWindow::create(pallocator, Global::get().width(),Global::get().height(), "Simone", nullptr, nullptr);
         window_->set_current(); // Make context current once
-        glViewport(0,0,800,600);
+        glViewport(0,0,Global::get().width(),Global::get().height());
         GLTextureSettings settings{GL_LINEAR, GL_LINEAR, GL_REPEAT, GL_REPEAT};
 
         Shader vertex{"shaders/test.vert", GL_VERTEX_SHADER};
@@ -95,10 +83,12 @@ public:
         }
         
         StackAllocator allocator{KB(1024)};
-        lotus::AttributeLayout layout{allocator.alloc<lotus::Attribute_>(2), 2, sizeof(Quad::VertexType)};
+        lotus::AttributeLayout layout{allocator.alloc<lotus::Attribute_>(1), 1, sizeof(lotus::Quad::VertexType)};
         layout.add(2, GL_FLOAT, GL_FALSE, 0);
-        layout.add(3, GL_FLOAT, GL_FALSE, 2 * sizeof(float));
-        lotus::VertexBatch<Quad> batch = {allocator.alloc<Quad::VertexType>(9), 9, GL_STATIC_DRAW, layout};
+        lotus::VertexBatch<lotus::Quad> batch(allocator.alloc<lotus::Quad::VertexType>(9), 9, 
+            allocator.alloc<lotus::Quad::QuadUniformData>(9), 9,
+            allocator.alloc<u32>(9), 9,
+            GL_STATIC_DRAW, layout);
 
         if (!window_->get_handle())
         {
@@ -108,52 +98,27 @@ public:
 
         double lastTime = glfwGetTime();
         int frameCount = 0;
+       
         glClearColor(0.0f, 0.0f, 0.2f, 1.0f);
-        double lastUpdate = glfwGetTime();       // time of last update
-        const double updateInterval = 1.0 / 10.0; // 5 times per second
-
         while (!window_->should_close())
         {
-            double now = glfwGetTime();
-
             window_->clear();
             program.bind();
-            // Only update vertices every 1/5th second
-            if (now - lastUpdate >= updateInterval)
-            {
-                batch.clear();
-                auto c = color();
-                // Triangle 1 — top center
-                batch.push_vertex({{  0.0f,  0.6f}, c});
-                batch.push_vertex({{ -0.3f,  0.0f}, c});
-                batch.push_vertex({{  0.3f,  0.0f}, c});
+            batch.clear();
+            batch.push_uniform({{color()}});
+            batch.push_vertex({{-0.3f,  0.3f}}); 
+            batch.push_vertex({{ 0.3f,  0.3f}}); 
+            batch.push_vertex({{ 0.3f, -0.3f}}); 
+            batch.push_vertex({{-0.3f, -0.3f}});
+            batch.push_element({2, 1, 0});
+            batch.push_element({0, 3, 2});
 
-
-                // Triangle 2 — bottom left
-                batch.push_vertex({{ -0.3f,  0.0f}, c});
-                batch.push_vertex({{ -0.6f, -0.6f}, c});
-                batch.push_vertex({{  0.0f, -0.6f}, c});
-
-
-                // Triangle 3 — bottom right
-                batch.push_vertex({{  0.3f,  0.0f}, c});
-                batch.push_vertex({{  0.0f, -0.6f}, c});
-                batch.push_vertex({{  0.6f, -0.6f}, c});
-
-
-                batch.forward();
-
-                lastUpdate = now;
-            } else {
-                batch.draw();
-            }
-
-
+            batch.forward();
+            batch.draw();
             window_->swap_buffers();
             glfwPollEvents();
         }
         on_close(); // Handle clean-up
-        // update.join();
     }
 
 private:

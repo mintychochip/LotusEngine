@@ -6,8 +6,7 @@
 #include <memory>
 #include "containers.hpp"
 #include "utils.hpp"
-using u32 = uint32_t;
-using u64 = uint64_t;
+#include "utils/types.hpp"
 class StackAllocator
 {
 public:
