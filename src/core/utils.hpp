@@ -30,6 +30,11 @@ public:
 
     u32 &height() { return height_; }
 
+    float get_aspect() const
+    {
+        return static_cast<float>(width_) / static_cast<float>(height_);
+    }
+
 private:
     Global() {}
     u32 width_, height_;
