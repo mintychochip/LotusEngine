@@ -3,7 +3,6 @@
 #include "buffer.hpp"
 #include "vertex_array.hpp"
 #include <cstdint>
-#include <glad/glad.h>
 #include <glm/glm.hpp>
 #include <iostream>
 

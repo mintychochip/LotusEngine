@@ -1,7 +1,5 @@
 #pragma once
 #include <bitset>
-#include <glad/glad.h>
-#include <glfw/glfw3.h>
 
 namespace lotus {
 static constexpr size_t GLOBAL_FLAGS{32};
