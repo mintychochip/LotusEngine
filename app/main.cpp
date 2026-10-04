@@ -1,73 +1,92 @@
 #include "lotus/application.hpp"
-#include "lotus/gl.hpp"
-#include "lotus/stack_allocator.hpp"
-#include "lotus/utils.hpp"
+#include "lotus/gpu/renderer.hpp"
 #include <cmath>
+#include <cstring>
 #include <iostream>
-#include <optional>
 
-class DemoApplication : public lotus::GLApplication {
+namespace {
+
+struct GpuVertex {
+	float x, y, z;
+	float r, g, b;
+};
+
+void identity_mvp(float* m)
+{
+	std::memset(m, 0, sizeof(float) * 16);
+	m[0] = m[5] = m[10] = m[15] = 1.0f;
+}
+
+void translation_mvp(float* m, float tx, float ty)
+{
+	identity_mvp(m);
+	m[12] = tx;
+	m[13] = ty;
+}
+
+void quad_vertices(float ox, float oy, float size, GpuVertex out[6])
+{
+	const float z = 0.0f;
+	const float s = size * 0.5f;
+	const float gray = 0.5f;
+	auto corner = [&](float x, float y) {
+		return GpuVertex{x + ox, y + oy, z, gray, gray, gray};
+	};
+	const GpuVertex v0 = corner(-s, s);
+	const GpuVertex v1 = corner(s, s);
+	const GpuVertex v2 = corner(s, -s);
+	const GpuVertex v3 = corner(-s, -s);
+	out[0] = v0;
+	out[1] = v1;
+	out[2] = v2;
+	out[3] = v0;
+	out[4] = v2;
+	out[5] = v3;
+}
+
+} // namespace
+
+class DemoApplication : public lotus::Application {
 public:
-	using lotus::GLApplication::GLApplication;
+	using lotus::Application::Application;
 
 protected:
-	void on_ready(lotus::GLWindow& /*window*/) override
+	void on_ready(lotus::Window& window, lotus::GpuRenderer& gpu) override
 	{
-		program_.emplace();
-		lotus::ShaderCache shader_cache;
-		lotus::Shader vertex =
-		        shader_cache.get_or_create("../shaders/test.vert", GL_VERTEX_SHADER);
-		lotus::Shader fragment =
-		        shader_cache.get_or_create("../shaders/test.frag",
-		                                   GL_FRAGMENT_SHADER);
-
-		lotus::Shader* shaders[2] = {&vertex, &fragment};
-		if (!program_->link(shaders, 2)) {
-			throw std::runtime_error("shader program link failed");
-		}
-
-		lotus::AttributeLayout::Builder builder{
-		        allocator_.alloc<lotus::Attribute_>(1),
-		        1,
-		        sizeof(lotus::Shape::VertexType)};
-		auto layout = builder.add_float<2>().build();
-		batch_.emplace(allocator_.alloc<lotus::Shape::VertexType>(12),
-		               12,
-		               allocator_.alloc<lotus::u32>(12),
-		               12,
-		               GL_STATIC_DRAW,
-		               layout);
-		glClearColor(0.0f, 0.0f, 0.5f, 1.0f);
+		(void)window;
+		std::cout << "gpu driver: " << gpu.driver_name() << '\n';
+		GpuVertex verts[6];
+		quad_vertices(0.0f, 0.0f, 0.5f, verts);
+		gpu.set_vertices(verts, sizeof(verts));
 	}
 
-	void on_update(float dt) override
+	void on_update(float dt) override { anim_time_ += dt; }
+
+	void on_prepare_frame(lotus::GpuRenderer& gpu) override
 	{
-		anim_time_ += dt;
+		GpuVertex verts[6];
+		const float ox = std::sin(anim_time_);
+		quad_vertices(ox, 0.0f, 0.5f, verts);
+		gpu.set_vertices(verts, sizeof(verts));
 	}
 
-	void on_render() override
+	void on_render(lotus::GpuRenderer& gpu) override
 	{
-		glClear(GL_COLOR_BUFFER_BIT);
-		batch_->clear();
-		lotus::Quad::square({std::sin(anim_time_), 0.0f}, 0.5f).push(*batch_);
-		program_->use();
-		batch_->forward();
-		batch_->draw();
+		float mvp[16];
+		translation_mvp(mvp, 0.0f, 0.0f);
+		gpu.draw(mvp, 6);
 	}
 
 	void on_shutdown() override {}
 
 private:
-	lotus::StackAllocator<128> allocator_{KB(1000), 8};
-	std::optional<lotus::ShaderProgram> program_;
-	std::optional<lotus::VertexBatch<lotus::Shape>> batch_;
 	float anim_time_{0.0f};
 };
 
 int main()
 {
 	try {
-		DemoApplication app{{3, 3, true}};
+		DemoApplication app;
 		app.run(800, 600, "lotus");
 	} catch (const std::exception& ex) {
 		std::cerr << "lotus: " << ex.what() << '\n';

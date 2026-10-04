@@ -1,37 +1,27 @@
 
 #include "lotus/application.hpp"
 #include "lotus/global.hpp"
+#include "lotus/gpu/renderer.hpp"
 #include <stdexcept>
 
 using namespace lotus;
 
-void GLApplication::on_start()
+void Application::on_start()
 {
 	if (!SDL_Init(SDL_INIT_VIDEO)) {
 		throw std::runtime_error(SDL_GetError());
 	}
-	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, profile_.major);
-	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, profile_.minor);
-	if (profile_.core_profile) {
-		SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK,
-		                    SDL_GL_CONTEXT_PROFILE_CORE);
-	}
-	SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 	Global::flag(LOTUS_SDL_INITIALIZED, true);
 }
 
-void GLApplication::run(int width, int height, const std::string& title)
+void Application::run(int width, int height, const std::string& title)
 {
 	on_start();
-	GLWindow window{width, height, title};
-	if (!window.set_current()) {
-		on_shutdown();
-		SDL_Quit();
-		Global::flag(LOTUS_SDL_INITIALIZED, false);
-		throw std::runtime_error("failed to create OpenGL context");
-	}
+	Window window{width, height, title};
+	GpuRenderer gpu;
+	gpu.init(window.handle(), settings_.debug_device);
 
-	on_ready(window);
+	on_ready(window, gpu);
 
 	Uint64 last_counter = SDL_GetPerformanceCounter();
 	const double freq   = static_cast<double>(SDL_GetPerformanceFrequency());
@@ -45,8 +35,10 @@ void GLApplication::run(int width, int height, const std::string& title)
 		last_counter = now;
 
 		on_update(dt);
-		on_render();
-		window.swap_buffers();
+		on_prepare_frame(gpu);
+		gpu.begin_frame(window.handle(), 0.0f, 0.0f, 0.5f);
+		on_render(gpu);
+		gpu.end_frame();
 	}
 
 	on_shutdown();

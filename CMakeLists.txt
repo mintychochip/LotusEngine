@@ -12,15 +12,17 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 add_subdirectory(dependencies/entt)
 
 include(FindLotusSDL3)
-include(FindLotusOpenGL)
 
 # === Engine Library ===
 
-# Gather all implementation files from src/, excluding app/main.cc
 file(GLOB_RECURSE LOTUS_SOURCES CONFIGURE_DEPENDS src/*.cpp)
-list(REMOVE_ITEM LOTUS_SOURCES "${CMAKE_SOURCE_DIR}/src/main.cpp" "${CMAKE_SOURCE_DIR}/src/main.cc") # Just in case
+list(REMOVE_ITEM LOTUS_SOURCES
+    "${CMAKE_SOURCE_DIR}/src/main.cpp"
+    "${CMAKE_SOURCE_DIR}/src/main.cc"
+    "${CMAKE_SOURCE_DIR}/src/gl/shader.cpp"
+    "${CMAKE_SOURCE_DIR}/src/gl/shader_program.cpp")
 
-add_library(lotus_engine STATIC ${LOTUS_SOURCES} src/glad.c)
+add_library(lotus_engine STATIC ${LOTUS_SOURCES})
 
 target_include_directories(lotus_engine PUBLIC
     ${CMAKE_SOURCE_DIR}/include
@@ -30,7 +32,6 @@ target_include_directories(lotus_engine PUBLIC
 target_link_libraries(lotus_engine
     PUBLIC
     SDL3::SDL3
-    OpenGL::GL
     EnTT::EnTT
 )
 

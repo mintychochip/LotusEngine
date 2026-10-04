@@ -4,33 +4,40 @@
 #include "window.hpp"
 
 namespace lotus {
-struct GLProfile {
-	int major{3};
-	int minor{3};
-	bool core_profile{true};
+
+class GpuRenderer;
+
+struct GpuSettings {
+	bool debug_device{true};
 };
 
-class GLApplication {
+class Application {
 public:
-	explicit GLApplication(const GLProfile& profile) : profile_{profile} {}
-	GLWindow* create_window(Allocator& allocator, int width, int height,
-	                        const std::string& title)
+	explicit Application(GpuSettings settings = {}) : settings_{settings} {}
+	Window* create_window(Allocator& allocator, int width, int height,
+	                      const std::string& title)
 	{
-		return allocator.construct<GLWindow>(width, height, title);
+		return allocator.construct<Window>(width, height, title);
 	}
-	virtual ~GLApplication() = default;
+	virtual ~Application() = default;
 
-	/// Runs the main loop until the window closes.
 	void run(int width = 800, int height = 600,
 	         const std::string& title = "lotus");
 
 protected:
 	void on_start();
-	/// Called once after the window exists and the OpenGL context is current.
-	virtual void on_ready(GLWindow& window) {}
-	virtual void on_update(float dt) = 0;
-	virtual void on_render() = 0;
-	virtual void on_shutdown() = 0;
-	GLProfile profile_;
+	virtual void on_ready(Window& window, GpuRenderer& gpu) = 0;
+	virtual void on_update(float dt)                         = 0;
+	/// Upload buffers / uniforms before the render pass begins.
+	virtual void on_prepare_frame(GpuRenderer& gpu) {}
+	virtual void on_render(GpuRenderer& gpu) = 0;
+	virtual void on_shutdown()                               = 0;
+	GpuSettings settings_;
 };
+
+// Legacy aliases while migrating call sites.
+using GLWindow      = Window;
+using GLProfile     = GpuSettings;
+using GLApplication = Application;
+
 } // namespace lotus
