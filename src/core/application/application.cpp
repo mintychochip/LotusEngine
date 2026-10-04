@@ -2,6 +2,7 @@
 #include "lotus/application.hpp"
 #include "lotus/global.hpp"
 #include "lotus/gpu/renderer.hpp"
+#include <cstdlib>
 #include <stdexcept>
 
 using namespace lotus;
@@ -27,6 +28,12 @@ void Application::run(int width, int height, const std::string& title)
 		Uint64 last_counter = SDL_GetPerformanceCounter();
 		const double freq   = static_cast<double>(SDL_GetPerformanceFrequency());
 
+		int max_frames = 0;
+		if (const char* env = std::getenv("LOTUS_MAX_FRAMES")) {
+			max_frames = std::atoi(env);
+		}
+		int frame = 0;
+
 		while (!window.should_close()) {
 			window.poll_events();
 
@@ -41,6 +48,10 @@ void Application::run(int width, int height, const std::string& title)
 			gpu.begin_frame(window.handle(), 0.0f, 0.0f, 0.5f);
 			on_render(gpu);
 			gpu.end_frame();
+
+			if (max_frames > 0 && ++frame >= max_frames) {
+				break;
+			}
 		}
 
 		on_shutdown();
