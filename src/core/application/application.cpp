@@ -17,31 +17,35 @@ void Application::on_start()
 void Application::run(int width, int height, const std::string& title)
 {
 	on_start();
-	Window window{width, height, title};
-	GpuRenderer gpu;
-	gpu.init(window.handle(), settings_.debug_device);
+	{
+		Window window{width, height, title};
+		GpuRenderer gpu;
+		gpu.init(window.handle(), settings_.debug_device);
 
-	on_ready(window, gpu);
+		on_ready(window, gpu);
 
-	Uint64 last_counter = SDL_GetPerformanceCounter();
-	const double freq   = static_cast<double>(SDL_GetPerformanceFrequency());
+		Uint64 last_counter = SDL_GetPerformanceCounter();
+		const double freq   = static_cast<double>(SDL_GetPerformanceFrequency());
 
-	while (!window.should_close()) {
-		window.poll_events();
+		while (!window.should_close()) {
+			window.poll_events();
 
-		const Uint64 now = SDL_GetPerformanceCounter();
-		const float dt =
-		        static_cast<float>(static_cast<double>(now - last_counter) / freq);
-		last_counter = now;
+			const Uint64 now = SDL_GetPerformanceCounter();
+			const float dt =
+			        static_cast<float>(static_cast<double>(now - last_counter) /
+			                           freq);
+			last_counter = now;
 
-		on_update(dt);
-		on_prepare_frame(gpu);
-		gpu.begin_frame(window.handle(), 0.0f, 0.0f, 0.5f);
-		on_render(gpu);
-		gpu.end_frame();
-	}
+			on_update(dt);
+			on_prepare_frame(gpu);
+			gpu.begin_frame(window.handle(), 0.0f, 0.0f, 0.5f);
+			on_render(gpu);
+			gpu.end_frame();
+		}
 
-	on_shutdown();
+		on_shutdown();
+	} // GpuRenderer + Window must be destroyed before SDL_Quit()
+
 	SDL_Quit();
 	Global::flag(LOTUS_SDL_INITIALIZED, false);
 }

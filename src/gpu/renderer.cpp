@@ -9,13 +9,6 @@
 namespace lotus {
 namespace {
 
-void check(bool ok, const char* what)
-{
-	if (!ok) {
-		throw std::runtime_error(what);
-	}
-}
-
 SDL_GPUShader* create_shader(SDL_GPUDevice* device, bool vertex)
 {
 	SDL_GPUShaderCreateInfo info{};
@@ -41,18 +34,35 @@ SDL_GPUShader* create_shader(SDL_GPUDevice* device, bool vertex)
 
 GpuRenderer::~GpuRenderer()
 {
-	if (device_) {
-		if (pipeline_) {
-			SDL_ReleaseGPUGraphicsPipeline(device_, pipeline_);
-		}
-		if (vertex_buffer_) {
-			SDL_ReleaseGPUBuffer(device_, vertex_buffer_);
-		}
-		if (claimed_window_) {
-			SDL_ReleaseWindowFromGPUDevice(device_, claimed_window_);
-		}
-		SDL_DestroyGPUDevice(device_);
+	if (!device_) {
+		return;
 	}
+
+	if (pass_) {
+		SDL_EndGPURenderPass(pass_);
+		pass_ = nullptr;
+	}
+	if (cmd_) {
+		SDL_CancelGPUCommandBuffer(cmd_);
+		cmd_ = nullptr;
+	}
+
+	SDL_WaitForGPUIdle(device_);
+
+	if (pipeline_) {
+		SDL_ReleaseGPUGraphicsPipeline(device_, pipeline_);
+		pipeline_ = nullptr;
+	}
+	if (vertex_buffer_) {
+		SDL_ReleaseGPUBuffer(device_, vertex_buffer_);
+		vertex_buffer_ = nullptr;
+	}
+	if (claimed_window_) {
+		SDL_ReleaseWindowFromGPUDevice(device_, claimed_window_);
+		claimed_window_ = nullptr;
+	}
+	SDL_DestroyGPUDevice(device_);
+	device_ = nullptr;
 }
 
 void GpuRenderer::init(SDL_Window* window, bool debug_device)
