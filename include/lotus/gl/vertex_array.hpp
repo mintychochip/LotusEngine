@@ -1,7 +1,8 @@
 #pragma once
 
+#include <cstddef>
+
 #include <glad/glad.h>
-#include <GLFW/glfw3.h>
 
 namespace lotus {
 class VertexArray {

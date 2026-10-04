@@ -1,66 +1,55 @@
 
 #include "lotus/application.hpp"
-#include "lotus/gl.hpp"
 #include "lotus/global.hpp"
-#include "lotus/stack_allocator.hpp"
-#include "lotus/utils.hpp"
 #include <stdexcept>
 
 using namespace lotus;
 
 void GLApplication::on_start()
 {
-	if (!glfwInit()) {
-		throw std::runtime_error("failed to initialize glfw");
+	if (!SDL_Init(SDL_INIT_VIDEO)) {
+		throw std::runtime_error(SDL_GetError());
 	}
-	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, profile_.major);
-	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, profile_.minor);
-	glfwWindowHint(GLFW_OPENGL_PROFILE, profile_.gl_profile);
-	Global::flag(LOTUS_GLFW_INITIALIZED, true);
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, profile_.major);
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, profile_.minor);
+	if (profile_.core_profile) {
+		SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK,
+		                    SDL_GL_CONTEXT_PROFILE_CORE);
+	}
+	SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+	Global::flag(LOTUS_SDL_INITIALIZED, true);
 }
 
-void GLApplication::run()
+void GLApplication::run(int width, int height, const std::string& title)
 {
 	on_start();
-	GLWindow window{800, 600, "test"};
-	window.set_current();
-
-	ShaderCache shader_cache;
-	Shader vertex   = shader_cache.get_or_create("../shaders/test.vert",
-                                                   GL_VERTEX_SHADER);
-	Shader fragment = shader_cache.get_or_create("../shaders/test.frag",
-	                                             GL_FRAGMENT_SHADER);
-
-	ShaderProgram program;
-	Shader* shaders[2] = {&vertex, &fragment};
-	bool status        = program.link(shaders, 2);
-	if (!status) {
-		return;
+	GLWindow window{width, height, title};
+	if (!window.set_current()) {
+		on_shutdown();
+		SDL_Quit();
+		Global::flag(LOTUS_SDL_INITIALIZED, false);
+		throw std::runtime_error("failed to create OpenGL context");
 	}
-	StackAllocator<128> allocator{KB(1000), 8};
-	AttributeLayout::Builder builder{allocator.alloc<Attribute_>(1),
-	                                 1,
-	                                 sizeof(Shape::VertexType)};
-	auto layout = builder.add_float<2>().build();
-	VertexBatch<Shape> batch{allocator.alloc<Shape::VertexType>(12),
-	                         12,
-	                         allocator.alloc<u32>(12),
-	                         12,
-	                         GL_STATIC_DRAW,
-	                         layout};
-	glClearColor(0.0f, 0.0f, 0.5f, 1.0f);
+
+	on_ready(window);
+
+	Uint64 last_counter = SDL_GetPerformanceCounter();
+	const double freq   = static_cast<double>(SDL_GetPerformanceFrequency());
+
 	while (!window.should_close()) {
-		glClear(GL_COLOR_BUFFER_BIT);
-		float time = static_cast<float>(glfwGetTime());
+		window.poll_events();
 
-		const int quadCount = 2;
-		batch.clear();
-		Quad::square({std::sin(time), 0.0f}, 0.5f).push(batch);
+		const Uint64 now = SDL_GetPerformanceCounter();
+		const float dt =
+		        static_cast<float>(static_cast<double>(now - last_counter) / freq);
+		last_counter = now;
 
-		program.use();
-		batch.forward();
-		batch.draw();
+		on_update(dt);
+		on_render();
 		window.swap_buffers();
-		glfwPollEvents();
 	}
+
+	on_shutdown();
+	SDL_Quit();
+	Global::flag(LOTUS_SDL_INITIALIZED, false);
 }

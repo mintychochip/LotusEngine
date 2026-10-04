@@ -1,16 +1,18 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.16)
 project(lotus)
 
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
+
 # Set C++ standard
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Add GLFW (as submodule or dependency)
-add_subdirectory(dependencies/glfw)
+# Add EnTT (entity-component-system, header-only, submodule)
+add_subdirectory(dependencies/entt)
 
-# Find OpenGL
-find_package(OpenGL REQUIRED)
+include(FindLotusSDL3)
+include(FindLotusOpenGL)
 
 # === Engine Library ===
 
@@ -26,8 +28,10 @@ target_include_directories(lotus_engine PUBLIC
 )
 
 target_link_libraries(lotus_engine
-    glfw
+    PUBLIC
+    SDL3::SDL3
     OpenGL::GL
+    EnTT::EnTT
 )
 
 # === Main Executable ===

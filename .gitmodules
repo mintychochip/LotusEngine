@@ -7,3 +7,9 @@
 [submodule "dependencies/glad"]
 	path = dependencies/glad
 	url = https://github.com/Dav1dde/glad.git
+[submodule "dependencies/entt"]
+	path = dependencies/entt
+	url = https://github.com/skypjack/entt.git
+[submodule "dependencies/SDL"]
+	path = dependencies/SDL
+	url = https://github.com/libsdl-org/SDL.git

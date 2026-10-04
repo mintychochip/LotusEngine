@@ -4,7 +4,7 @@
 namespace lotus {
 static constexpr size_t GLOBAL_FLAGS{32};
 enum GlobalFlagType {
-	LOTUS_GLFW_INITIALIZED,
+	LOTUS_SDL_INITIALIZED,
 };
 class Global {
 public:

@@ -31,8 +31,8 @@ Shader ShaderCache::get_or_create(const std::string& path, GLenum shader_type)
 		return it->second;
 	}
 
-	if (!Global::flag(LOTUS_GLFW_INITIALIZED)) {
-		throw std::runtime_error("glfw is not initialized");
+	if (!Global::flag(LOTUS_SDL_INITIALIZED)) {
+		throw std::runtime_error("SDL is not initialized");
 	}
 	GLuint shader_id = glCreateShader(shader_type);
 	std::cout << shader_id << std::endl;
