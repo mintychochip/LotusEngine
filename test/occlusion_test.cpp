@@ -1,6 +1,9 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdint>
+#include <iostream>
+#include <limits>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -112,16 +115,85 @@ DepthPyramid ragged_edge_only(uint32_t size, float value)
 }
 
 /// World offset (x or y) whose screen position lands on pixel \p target of a
-/// \p size-wide image, for the 60-degree test camera at z = 10.
+/// \p size-wide image for the 60-degree test camera, at a true view-space
+/// distance of \p view_depth.
 ///
-/// \p projected_depth is the distance the projection divides by, NOT the
-/// camera distance: occluded folds the view matrix into view_center and then
-/// multiplies by view_projection, so an axis-aligned camera at z = 10
-/// projects a world point at z = 0 from an effective distance of 20.
-float world_offset_for_pixel(float target, uint32_t size, float projected_depth)
+/// \p view_depth is the distance the camera actually is from the sphere, NOT
+/// a doubled one: occluded folds view into view_center only to read
+/// view_center.z, and projects the world-space AABB corners through
+/// view_projection exactly once.
+float world_offset_for_pixel(float target, uint32_t size, float view_depth)
 {
 	const float ndc = (target / static_cast<float>(size)) * 2.0f - 1.0f;
-	return ndc * projected_depth * 0.5773503f; // tan(30 degrees)
+	return ndc * view_depth * 0.5773503f; // tan(30 degrees)
+}
+
+/// tan(half the 60-degree vertical field of view) used by camera_from_z.
+constexpr float kTanHalfFov = 0.5773503f;
+
+/// occluded's radius bias, duplicated so the footprints measured here match
+/// the ones the query actually tests. Keep the two in step.
+constexpr float kTestRadiusBias = 1.02f;
+
+/// The level-0 pixel rectangle occluded would read for \p sphere in a
+/// \p size-by-\p size image, computed the way occluded computes it: a
+/// world-space AABB grown by the radius bias and projected once by
+/// view_projection. `behind_eye` marks a footprint whose projection is
+/// undefined, which occluded answers by keeping the sphere.
+struct Footprint {
+	float min_x;
+	float max_x;
+	float min_y;
+	float max_y;
+	bool behind_eye;
+};
+
+Footprint footprint_of(const TestCamera& camera, const BoundingSphere& sphere,
+                       uint32_t size)
+{
+	const float radius = sphere.radius * kTestRadiusBias;
+	Footprint footprint{std::numeric_limits<float>::max(),
+	                    std::numeric_limits<float>::lowest(),
+	                    std::numeric_limits<float>::max(),
+	                    std::numeric_limits<float>::lowest(),
+	                    false};
+	const float extent = static_cast<float>(size);
+	for (int corner = 0; corner < 8; ++corner) {
+		const glm::vec3 offset{(corner & 1) ? radius : -radius,
+		                       (corner & 2) ? radius : -radius,
+		                       (corner & 4) ? radius : -radius};
+		const glm::vec4 clip =
+		    camera.view_projection * glm::vec4{sphere.center + offset, 1.0f};
+		if (clip.w <= 0.0f) {
+			footprint.behind_eye = true;
+			return footprint;
+		}
+		const float px = (clip.x / clip.w * 0.5f + 0.5f) * extent;
+		const float py = (clip.y / clip.w * 0.5f + 0.5f) * extent;
+		footprint.min_x = std::min(footprint.min_x, px);
+		footprint.max_x = std::max(footprint.max_x, px);
+		footprint.min_y = std::min(footprint.min_y, py);
+		footprint.max_y = std::max(footprint.max_y, py);
+	}
+	return footprint;
+}
+
+/// Prints \p footprint so the sphere positions in the tests below are
+/// observed rather than assumed, and returns it for assertions.
+Footprint report_footprint(const char* label, const TestCamera& camera,
+                           const BoundingSphere& sphere, uint32_t size)
+{
+	const Footprint footprint = footprint_of(camera, sphere, size);
+	if (footprint.behind_eye) {
+		std::cout << "[footprint] " << label << " (" << size
+		          << "px): behind the eye plane\n";
+		return footprint;
+	}
+	std::cout << "[footprint] " << label << " (" << size << "px): x["
+	          << footprint.min_x << ", " << footprint.max_x << "] y["
+	          << footprint.min_y << ", " << footprint.max_y << "] width "
+	          << (footprint.max_x - footprint.min_x) << "\n";
+	return footprint;
 }
 
 } // namespace
@@ -356,16 +428,24 @@ TEST(DepthPyramidOcclusion, SphereStraddlingTheWallEdgeIsVisible)
 	const DepthPyramid pyramid = split_wall(64, 5.0f);
 	const TestCamera camera    = camera_from_z(10.0f);
 
-	// Measured with this camera, a sphere at world x = 0.0 with radius 0.4
-	// projects to footprint pixels x[30.9, 33.1], and split_wall puts the
-	// wall/sky seam at pixel 32 -- so the footprint covers wall and empty
-	// space, and the sphere must survive. The same sphere moved well into
-	// the wall half is behind the wall and must be culled, so the outcome
-	// genuinely depends on position rather than on the pyramid being empty.
+	// Measured with this camera (see the report_footprint output below), a
+	// sphere at world x = 0.0 with radius 0.4 projects to footprint pixels
+	// x[29.64, 34.36], and split_wall puts the wall/sky seam at pixel 32 --
+	// so the footprint covers wall and empty space, and the sphere must
+	// survive. The same sphere moved well into the wall half lands at
+	// x[0.75, 7.55], wholly inside the wall half, and must be culled, so the
+	// outcome genuinely depends on position rather than on the pyramid being
+	// empty. Under the old double-view projection these were half as wide,
+	// x[30.9, 33.1] and x[2.02, 5.47] at twice the distance.
+	const BoundingSphere straddling{{0.0f, 0.0f, 0.0f}, 0.4f};
+	const BoundingSphere deep_inside{{-5.0f, 0.0f, 0.0f}, 0.4f};
+	report_footprint("straddle seam", camera, straddling, 64);
+	report_footprint("inside wall half", camera, deep_inside, 64);
+
 	EXPECT_FALSE(pyramid.occluded(camera.view, camera.view_projection,
-	                              {{0.0f, 0.0f, 0.0f}, 0.4f}));
+	                              straddling));
 	EXPECT_TRUE(pyramid.occluded(camera.view, camera.view_projection,
-	                             {{-5.0f, 0.0f, 0.0f}, 0.4f}));
+	                             deep_inside));
 }
 
 TEST(DepthPyramidOcclusion, SphereFullyBehindTheWallHalfIsOccluded)
@@ -373,8 +453,11 @@ TEST(DepthPyramidOcclusion, SphereFullyBehindTheWallHalfIsOccluded)
 	const DepthPyramid pyramid = split_wall(64, 5.0f);
 	const TestCamera camera    = camera_from_z(10.0f);
 
-	EXPECT_TRUE(pyramid.occluded(camera.view, camera.view_projection,
-	                             {{-3.0f, 0.0f, 0.0f}, 0.4f}));
+	// Measured footprint pixels x[12.31, 18.20], wholly left of the seam at
+	// pixel 32.
+	const BoundingSphere sphere{{-3.0f, 0.0f, 0.0f}, 0.4f};
+	report_footprint("deep in wall half", camera, sphere, 64);
+	EXPECT_TRUE(pyramid.occluded(camera.view, camera.view_projection, sphere));
 }
 
 TEST(DepthPyramidOcclusion, SphereOffToTheSideIsVisible)
@@ -383,10 +466,16 @@ TEST(DepthPyramidOcclusion, SphereOffToTheSideIsVisible)
 	const TestCamera camera    = camera_from_z(10.0f);
 
 	// Far outside the frustum in x and y, so never culled even behind a wall.
-	EXPECT_FALSE(pyramid.occluded(camera.view, camera.view_projection,
-	                              {{100.0f, 0.0f, 0.0f}, 1.0f}));
-	EXPECT_FALSE(pyramid.occluded(camera.view, camera.view_projection,
-	                              {{0.0f, 100.0f, 0.0f}, 1.0f}));
+	// Measured footprint pixels x[529.83, 655.51] -- entirely past the right
+	// edge of a 64-wide image, which is what the off-viewport early-out is
+	// for. Frustum culling owns this case before the query ever sees it.
+	const BoundingSphere aside{{100.0f, 0.0f, 0.0f}, 1.0f};
+	const BoundingSphere above{{0.0f, 100.0f, 0.0f}, 1.0f};
+	report_footprint("100 to the right", camera, aside, 64);
+	report_footprint("100 above", camera, above, 64);
+
+	EXPECT_FALSE(pyramid.occluded(camera.view, camera.view_projection, aside));
+	EXPECT_FALSE(pyramid.occluded(camera.view, camera.view_projection, above));
 }
 
 TEST(DepthPyramidOcclusion, SphereBehindTheCameraIsVisible)
@@ -412,12 +501,158 @@ TEST(DepthPyramidOcclusion, LargeSphereSpanningManyTexelsStaysConservative)
 	pyramid.build(image.data(), 64, 64);
 	const TestCamera camera = camera_from_z(10.0f);
 
-	// Small enough to sit inside the wall.
-	EXPECT_TRUE(pyramid.occluded(camera.view, camera.view_projection,
-	                             {{0.0f, 0.0f, 0.0f}, 0.15f}));
-	// Large enough that its footprint spills outside the wall.
-	EXPECT_FALSE(pyramid.occluded(camera.view, camera.view_projection,
-	                              {{0.0f, 0.0f, 0.0f}, 4.0f}));
+	// Small enough to sit inside the wall: measured footprint pixels
+	// x[31.14, 32.86] y[31.14, 32.86], inside the wall's [28, 36) box.
+	const BoundingSphere small{{0.0f, 0.0f, 0.0f}, 0.15f};
+	report_footprint("r=0.15 inside wall", camera, small, 64);
+	EXPECT_TRUE(pyramid.occluded(camera.view, camera.view_projection, small));
+
+	// Large enough that its footprint spills outside the wall: measured
+	// footprint pixels x[-6.20, 70.20] y[-6.20, 70.20], reaching past the
+	// [28, 36) box on both sides and off the left and bottom edges of the
+	// image. Under the old double-view projection this was
+	// x[17.80, 46.20]; the fix makes it 76.4 pixels wide instead of 28.4,
+	// which is the whole point.
+	const BoundingSphere large{{0.0f, 0.0f, 0.0f}, 4.0f};
+	report_footprint("r=4.0 spilling wall", camera, large, 64);
+	EXPECT_FALSE(pyramid.occluded(camera.view, camera.view_projection, large));
+}
+
+TEST(DepthPyramidOcclusion, FootprintWidthScalesWithRadiusOverViewDepth)
+{
+	// Pins the single application of view_projection. Feeding view_projection
+	// a point that already has view folded into it -- which is what the query
+	// used to do -- projects from twice the true view distance, so every
+	// footprint came out roughly half the width it should have. An
+	// undersized footprint reads fewer texels and so culls MORE eagerly,
+	// which is the false-cull direction.
+	//
+	// A world-space AABB of radius R at view depth D reaches its widest NDC
+	// extent on the face NEAREST the camera, so the footprint width in
+	// pixels of a `size`-wide image is exactly
+	//
+	//     width = size * R / ((D - R) * tan(half_fov))
+	//
+	// which is proportional to radius / view_depth in the limit that matters
+	// (R << D) and is strictly wider than the true circle, the conservative
+	// direction.
+	const float size = 64.0f;
+	const auto expected_width = [&](float radius, float depth) {
+		const float biased = radius * kTestRadiusBias;
+		return size * biased / ((depth - biased) * kTanHalfFov);
+	};
+
+	const TestCamera at_10 = camera_from_z(10.0f);
+	const TestCamera at_20 = camera_from_z(20.0f);
+
+	const BoundingSphere half_radius{{0.0f, 0.0f, 0.0f}, 0.5f};
+	const BoundingSphere full_radius{{0.0f, 0.0f, 0.0f}, 1.0f};
+
+	const Footprint near_half =
+	    report_footprint("r=0.5 at depth 10", at_10, half_radius, 64);
+	const Footprint far_half =
+	    report_footprint("r=0.5 at depth 20", at_20, half_radius, 64);
+	const Footprint near_full =
+	    report_footprint("r=1.0 at depth 10", at_10, full_radius, 64);
+
+	const float width_at_10 = near_half.max_x - near_half.min_x;
+	const float width_at_20 = far_half.max_x - far_half.min_x;
+	const float width_double_radius = near_full.max_x - near_full.min_x;
+
+	// Both feet on the closed form above. Measured 5.95723, 2.90067 and
+	// 12.5911 against predicted 5.9577, 2.9005 and 12.5913 -- the residual
+	// is the printed tan(30 degrees) constant, so a tenth of a percent is
+	// ample.
+	EXPECT_NEAR(width_at_10, expected_width(0.5f, 10.0f),
+	            0.001f * expected_width(0.5f, 10.0f));
+	EXPECT_NEAR(width_at_20, expected_width(0.5f, 20.0f),
+	            0.001f * expected_width(0.5f, 20.0f));
+	EXPECT_NEAR(width_double_radius, expected_width(1.0f, 10.0f),
+	            0.001f * expected_width(1.0f, 10.0f));
+
+	// Width falls as the camera recedes. It is not exactly a halving for
+	// twice the distance, because the AABB's near face moves too: the ratio
+	// is (2D - R) / (D - R), here 2.053. This is what separates the correct
+	// projection from the double-view one, which reported this same width
+	// for the sphere at depth 10.
+	EXPECT_GT(width_at_10, 2.0f * width_at_20);
+	EXPECT_LT(width_at_10, 2.1f * width_at_20);
+
+	// Same for radius: doubling r doubles the numerator and pushes the
+	// denominator down, so the ratio is (D - 2R)/(D - R) inverted -- 2.113
+	// here, not 2.
+	EXPECT_GT(width_double_radius, 2.0f * width_at_10);
+	EXPECT_LT(width_double_radius, 2.2f * width_at_10);
+}
+
+TEST(DepthPyramidOcclusion, QueryFootprintWidthMatchesOneApplicationOfView)
+{
+	// The previous test checks the geometry this file computes. This one
+	// measures what occluded actually does, by finding the radius at which
+	// the query's own footprint grows far enough to touch a patch of sky.
+	//
+	// 64x64, wall at depth 5 everywhere except level-0 pixels [4,8) of every
+	// row, which are kDepthFar. That strip reduces to the single sky texel
+	// column 1 of the level-2 mip, so the sphere flips from culled to
+	// visible exactly when its footprint's left edge reaches pixel 8.
+	std::vector<float> image = flat_image(64, 64, 5.0f);
+	for (uint32_t y = 0; y < 64; ++y) {
+		for (uint32_t x = 4; x < 8; ++x) {
+			image[static_cast<std::size_t>(y) * 64 + x] = kDepthFar;
+		}
+	}
+	DepthPyramid pyramid;
+	pyramid.build(image.data(), 64, 64);
+	const TestCamera camera = camera_from_z(10.0f);
+
+	// The sphere sits on the view axis, so its footprint straddles pixel 32.
+	// It is visible exactly when the footprint reaches left to pixel 8.
+	const auto touches_sky = [&](float radius) {
+		const bool visible = !pyramid.occluded(
+		    camera.view, camera.view_projection, {{0.0f, 0.0f, 0.0f}, radius});
+		return visible;
+	};
+
+	// Bisect on the flip point.
+	float lo = 1.0f; // culled
+	float hi = 4.0f; // visible
+	ASSERT_FALSE(touches_sky(lo));
+	ASSERT_TRUE(touches_sky(hi));
+	for (int step = 0; step < 40; ++step) {
+		const float mid = 0.5f * (lo + hi);
+		if (touches_sky(mid)) {
+			hi = mid;
+		} else {
+			lo = mid;
+		}
+	}
+	report_footprint("flip radius", camera, {{0.0f, 0.0f, 0.0f}, hi}, 64);
+
+	// The flip happens when the footprint's half-width first spans 32 - 8 =
+	// 24 pixels. Solving the closed form
+	//
+	//     half_width = size * R / (2 * (D - R) * tan(half_fov))
+	//
+	// for R gives the radius below. Two applications of view instead of one
+	// project from D = 20, which needs a much larger sphere to reach the
+	// same 24 pixels -- and that is precisely the difference this test pins.
+	const auto radius_for_half_width = [&](float half_width, float depth) {
+		const float size = 64.0f;
+		const float k = half_width * 2.0f * kTanHalfFov;
+		return k * depth / (size + k) / kTestRadiusBias;
+	};
+	const float one_view = radius_for_half_width(24.0f, 10.0f);
+	const float two_views = radius_for_half_width(24.0f, 20.0f);
+	std::cout << "[footprint] flip radius measured " << hi << ", one-view "
+	          << one_view << ", double-view " << two_views << "\n";
+
+	// Measured against the single-view prediction, tightly.
+	EXPECT_NEAR(hi, one_view, 0.01f * one_view);
+	// And nowhere near the doubled one: 5.92 against a measured 2.96, and
+	// the reported footprint is exactly pixels x[8, 56], the 48 the single
+	// application predicts. This is the assertion that fails if view is ever
+	// folded into the corners again.
+	EXPECT_LT(hi, 0.75f * two_views);
 }
 
 TEST(DepthPyramidOcclusion, UntouchedTexelsDoNotCullTheScene)
@@ -467,17 +702,24 @@ TEST(DepthPyramidOcclusion, SphereInTheTrailingRaggedColumnIsNotCulled)
 	ASSERT_EQ(representable_span(13), 12u);
 
 	const TestCamera camera = camera_from_z(10.0f);
-	EXPECT_FALSE(pyramid.occluded(camera.view, camera.view_projection,
-	                              {{world_offset_for_pixel(12.5f, 13, 20.0f),
-	                                0.0f,
-	                                0.0f},
-	                               0.02f}));
+	const BoundingSphere column{{world_offset_for_pixel(12.5f, 13, 10.0f),
+	                             0.0f,
+	                             0.0f},
+	                            0.02f};
+	const BoundingSphere row{{0.0f, world_offset_for_pixel(12.5f, 13, 10.0f),
+	                          0.0f},
+	                         0.02f};
+	// Measured footprint pixels x[12.465, 12.535] y[6.477, 6.523], and the
+	// transpose: the small one sits wholly in the unrepresented strip, past
+	// the representable span of 12. Note the helper now inverts at the TRUE
+	// view depth of 10; under the double-view bug the same world offset put
+	// this footprint at half the pixel scale.
+	report_footprint("ragged column", camera, column, 13);
+	report_footprint("ragged row", camera, row, 13);
+
+	EXPECT_FALSE(pyramid.occluded(camera.view, camera.view_projection, column));
 	// Same strip, on the y axis: pixel row 12 is unrepresented too.
-	EXPECT_FALSE(pyramid.occluded(camera.view, camera.view_projection,
-	                              {{0.0f,
-	                                world_offset_for_pixel(12.5f, 13, 20.0f),
-	                                0.0f},
-	                               0.02f}));
+	EXPECT_FALSE(pyramid.occluded(camera.view, camera.view_projection, row));
 }
 
 TEST(DepthPyramidOcclusion, RaggedEdgeWallDoesNotCullTheSkyBesideIt)
@@ -488,18 +730,22 @@ TEST(DepthPyramidOcclusion, RaggedEdgeWallDoesNotCullTheSkyBesideIt)
 	const DepthPyramid pyramid = ragged_edge_only(13, 5.0f);
 	const TestCamera camera    = camera_from_z(10.0f);
 
-	EXPECT_FALSE(pyramid.occluded(camera.view, camera.view_projection,
-	                              {{world_offset_for_pixel(12.6f, 13, 20.0f),
-	                                0.0f,
-	                                0.0f},
-	                               0.02f}));
-	// Radius 0.8 puts the footprint at roughly pixels [11.0, 12.8], across
-	// the seam at pixel 12.
-	EXPECT_FALSE(pyramid.occluded(camera.view, camera.view_projection,
-	                              {{world_offset_for_pixel(11.9f, 13, 20.0f),
-	                                0.0f,
-	                                0.0f},
-	                               0.8f}));
+	const BoundingSphere inside{{world_offset_for_pixel(12.6f, 13, 10.0f),
+	                             0.0f,
+	                             0.0f},
+	                            0.02f};
+	report_footprint("ragged strip", camera, inside, 13);
+	EXPECT_FALSE(pyramid.occluded(camera.view, camera.view_projection, inside));
+
+	// Radius 0.8 puts the footprint at measured pixels x[10.64, 13.38],
+	// straddling the seam at pixel 12 with most of its width on sky. Under
+	// the old double-view projection this was the half-width [11.0, 12.8].
+	const BoundingSphere across{{world_offset_for_pixel(11.9f, 13, 10.0f),
+	                             0.0f,
+	                             0.0f},
+	                            0.8f};
+	report_footprint("across the seam", camera, across, 13);
+	EXPECT_FALSE(pyramid.occluded(camera.view, camera.view_projection, across));
 }
 
 TEST(DepthPyramidOcclusion, NoFalseCullAcrossOddWidthsInTheRaggedColumn)
@@ -512,11 +758,12 @@ TEST(DepthPyramidOcclusion, NoFalseCullAcrossOddWidthsInTheRaggedColumn)
 		const float centre =
 		    0.5f * (static_cast<float>(representable_span(size)) +
 		            static_cast<float>(size));
-		EXPECT_FALSE(pyramid.occluded(camera.view, camera.view_projection,
-		                              {{world_offset_for_pixel(centre, size, 20.0f),
-		                                0.0f,
-		                                0.0f},
-		                               0.02f}))
+		const BoundingSphere sphere{{world_offset_for_pixel(centre, size, 10.0f),
+		                             0.0f,
+		                             0.0f},
+		                            0.02f};
+		report_footprint("ragged column sweep", camera, sphere, size);
+		EXPECT_FALSE(pyramid.occluded(camera.view, camera.view_projection, sphere))
 		    << "width " << size;
 	}
 }
@@ -529,11 +776,12 @@ TEST(DepthPyramidOcclusion, NoFalseCullAcrossOddHeightsInTheRaggedRow)
 		const float centre =
 		    0.5f * (static_cast<float>(representable_span(size)) +
 		            static_cast<float>(size));
-		EXPECT_FALSE(pyramid.occluded(camera.view, camera.view_projection,
-		                              {{0.0f,
-		                                world_offset_for_pixel(centre, size, 20.0f),
-		                                0.0f},
-		                               0.02f}))
+		const BoundingSphere sphere{{0.0f,
+		                             world_offset_for_pixel(centre, size, 10.0f),
+		                             0.0f},
+		                            0.02f};
+		report_footprint("ragged row sweep", camera, sphere, size);
+		EXPECT_FALSE(pyramid.occluded(camera.view, camera.view_projection, sphere))
 		    << "height " << size;
 	}
 }
@@ -546,17 +794,22 @@ TEST(DepthPyramidOcclusion, FootprintBeyondTheRepresentableSpanIsVisible)
 	const DepthPyramid pyramid = solid_wall(13, 5.0f);
 	const TestCamera camera    = camera_from_z(10.0f);
 
-	EXPECT_FALSE(pyramid.occluded(camera.view, camera.view_projection,
-	                              {{world_offset_for_pixel(12.5f, 13, 20.0f),
+	const BoundingSphere past_span{{world_offset_for_pixel(12.5f, 13, 10.0f),
 	                                0.0f,
 	                                0.0f},
-	                               0.02f}));
+	                               0.02f};
+	report_footprint("past the span", camera, past_span, 13);
+	EXPECT_FALSE(pyramid.occluded(camera.view, camera.view_projection,
+	                              past_span));
 	// The same sphere well inside the sampled area is behind the wall, so
 	// the result really does depend on the unrepresented pixels.
+	const BoundingSphere inside_span{{world_offset_for_pixel(6.0f, 13, 10.0f),
+	                                  0.0f,
+	                                  0.0f},
+	                                 0.02f};
+	report_footprint("inside the span", camera, inside_span, 13);
 	EXPECT_TRUE(pyramid.occluded(camera.view, camera.view_projection,
-	                             {{world_offset_for_pixel(6.0f, 13, 20.0f), 0.0f,
-	                               0.0f},
-	                              0.02f}));
+	                             inside_span));
 }
 
 TEST(DepthPyramidOcclusion, RaggedHeightWithADivisibleWidthIsHandled)
@@ -575,17 +828,25 @@ TEST(DepthPyramidOcclusion, RaggedHeightWithADivisibleWidthIsHandled)
 	ASSERT_EQ(pyramid.level_height(kDepthPyramidMinLevel), 3u);
 	const TestCamera camera = camera_from_z(10.0f);
 
-	EXPECT_FALSE(pyramid.occluded(camera.view, camera.view_projection,
-	                              {{0.0f,
-	                                world_offset_for_pixel(12.5f, 13, 20.0f),
+	// Measured y footprint [12.465, 12.535]: wholly in the unrepresented row
+	// past the representable height of 12. The helper takes a square size and
+	// only the y axis matters here, so 13 is the right number to pass.
+	const BoundingSphere past_span{{0.0f,
+	                                world_offset_for_pixel(12.5f, 13, 10.0f),
 	                                0.0f},
-	                               0.02f}));
+	                               0.02f};
+	report_footprint("ragged row", camera, past_span, 13);
+	EXPECT_FALSE(pyramid.occluded(camera.view, camera.view_projection,
+	                              past_span));
 	// The same sphere inside the sampled area is behind the wall, so the
 	// result really does depend on the unrepresented row.
+	const BoundingSphere inside_span{{0.0f,
+	                                  world_offset_for_pixel(6.0f, 13, 10.0f),
+	                                  0.0f},
+	                                 0.02f};
+	report_footprint("sampled row", camera, inside_span, 13);
 	EXPECT_TRUE(pyramid.occluded(camera.view, camera.view_projection,
-	                             {{0.0f, world_offset_for_pixel(6.0f, 13, 20.0f),
-	                               0.0f},
-	                              0.02f}));
+	                             inside_span));
 }
 
 TEST(DepthPyramidOcclusion, PyramidWhoseOnlyLevelIsEmptyNeverOccludes)

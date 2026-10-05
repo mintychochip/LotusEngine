@@ -166,8 +166,11 @@ bool DepthPyramid::occluded(const glm::mat4& view,
 		return false; // straddles or crosses the camera plane
 	}
 
-	// Project the eight corners of the sphere's view-space AABB. Including the
-	// z extremes widens the footprint, which is the conservative direction.
+	// Project the eight corners of the sphere's world-space AABB. The corners
+	// must be built in WORLD space: view_projection already contains view, so
+	// handing it a view-space point applies the view transform twice and halves
+	// every footprint. A world-space AABB is larger than the sphere for a
+	// rotated camera, which is the conservative direction.
 	glm::vec2 screen_min{std::numeric_limits<float>::max(),
 	                    std::numeric_limits<float>::max()};
 	glm::vec2 screen_max{std::numeric_limits<float>::lowest(),
@@ -177,7 +180,7 @@ bool DepthPyramid::occluded(const glm::mat4& view,
 		                       (corner & 2) ? radius : -radius,
 		                       (corner & 4) ? radius : -radius};
 		const glm::vec4 clip =
-		        view_projection * glm::vec4{view_center + offset, 1.0f};
+		        view_projection * glm::vec4{world_sphere.center + offset, 1.0f};
 		if (clip.w <= 0.0f) {
 			return false;
 		}
