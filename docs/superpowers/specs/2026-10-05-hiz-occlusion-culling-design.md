@@ -63,7 +63,7 @@ The compute pass and the copy pass are sequential on that one command buffer: `S
 
 Per-mip addressing is explicit. `SDL_GPUTextureRegion` carries its own `mip_level` (SDL_gpu.h:1469), but SDL does not pack the mip chain, so each download computes its own `SDL_GPUTextureTransferInfo`: `offset` is the running byte total, and `pixels_per_row` and `rows_per_layer` are set to the mip's own width and height. Leaving them zero would reuse mip 0's dimensions, which silently over-reads every level after the first. Rows are padded so each row pitch stays a multiple of 256 bytes; SDL otherwise inserts a temporary repacking copy (SDL_gpu.h:1401-1405).
 
-At the start of frame N+1 the fence is polled with `SDL_QueryGPUFence`, never waited on. Ready maps the buffer with `SDL_MapGPUTextureTransferBuffer` and replaces the CPU-side pyramid. Not ready skips occlusion for that frame.
+At the start of frame N+1 the fence is polled with `SDL_QueryGPUFence`, never waited on. Ready maps the buffer with `SDL_MapGPUTransferBuffer` and replaces the CPU-side pyramid. Not ready skips occlusion for that frame.
 
 The CPU therefore tests against the pyramid built one or more frames ago. This is the intended trade: staleness costs a little performance, and a blocking readback would serialise CPU against GPU.
 
