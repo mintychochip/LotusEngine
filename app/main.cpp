@@ -21,8 +21,9 @@ protected:
 		lotus::Scene& scene = scenes().activate("main");
 
 		const lotus::Entity cube = scene.create("cube");
+		// A real binary glTF file, loaded by the engine's GLB parser.
 		scene.registry().emplace<lotus::MeshSource>(
-		        cube, lotus::MeshSource{"builtin:cube"});
+		        cube, lotus::MeshSource{"../assets/cube.glb"});
 		scene.registry().emplace<lotus::Material>(
 		        cube, lotus::Material{{0.85f, 0.34f, 0.28f}});
 		scene.registry().get<lotus::Transform>(cube).position = {-1.1f, 0.0f, 0.0f};

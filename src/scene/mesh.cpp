@@ -2,6 +2,8 @@
 
 #include <cmath>
 
+#include "lotus/scene/glb.hpp"
+
 namespace lotus::mesh {
 namespace {
 
@@ -115,10 +117,7 @@ bool resolve_mesh(const std::string& source, Mesh& out, std::string* error)
 		}
 		return false;
 	}
-	if (error) {
-		*error = "mesh loading is not implemented yet: " + source;
-	}
-	return false;
+	return load_glb(source, out, error);
 }
 
 } // namespace lotus::mesh
