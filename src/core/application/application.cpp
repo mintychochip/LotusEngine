@@ -70,6 +70,7 @@ bool Application::reload_scene_now(std::string* error)
 	scene_status_ = "reloaded " + scene_path_;
 	// The scene was replaced wholesale; undo history no longer applies.
 	editor_.reset_history();
+	scripts_.sync(*scene);
 	return true;
 }
 
@@ -108,6 +109,16 @@ void Application::run(int width, int height, const std::string& title)
 
 		on_ready(window, gpu);
 
+		scripts_.set_log([](const std::string& message) {
+			std::cout << message << '\n';
+		});
+		if (Scene* scene = scenes_.active()) {
+			std::string error;
+			if (!scripts_.sync(*scene, &error)) {
+				std::cout << "script load: " << error << '\n';
+			}
+		}
+
 		editor_.set_scene_controls(Editor::SceneControls{
 		        [this] { return scene_path_; },
 		        [this] { return scene_status_; },
@@ -138,6 +149,8 @@ void Application::run(int width, int height, const std::string& title)
 			poll_hot_reload();
 			if (Scene* scene = scenes_.active()) {
 				scene->update(dt);
+				scripts_.update(*scene, dt);
+				scripts_.poll(*scene);
 			}
 
 			int pixel_w = width, pixel_h = height;

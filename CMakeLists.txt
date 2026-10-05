@@ -17,6 +17,15 @@ add_library(nlohmann_json::nlohmann_json ALIAS nlohmann_json)
 target_include_directories(nlohmann_json INTERFACE
     ${CMAKE_SOURCE_DIR}/dependencies/json/include)
 
+# === Lua (scripting, submodule) ===
+file(GLOB LUA_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/dependencies/lua/*.c)
+list(REMOVE_ITEM LUA_SOURCES
+    "${CMAKE_SOURCE_DIR}/dependencies/lua/lua.c"
+    "${CMAKE_SOURCE_DIR}/dependencies/lua/onelua.c")
+add_library(lua STATIC ${LUA_SOURCES})
+target_include_directories(lua PUBLIC ${CMAKE_SOURCE_DIR}/dependencies/lua)
+target_link_libraries(lua PUBLIC m)
+
 include(FindLotusSDL3)
 
 # === Dear ImGui (debug overlay) ===
@@ -57,6 +66,7 @@ target_link_libraries(lotus_engine
     SDL3::SDL3
     EnTT::EnTT
     nlohmann_json::nlohmann_json
+    lua
     imgui
 )
 
@@ -75,6 +85,7 @@ set_target_properties(lotus PROPERTIES
 # === Runtime Assets ===
 file(COPY ${CMAKE_SOURCE_DIR}/shaders DESTINATION ${CMAKE_BINARY_DIR})
 file(COPY ${CMAKE_SOURCE_DIR}/assets DESTINATION ${CMAKE_BINARY_DIR})
+file(COPY ${CMAKE_SOURCE_DIR}/scripts DESTINATION ${CMAKE_BINARY_DIR})
 
 # === Testing ===
 include(CTest)

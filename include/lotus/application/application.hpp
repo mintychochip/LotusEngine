@@ -5,6 +5,7 @@
 #include "lotus/application/window.hpp"
 #include "lotus/io/file_watcher.hpp"
 #include "lotus/scene/scene_manager.hpp"
+#include "lotus/script/script_engine.hpp"
 #include "lotus/ui/editor.hpp"
 
 namespace lotus {
@@ -27,6 +28,7 @@ public:
 
 	SceneManager& scenes() { return scenes_; }
 	Editor& editor() { return editor_; }
+	ScriptEngine& scripts() { return scripts_; }
 
 	/// Watches \p path; when it changes, the active scene is reloaded. The
 	/// reload is atomic, so a half-written file is rejected and the live
@@ -53,6 +55,7 @@ private:
 
 	SceneManager scenes_;
 	Editor editor_;
+	ScriptEngine scripts_;
 	FileWatcher watcher_;
 	std::string scene_path_;
 	std::string scene_status_;

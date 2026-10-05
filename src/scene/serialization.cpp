@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "lotus/scene/scene.hpp"
+#include "lotus/script/script.hpp"
 
 namespace lotus {
 
@@ -113,6 +114,18 @@ void from_json(const nlohmann::json& j, Camera2D& c)
 	}
 }
 
+void to_json(nlohmann::json& j, const Script& s)
+{
+	j = nlohmann::json{{"path", s.path}};
+}
+
+void from_json(const nlohmann::json& j, Script& s)
+{
+	if (j.is_object() && j.contains("path") && j.at("path").is_string()) {
+		s.path = j.at("path").get<std::string>();
+	}
+}
+
 // --- codec registry --------------------------------------------------------
 
 void ComponentCodecs::add(std::string name, WriteFn write, ReadFn read)
@@ -178,6 +191,19 @@ const ComponentCodecs& default_component_codecs()
 		        },
 		        [](Registry& r, Entity e, const nlohmann::json& j) {
 			        r.emplace_or_replace<Camera2D>(e, j.get<Camera2D>());
+		        });
+		c.add(
+		        "Script",
+		        [](const Registry& r, Entity e, nlohmann::json& j) {
+			        const auto* value = r.try_get<Script>(e);
+			        if (!value) {
+				        return false;
+			        }
+			        j = *value;
+			        return true;
+		        },
+		        [](Registry& r, Entity e, const nlohmann::json& j) {
+			        r.emplace_or_replace<Script>(e, j.get<Script>());
 		        });
 		return c;
 	}();

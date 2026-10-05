@@ -2,6 +2,7 @@
 #include "lotus/gpu/renderer.hpp"
 #include "lotus/scene/scene.hpp"
 #include "lotus/scene/serialization.hpp"
+#include "lotus/script/script.hpp"
 
 #include <cmath>
 #include <filesystem>
@@ -27,6 +28,9 @@ protected:
 		scene.registry().emplace<lotus::Sprite>(
 		        left, lotus::Sprite{{0.35f, 0.85f, 0.45f, 1.0f}, {0.25f, 0.25f}});
 		scene.registry().get<lotus::Transform>(left).position = {-0.8f, 0.0f, 0.0f};
+		// Game code attaches a script; the engine runs and hot-swaps it.
+		scene.registry().emplace<lotus::Script>(
+		        left, lotus::Script{"../scripts/spin.lua"});
 		scene.set_parent(left, root);
 
 		const lotus::Entity right = scene.create("right");
