@@ -1,9 +1,11 @@
 #pragma once
 
+#include <cstdint>
+#include <string>
+#include <vector>
+
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
-
-#include <string>
 
 #include "lotus/ecs.hpp"
 
@@ -40,7 +42,7 @@ struct Hierarchy {
 	Entity prev_sibling{NullEntity};
 };
 
-/// Axis-aligned colored quad drawn in world space.
+/// Axis-aligned coloured quad drawn in world space (2D path).
 struct Sprite {
 	glm::vec4 color{1.0f, 1.0f, 1.0f, 1.0f};
 	glm::vec2 size{1.0f, 1.0f};
@@ -60,6 +62,52 @@ struct Camera2D {
 		const glm::mat4 view =
 		        glm::translate(glm::mat4{1.0f}, glm::vec3{-position, 0.0f});
 		return proj * view;
+	}
+};
+
+/// Indexed triangle mesh. Geometry is transient (resolved from a MeshSource by
+/// lotus::mesh::resolve_mesh); only the source path is serialized.
+struct Mesh {
+	std::vector<glm::vec3> positions;
+	std::vector<glm::vec3> normals;
+	std::vector<std::uint32_t> indices;
+	/// Source this geometry was resolved from, used to detect changes.
+	std::string source;
+
+	bool empty() const { return positions.empty() || indices.empty(); }
+	std::size_t triangle_count() const { return indices.size() / 3; }
+};
+
+/// Serialized reference to mesh geometry: "builtin:cube", "builtin:sphere", or
+/// a path to a .glb file.
+struct MeshSource {
+	std::string path;
+};
+
+/// Surface colour, multiplied into the lighting result.
+struct Material {
+	glm::vec3 base_color{0.82f, 0.82f, 0.86f};
+};
+
+/// Perspective camera.
+///
+/// SDL_GPU uses a zero-to-one depth range (D3D/Metal convention), so this uses
+/// glm's RH zero-to-one projection rather than the OpenGL default.
+struct Camera3D {
+	glm::vec3 position{3.0f, 2.5f, 4.0f};
+	glm::vec3 target{0.0f, 0.0f, 0.0f};
+	glm::vec3 up{0.0f, 1.0f, 0.0f};
+	float fov_degrees{55.0f};
+	float near_plane{0.1f};
+	float far_plane{100.0f};
+
+	glm::mat4 view_projection(float aspect) const
+	{
+		const glm::mat4 view = glm::lookAtRH(position, target, up);
+		const glm::mat4 projection = glm::perspectiveRH_ZO(
+		        glm::radians(fov_degrees), aspect > 0.0f ? aspect : 1.0f,
+		        near_plane, far_plane);
+		return projection * view;
 	}
 };
 

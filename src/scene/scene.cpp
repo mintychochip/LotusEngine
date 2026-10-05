@@ -1,16 +1,14 @@
 #include "lotus/scene/scene.hpp"
 
+#include <cstdint>
+
 #include <glm/gtc/type_ptr.hpp>
 
 #include "lotus/gpu/renderer.hpp"
+#include "lotus/scene/mesh.hpp"
 
 namespace lotus {
 namespace {
-
-struct GpuVertex {
-	float x, y, z;
-	float r, g, b;
-};
 
 void propagate(Registry& registry, Entity entity, const glm::mat4& parent_world)
 {
@@ -132,6 +130,24 @@ const Camera2D* Scene::active_camera() const
 	return nullptr;
 }
 
+Camera3D* Scene::active_camera3d()
+{
+	auto view = registry_.view<Camera3D>();
+	for (const Entity entity : view) {
+		return &view.get<Camera3D>(entity);
+	}
+	return nullptr;
+}
+
+const Camera3D* Scene::active_camera3d() const
+{
+	const auto view = registry_.view<Camera3D>();
+	for (const Entity entity : view) {
+		return &view.get<Camera3D>(entity);
+	}
+	return nullptr;
+}
+
 std::vector<Entity> Scene::roots() const
 {
 	std::vector<Entity> out;
@@ -147,6 +163,27 @@ std::vector<Entity> Scene::roots() const
 void Scene::update(float /*dt*/)
 {
 	update_world_transforms(*this);
+	sync_meshes();
+}
+
+void Scene::sync_meshes()
+{
+	for (const Entity entity : registry_.view<MeshSource>()) {
+		const std::string& path = registry_.get<MeshSource>(entity).path;
+		Mesh* existing          = registry_.try_get<Mesh>(entity);
+		if (existing && existing->source == path) {
+			continue;
+		}
+		Mesh resolved;
+		std::string error;
+		if (!mesh::resolve_mesh(path, resolved, &error)) {
+			last_mesh_error_ = error;
+			continue;
+		}
+		resolved.source = path;
+		registry_.emplace_or_replace<Mesh>(entity, std::move(resolved));
+		last_mesh_error_.clear();
+	}
 }
 
 Entity Scene::find(const std::string& name) const
@@ -163,8 +200,10 @@ Entity Scene::find(const std::string& name) const
 void Scene::upload(GpuRenderer& gpu)
 {
 	std::vector<GpuVertex> vertices;
-	const auto view = registry_.view<Transform, Sprite>();
-	view.each([&](const Transform& transform, const Sprite& sprite) {
+
+	// 2D sprites: axis-aligned quads facing +Z, lit like everything else.
+	const auto sprite_view = registry_.view<Transform, Sprite>();
+	sprite_view.each([&](const Transform& transform, const Sprite& sprite) {
 		const float hx = sprite.size.x * 0.5f;
 		const float hy = sprite.size.y * 0.5f;
 		const glm::vec4 corners[4] = {
@@ -177,22 +216,51 @@ void Scene::upload(GpuRenderer& gpu)
 		for (int i = 0; i < 4; ++i) {
 			world[i] = glm::vec3{transform.world * corners[i]};
 		}
+		const glm::vec3 color{sprite.color};
 		static constexpr int order[6] = {0, 1, 2, 0, 2, 3};
 		for (const int index : order) {
-			vertices.push_back(GpuVertex{world[index].x,
-			                             world[index].y,
-			                             world[index].z,
-			                             sprite.color.r,
-			                             sprite.color.g,
-			                             sprite.color.b});
+			vertices.push_back(
+			        GpuVertex{world[index], glm::vec3{0.0f, 0.0f, 1.0f}, color});
 		}
 	});
 
-	vertex_count_ = static_cast<uint32_t>(vertices.size());
+	// 3D meshes: indices are expanded here because the renderer draws
+	// non-indexed, and positions/normals are transformed to world space on the
+	// CPU so the whole scene stays in one draw call.
+	const auto mesh_view = registry_.view<Transform, Mesh>();
+	mesh_view.each([&](const Entity entity, const Transform& transform,
+	                   const Mesh& mesh) {
+		if (mesh.empty()) {
+			return;
+		}
+		glm::vec3 color{1.0f};
+		if (const Material* material = registry_.try_get<Material>(entity)) {
+			color = material->base_color;
+		}
+		// Correct for rotation and uniform scale; non-uniform scale would need
+		// the inverse transpose.
+		const glm::mat3 normal_matrix = glm::mat3{transform.world};
+
+		for (const std::uint32_t index : mesh.indices) {
+			if (index >= mesh.positions.size()) {
+				continue;
+			}
+			const glm::vec3 position = glm::vec3{
+			        transform.world * glm::vec4{mesh.positions[index], 1.0f}};
+			glm::vec3 normal{0.0f, 0.0f, 1.0f};
+			if (index < mesh.normals.size()) {
+				const glm::vec3 transformed = normal_matrix * mesh.normals[index];
+				if (glm::length(transformed) > 0.0f) {
+					normal = glm::normalize(transformed);
+				}
+			}
+			vertices.push_back(GpuVertex{position, normal, color});
+		}
+	});
+
+	vertex_count_ = static_cast<std::uint32_t>(vertices.size());
 	if (vertex_count_ != 0) {
-		gpu.upload_vertices(vertices.data(),
-		                    static_cast<uint32_t>(vertices.size() *
-		                                          sizeof(GpuVertex)));
+		gpu.upload_vertices(vertices.data(), vertex_count_);
 	}
 }
 
@@ -201,10 +269,20 @@ void Scene::draw(GpuRenderer& gpu, float aspect)
 	if (vertex_count_ == 0) {
 		return;
 	}
-	static const Camera2D fallback{};
-	const Camera2D* camera = active_camera();
-	const glm::mat4 mvp    = (camera ? *camera : fallback).view_projection(aspect);
-	gpu.draw(glm::value_ptr(mvp), vertex_count_);
+	glm::mat4 view_projection{1.0f};
+	glm::vec3 camera_position{0.0f};
+
+	if (const Camera3D* camera = active_camera3d()) {
+		view_projection = camera->view_projection(aspect);
+		camera_position = camera->position;
+	} else {
+		static const Camera2D fallback{};
+		const Camera2D* camera2d = active_camera();
+		const Camera2D& chosen   = camera2d ? *camera2d : fallback;
+		view_projection = chosen.view_projection(aspect);
+		camera_position = glm::vec3{chosen.position, 1.0f};
+	}
+	gpu.draw(view_projection, camera_position, vertex_count_);
 }
 
 void update_world_transforms(Scene& scene)

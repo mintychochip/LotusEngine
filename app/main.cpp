@@ -2,9 +2,7 @@
 #include "lotus/gpu/renderer.hpp"
 #include "lotus/scene/scene.hpp"
 #include "lotus/scene/serialization.hpp"
-#include "lotus/script/script.hpp"
 
-#include <cmath>
 #include <filesystem>
 #include <iostream>
 
@@ -13,35 +11,33 @@ public:
 	using lotus::Application::Application;
 
 protected:
-	void on_ready(lotus::Window& /*window*/, lotus::GpuRenderer& /*gpu*/) override
+	void on_ready(lotus::Window& /*window*/, lotus::GpuRenderer& gpu) override
 	{
+		// Directional light + ambient, applied per fragment.
+		gpu.lighting().direction = {0.5f, 0.9f, 0.4f};
+		gpu.lighting().intensity = 1.0f;
+		gpu.lighting().ambient   = {0.12f, 0.13f, 0.17f};
+
 		lotus::Scene& scene = scenes().activate("main");
 
-		// A parent square with two child squares, to exercise hierarchy.
-		const lotus::Entity root = scene.create("root");
-		scene.registry().emplace<lotus::Sprite>(
-		        root, lotus::Sprite{{0.90f, 0.35f, 0.35f, 1.0f}, {0.5f, 0.5f}});
+		const lotus::Entity cube = scene.create("cube");
+		scene.registry().emplace<lotus::MeshSource>(
+		        cube, lotus::MeshSource{"builtin:cube"});
+		scene.registry().emplace<lotus::Material>(
+		        cube, lotus::Material{{0.85f, 0.34f, 0.28f}});
+		scene.registry().get<lotus::Transform>(cube).position = {-1.1f, 0.0f, 0.0f};
 
-		const lotus::Entity left = scene.create("left");
-		scene.registry().emplace<lotus::Sprite>(
-		        left, lotus::Sprite{{0.35f, 0.85f, 0.45f, 1.0f}, {0.25f, 0.25f}});
-		scene.registry().get<lotus::Transform>(left).position = {-0.8f, 0.0f, 0.0f};
-		// Game code attaches a script; the engine runs and hot-swaps it.
-		scene.registry().emplace<lotus::Script>(
-		        left, lotus::Script{"../scripts/spin.lua"});
-		scene.set_parent(left, root);
+		const lotus::Entity ball = scene.create("ball");
+		scene.registry().emplace<lotus::MeshSource>(
+		        ball, lotus::MeshSource{"builtin:sphere"});
+		scene.registry().emplace<lotus::Material>(
+		        ball, lotus::Material{{0.28f, 0.52f, 0.90f}});
+		scene.registry().get<lotus::Transform>(ball).position = {1.1f, 0.0f, 0.0f};
 
-		const lotus::Entity right = scene.create("right");
-		scene.registry().emplace<lotus::Sprite>(
-		        right, lotus::Sprite{{0.35f, 0.55f, 0.95f, 1.0f}, {0.25f, 0.25f}});
-		scene.registry().get<lotus::Transform>(right).position = {0.8f, 0.0f, 0.0f};
-		scene.set_parent(right, root);
-
-		// Camera is an ordinary entity component.
 		const lotus::Entity camera = scene.create("camera");
-		scene.registry().emplace<lotus::Camera2D>(camera);
+		scene.registry().emplace<lotus::Camera3D>(camera);
 
-		// Write the scene out and watch it: edit the JSON and it reloads live.
+		// Persist and watch the scene so file edits hot-reload.
 		std::error_code error;
 		std::filesystem::create_directories("scenes", error);
 		const std::string path = "scenes/main.json";
@@ -49,7 +45,7 @@ protected:
 		if (lotus::save_scene(scene, path, &save_error)) {
 			watch_scene(path);
 		} else {
-			std::cout << "could not write " << path << ": " << save_error << '\n';
+			std::cerr << "could not write " << path << ": " << save_error << '\n';
 		}
 	}
 
@@ -59,13 +55,15 @@ protected:
 		if (!scene) {
 			return;
 		}
-		// Look the entity up by name: a hot reload replaces the registry, so
-		// cached handles would dangle.
-		const lotus::Entity root = scene->find("root");
-		if (root == lotus::NullEntity) {
-			return;
+		// Look entities up by name: a hot reload replaces the registry.
+		if (const lotus::Entity cube = scene->find("cube");
+		    cube != lotus::NullEntity) {
+			scene->registry().get<lotus::Transform>(cube).rotation.y += dt * 0.7f;
 		}
-		scene->registry().get<lotus::Transform>(root).rotation.z += dt * 0.8f;
+		if (const lotus::Entity ball = scene->find("ball");
+		    ball != lotus::NullEntity) {
+			scene->registry().get<lotus::Transform>(ball).rotation.x += dt * 0.4f;
+		}
 	}
 
 	void on_shutdown() override {}
@@ -75,7 +73,7 @@ int main()
 {
 	try {
 		DemoApplication app;
-		app.run(960, 600, "lotus");
+		app.run(1100, 700, "lotus");
 	} catch (const std::exception& ex) {
 		std::cerr << "lotus: " << ex.what() << '\n';
 		return 1;

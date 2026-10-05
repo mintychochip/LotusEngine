@@ -40,6 +40,10 @@ public:
 	Camera2D* active_camera();
 	const Camera2D* active_camera() const;
 
+	/// First entity carrying a Camera3D component, or nullptr if none.
+	Camera3D* active_camera3d();
+	const Camera3D* active_camera3d() const;
+
 	/// Root entities (Hierarchy::parent == NullEntity).
 	std::vector<Entity> roots() const;
 
@@ -57,10 +61,16 @@ public:
 	uint32_t vertex_count() const { return vertex_count_; }
 	uint32_t draw_calls() const { return vertex_count_ ? 1u : 0u; }
 
+	/// Last mesh-resolution error (empty when the last resolve succeeded).
+	const std::string& last_mesh_error() const { return last_mesh_error_; }
+
 private:
+	void sync_meshes();
+
 	std::string name_;
 	Registry registry_;
 	uint32_t vertex_count_{0};
+	std::string last_mesh_error_;
 };
 
 /// Recomputes Transform::world for every entity, depth-first from the roots.

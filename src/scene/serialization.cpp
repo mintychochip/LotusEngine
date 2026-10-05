@@ -126,6 +126,65 @@ void from_json(const nlohmann::json& j, Script& s)
 	}
 }
 
+void to_json(nlohmann::json& j, const MeshSource& m)
+{
+	j = nlohmann::json{{"path", m.path}};
+}
+
+void from_json(const nlohmann::json& j, MeshSource& m)
+{
+	if (j.is_object() && j.contains("path") && j.at("path").is_string()) {
+		m.path = j.at("path").get<std::string>();
+	}
+}
+
+void to_json(nlohmann::json& j, const Material& m)
+{
+	j = nlohmann::json{{"base_color", arr3(m.base_color.x, m.base_color.y,
+	                                       m.base_color.z)}};
+}
+
+void from_json(const nlohmann::json& j, Material& m)
+{
+	if (j.contains("base_color") && j.at("base_color").is_array() &&
+	    j.at("base_color").size() == 3) {
+		const auto& c = j.at("base_color");
+		m.base_color  = {c[0].get<float>(), c[1].get<float>(), c[2].get<float>()};
+	}
+}
+
+void to_json(nlohmann::json& j, const Camera3D& c)
+{
+	j = nlohmann::json{
+	        {"position", arr3(c.position.x, c.position.y, c.position.z)},
+	        {"target", arr3(c.target.x, c.target.y, c.target.z)},
+	        {"fov_degrees", tidy(c.fov_degrees)},
+	        {"near_plane", tidy(c.near_plane)},
+	        {"far_plane", tidy(c.far_plane)}};
+}
+
+void from_json(const nlohmann::json& j, Camera3D& c)
+{
+	const auto read3 = [&](const char* key, glm::vec3& out) {
+		if (!j.contains(key) || !j.at(key).is_array() || j.at(key).size() != 3) {
+			return;
+		}
+		const auto& a = j.at(key);
+		out = {a[0].get<float>(), a[1].get<float>(), a[2].get<float>()};
+	};
+	read3("position", c.position);
+	read3("target", c.target);
+	if (j.contains("fov_degrees") && j.at("fov_degrees").is_number()) {
+		c.fov_degrees = j.at("fov_degrees").get<float>();
+	}
+	if (j.contains("near_plane") && j.at("near_plane").is_number()) {
+		c.near_plane = j.at("near_plane").get<float>();
+	}
+	if (j.contains("far_plane") && j.at("far_plane").is_number()) {
+		c.far_plane = j.at("far_plane").get<float>();
+	}
+}
+
 // --- codec registry --------------------------------------------------------
 
 void ComponentCodecs::add(std::string name, WriteFn write, ReadFn read)
@@ -204,6 +263,45 @@ const ComponentCodecs& default_component_codecs()
 		        },
 		        [](Registry& r, Entity e, const nlohmann::json& j) {
 			        r.emplace_or_replace<Script>(e, j.get<Script>());
+		        });
+		c.add(
+		        "MeshSource",
+		        [](const Registry& r, Entity e, nlohmann::json& j) {
+			        const auto* value = r.try_get<MeshSource>(e);
+			        if (!value) {
+				        return false;
+			        }
+			        j = *value;
+			        return true;
+		        },
+		        [](Registry& r, Entity e, const nlohmann::json& j) {
+			        r.emplace_or_replace<MeshSource>(e, j.get<MeshSource>());
+		        });
+		c.add(
+		        "Material",
+		        [](const Registry& r, Entity e, nlohmann::json& j) {
+			        const auto* value = r.try_get<Material>(e);
+			        if (!value) {
+				        return false;
+			        }
+			        j = *value;
+			        return true;
+		        },
+		        [](Registry& r, Entity e, const nlohmann::json& j) {
+			        r.emplace_or_replace<Material>(e, j.get<Material>());
+		        });
+		c.add(
+		        "Camera3D",
+		        [](const Registry& r, Entity e, nlohmann::json& j) {
+			        const auto* value = r.try_get<Camera3D>(e);
+			        if (!value) {
+				        return false;
+			        }
+			        j = *value;
+			        return true;
+		        },
+		        [](Registry& r, Entity e, const nlohmann::json& j) {
+			        r.emplace_or_replace<Camera3D>(e, j.get<Camera3D>());
 		        });
 		return c;
 	}();
