@@ -1640,7 +1640,7 @@ uint32_t GpuRenderer::pyramid_level_count(uint32_t width, uint32_t height) const
 {
 	uint32_t count = 1;
 	for (uint32_t m = std::min(width, height); m > 1; ++count) {
-		m = m > 1 ? m / 2 : 1;
+		m /= 2;
 	}
 	return count;
 }
