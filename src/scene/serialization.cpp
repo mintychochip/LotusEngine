@@ -10,7 +10,7 @@
 
 namespace lotus {
 
-// --- component converters (namespace lotus, so ADL finds them) ---
+// --- helpers ---------------------------------------------------------------
 
 namespace {
 
@@ -37,6 +37,8 @@ nlohmann::json arr4(float x, float y, float z, float w)
 }
 
 } // namespace
+
+// --- component converters (namespace lotus, so ADL finds them) --------------
 
 void to_json(nlohmann::json& j, const Name& value)
 {
@@ -95,9 +97,8 @@ void from_json(const nlohmann::json& j, Sprite& s)
 
 void to_json(nlohmann::json& j, const Camera2D& c)
 {
-	j = nlohmann::json{
-	        {"position", arr2(c.position.x, c.position.y)},
-	        {"zoom", tidy(c.zoom)}};
+	j = nlohmann::json{{"position", arr2(c.position.x, c.position.y)},
+	                   {"zoom", tidy(c.zoom)}};
 }
 
 void from_json(const nlohmann::json& j, Camera2D& c)
@@ -112,7 +113,7 @@ void from_json(const nlohmann::json& j, Camera2D& c)
 	}
 }
 
-// --- codec registry ---
+// --- codec registry --------------------------------------------------------
 
 void ComponentCodecs::add(std::string name, WriteFn write, ReadFn read)
 {
@@ -153,45 +154,94 @@ const ComponentCodecs& default_component_codecs()
 			        r.emplace_or_replace<Transform>(e, j.get<Transform>());
 		        });
 		c.add(
-	        "Sprite",
-	        [](const Registry& r, Entity e, nlohmann::json& j) {
-		        const auto* value = r.try_get<Sprite>(e);
-		        if (!value) {
-			        return false;
-		        }
-		        j = *value;
-		        return true;
-	        },
-	        [](Registry& r, Entity e, const nlohmann::json& j) {
-		        r.emplace_or_replace<Sprite>(e, j.get<Sprite>());
-	        });
+		        "Sprite",
+		        [](const Registry& r, Entity e, nlohmann::json& j) {
+			        const auto* value = r.try_get<Sprite>(e);
+			        if (!value) {
+				        return false;
+			        }
+			        j = *value;
+			        return true;
+		        },
+		        [](Registry& r, Entity e, const nlohmann::json& j) {
+			        r.emplace_or_replace<Sprite>(e, j.get<Sprite>());
+		        });
 		c.add(
-	        "Camera2D",
-	        [](const Registry& r, Entity e, nlohmann::json& j) {
-		        const auto* value = r.try_get<Camera2D>(e);
-		        if (!value) {
-			        return false;
-		        }
-		        j = *value;
-		        return true;
-	        },
-	        [](Registry& r, Entity e, const nlohmann::json& j) {
-		        r.emplace_or_replace<Camera2D>(e, j.get<Camera2D>());
-	        });
+		        "Camera2D",
+		        [](const Registry& r, Entity e, nlohmann::json& j) {
+			        const auto* value = r.try_get<Camera2D>(e);
+			        if (!value) {
+				        return false;
+			        }
+			        j = *value;
+			        return true;
+		        },
+		        [](Registry& r, Entity e, const nlohmann::json& j) {
+			        r.emplace_or_replace<Camera2D>(e, j.get<Camera2D>());
+		        });
 		return c;
 	}();
 	return codecs;
 }
 
-// --- scene <-> json ---
+// --- scene -> text ---------------------------------------------------------
 
 namespace {
 
-nlohmann::json entity_to_json(const Registry& registry, Entity entity,
-                              const ComponentCodecs& codecs)
+/// Compact single-line JSON. Keeps vectors inline so a Transform is one line
+/// instead of twelve, which matters for hand- and AI-authored diffs.
+std::string dump_compact(const nlohmann::json& value)
 {
-	nlohmann::json out;
-	out["name"] = registry.get<Name>(entity).value;
+	switch (value.type()) {
+	case nlohmann::json::value_t::null:
+		return "null";
+	case nlohmann::json::value_t::boolean:
+		return value.get<bool>() ? "true" : "false";
+	case nlohmann::json::value_t::string:
+		return value.dump();
+	case nlohmann::json::value_t::number_integer:
+		return std::to_string(value.get<long long>());
+	case nlohmann::json::value_t::number_unsigned:
+		return std::to_string(value.get<unsigned long long>());
+	case nlohmann::json::value_t::number_float:
+		return value.dump();
+	case nlohmann::json::value_t::array: {
+		std::string out = "[";
+		for (std::size_t i = 0; i < value.size(); ++i) {
+			if (i != 0) {
+				out += ", ";
+			}
+			out += dump_compact(value[i]);
+		}
+		return out + "]";
+	}
+	case nlohmann::json::value_t::object: {
+		std::string out = "{";
+		bool first      = true;
+		for (auto it = value.begin(); it != value.end(); ++it) {
+			if (!first) {
+				out += ", ";
+			}
+			first = false;
+			out += nlohmann::json(it.key()).dump();
+			out += ": ";
+			out += dump_compact(it.value());
+		}
+		return out + "}";
+	}
+	default:
+		return value.dump();
+	}
+}
+
+void write_entity(std::ostringstream& out, const Registry& registry,
+                  Entity entity, const ComponentCodecs& codecs,
+                  const std::string& indent)
+{
+	const std::string inner = indent + "  ";
+	out << indent << "{\n";
+	out << inner << "\"name\": "
+	    << nlohmann::json(registry.get<Name>(entity).value).dump();
 
 	nlohmann::json components = nlohmann::json::object();
 	for (const std::string& name : codecs.names()) {
@@ -202,20 +252,41 @@ nlohmann::json entity_to_json(const Registry& registry, Entity entity,
 		}
 	}
 	if (!components.empty()) {
-		out["components"] = std::move(components);
+		out << ",\n" << inner << "\"components\": {\n";
+		bool first = true;
+		for (auto it = components.begin(); it != components.end(); ++it) {
+			if (!first) {
+				out << ",\n";
+			}
+			first = false;
+			out << inner << "  " << nlohmann::json(it.key()).dump() << ": "
+			    << dump_compact(it.value());
+		}
+		out << "\n" << inner << "}";
 	}
 
-	nlohmann::json children = nlohmann::json::array();
-	const auto& hierarchy    = registry.get<Hierarchy>(entity);
-	for (Entity child = hierarchy.first_child; child != NullEntity;
-	     child         = registry.get<Hierarchy>(child).next_sibling) {
-		children.push_back(entity_to_json(registry, child, codecs));
+	const auto& hierarchy = registry.get<Hierarchy>(entity);
+	if (hierarchy.first_child != NullEntity) {
+		out << ",\n" << inner << "\"children\": [\n";
+		bool first = true;
+		for (Entity child = hierarchy.first_child; child != NullEntity;
+		     child         = registry.get<Hierarchy>(child).next_sibling) {
+			if (!first) {
+				out << ",\n";
+			}
+			first = false;
+			write_entity(out, registry, child, codecs, inner + "  ");
+		}
+		out << "\n" << inner << "]";
 	}
-	if (!children.empty()) {
-		out["children"] = std::move(children);
-	}
-	return out;
+	out << "\n" << indent << "}";
 }
+
+} // namespace
+
+// --- json -> scene ---------------------------------------------------------
+
+namespace {
 
 Entity entity_from_json(Scene& scene, const nlohmann::json& j,
                         const ComponentCodecs& codecs,
@@ -260,20 +331,24 @@ Entity entity_from_json(Scene& scene, const nlohmann::json& j,
 
 } // namespace
 
-std::string to_json_string(const Scene& scene, int indent)
+std::string to_json_string(const Scene& scene)
 {
 	const ComponentCodecs& codecs = default_component_codecs();
-	nlohmann::json root;
-	root["version"] = kSceneFormatVersion;
-	root["name"]    = scene.name();
-
-	nlohmann::json entities = nlohmann::json::array();
-	for (const Entity root_entity : scene.roots()) {
-		entities.push_back(
-		        entity_to_json(scene.registry(), root_entity, codecs));
+	std::ostringstream out;
+	out << "{\n";
+	out << "  \"version\": " << kSceneFormatVersion << ",\n";
+	out << "  \"name\": " << nlohmann::json(scene.name()).dump() << ",\n";
+	out << "  \"entities\": [\n";
+	bool first = true;
+	for (const Entity root : scene.roots()) {
+		if (!first) {
+			out << ",\n";
+		}
+		first = false;
+		write_entity(out, scene.registry(), root, codecs, "    ");
 	}
-	root["entities"] = std::move(entities);
-	return root.dump(indent);
+	out << "\n  ]\n}";
+	return out.str();
 }
 
 bool scene_from_json(Scene& scene, const std::string& text, std::string* error)

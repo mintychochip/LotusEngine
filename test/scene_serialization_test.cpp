@@ -108,12 +108,39 @@ TEST(SceneSerialization, MalformedJsonLeavesSceneUntouched)
 {
 	Scene scene{"live"};
 	const Entity survivor = scene.create("survivor");
+	scene.registry().get<Transform>(survivor).position = {7.0f, 8.0f, 0.0f};
+	scene.registry().emplace<Sprite>(survivor,
+	                                 Sprite{{0.25f, 0.5f, 0.75f, 1.0f}, {2.0f, 3.0f}});
 
 	std::string error;
 	EXPECT_FALSE(scene_from_json(scene, "{ this is not json", &error));
 	EXPECT_FALSE(error.empty());
+
+	// The live scene must be byte-for-byte intact: entity count, names,
+	// and component values.
 	EXPECT_TRUE(scene.registry().valid(survivor));
+	EXPECT_EQ(scene.registry().view<Name>().size(), 1u);
 	EXPECT_NE(find_by_name(scene, "survivor"), NullEntity);
+	EXPECT_FLOAT_EQ(scene.registry().get<Transform>(survivor).position.x, 7.0f);
+	EXPECT_FLOAT_EQ(scene.registry().get<Transform>(survivor).position.y, 8.0f);
+	const auto& sprite = scene.registry().get<Sprite>(survivor);
+	EXPECT_FLOAT_EQ(sprite.color.b, 0.75f);
+	EXPECT_FLOAT_EQ(sprite.size.y, 3.0f);
+}
+
+TEST(SceneSerialization, VectorsAreInline)
+{
+	Scene scene{"s"};
+	const Entity e = scene.create("e");
+	scene.registry().emplace<Sprite>(e, Sprite{});
+	const std::string text = to_json_string(scene);
+
+	// Readability contract: a Transform is one line, not twelve.
+	EXPECT_NE(text.find("\"position\": [0.0, 0.0, 0.0]"), std::string::npos)
+	        << text;
+	EXPECT_NE(text.find("\"scale\": [1.0, 1.0, 1.0]"), std::string::npos) << text;
+	// And floats are rounded, not float32->double noise.
+	EXPECT_EQ(text.find("000000"), std::string::npos) << text;
 }
 
 TEST(SceneSerialization, UnsupportedVersionIsRejected)

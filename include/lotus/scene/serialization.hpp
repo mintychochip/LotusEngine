@@ -46,8 +46,8 @@ private:
 /// components.
 const ComponentCodecs& default_component_codecs();
 
-/// Serializes a scene (roots, recursively) to a JSON document.
-std::string to_json_string(const Scene& scene, int indent = 2);
+/// Serializes a scene (roots, recursively) to JSON text.
+std::string to_json_string(const Scene& scene);
 
 /// Replaces \p scene from JSON. Parses into a temporary scene first, so a
 /// malformed document leaves \p scene untouched. Unknown components are
