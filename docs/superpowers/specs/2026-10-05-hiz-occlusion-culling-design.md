@@ -94,7 +94,7 @@ bool occluded(const glm::mat4& view, const glm::mat4& view_projection,
 Steps:
 
 1. Transform the sphere centre by `view`. Reject when `center_view.z > -radius`, since the sphere straddles the near plane.
-2. Project the eight corners of the sphere's view-space AABB, divide by `w`, and take the screen-space min and max as the sphere's pixel AABB. Reject when any corner has `w <= 0`.
+2. Project the eight corners of the sphere's **world-space** AABB, divide by `w`, and take the screen-space min and max as the sphere's pixel AABB. Reject when any corner has `w <= 0`. The corners must be built in world space: `view_projection` is `projection * view`, so feeding it a view-space point applies `view` twice, halves every footprint, and — because fewer texels get sampled — makes a false cull more likely, not less. `view` is used only for the linear-depth term in step 6. A world-space AABB is larger than the sphere for a rotated camera, which is the conservative direction: the screen image of a convex superset contains that of the sphere, so the maximum over the footprint can only grow, and a cull only has to clear a larger bar.
 3. Reject when the AABB does not overlap the viewport.
 4. Inflate the radius by 2% before this point, so an entity does not occlude itself and flicker as the camera moves.
 5. Always read mip K. Do not select a level from the footprint size.

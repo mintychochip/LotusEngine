@@ -914,8 +914,11 @@ bool DepthPyramid::occluded(const glm::mat4& view,
 		const glm::vec3 offset{(corner & 1) ? radius : -radius,
 		                       (corner & 2) ? radius : -radius,
 		                       (corner & 4) ? radius : -radius};
+		// Corners are built in WORLD space: view_projection already contains
+		// view, so a view-space point here would apply view twice and halve the
+		// footprint, which makes a false cull MORE likely.
 		const glm::vec4 clip =
-		        view_projection * glm::vec4{view_center + offset, 1.0f};
+		        view_projection * glm::vec4{world_sphere.center + offset, 1.0f};
 		if (clip.w <= 0.0f) {
 			return false;
 		}
