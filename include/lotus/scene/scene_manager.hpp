@@ -29,6 +29,9 @@ public:
 
 	std::size_t count() const { return scenes_.size(); }
 
+	/// Names of all scenes, sorted.
+	std::vector<std::string> names() const;
+
 private:
 	std::unordered_map<std::string, std::unique_ptr<Scene>> scenes_;
 	std::string active_name_;

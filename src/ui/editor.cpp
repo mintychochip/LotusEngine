@@ -8,7 +8,9 @@
 #include <cstring>
 #include <utility>
 
+#include "lotus/console/console.hpp"
 #include "lotus/gpu/renderer.hpp"
+#include "lotus/input/keybinds.hpp"
 #include "lotus/scene/scene.hpp"
 #include "lotus/scene/scene_manager.hpp"
 
@@ -83,19 +85,23 @@ void Editor::process_event(const SDL_Event& event)
 	if (!initialized_) {
 		return;
 	}
-	if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_F1 &&
-	    !event.key.repeat) {
-		toggle();
-	}
-	const bool ctrl = (event.key.mod & SDL_KMOD_CTRL) != 0;
-	if (event.type == SDL_EVENT_KEY_DOWN && ctrl && !event.key.repeat) {
-		if (event.key.key == SDLK_Z) {
-			undo_requested_ = true;
-		} else if (event.key.key == SDLK_Y) {
-			redo_requested_ = true;
-		}
-	}
+	// Key handling is driven by Keybinds in Application; ImGui just sees the
+	// event so text fields and shortcuts it owns still work.
 	ImGui_ImplSDL3_ProcessEvent(&event);
+}
+
+bool Editor::captures_keyboard() const
+{
+	if (!initialized_ || !visible_) {
+		return false;
+	}
+	return ImGui::GetIO().WantCaptureKeyboard;
+}
+
+void Editor::set_keybinds(Keybinds* keybinds, std::function<void()> on_save)
+{
+	keybinds_       = keybinds;
+	save_keybinds_  = std::move(on_save);
 }
 
 void Editor::begin_frame()
@@ -145,6 +151,110 @@ void Editor::draw(SceneManager& scenes, float dt)
 	}
 	draw_stats(scenes, dt);
 	draw_scene_panel();
+	draw_console();
+	draw_keybinds();
+}
+
+void Editor::draw_console()
+{
+	if (!console_ || !console_visible_) {
+		return;
+	}
+	ImGui::SetNextWindowSize(ImVec2(680, 300), ImGuiCond_FirstUseEver);
+	if (ImGui::Begin("Console", &console_visible_)) {
+		const float footer =
+		        ImGui::GetStyle().ItemSpacing.y + ImGui::GetFrameHeightWithSpacing();
+		ImGui::BeginChild("##log", ImVec2(0, -footer), ImGuiChildFlags_Borders);
+		for (const ConsoleEntry& entry : console_->entries()) {
+			ImVec4 color{0.85f, 0.85f, 0.85f, 1.0f};
+			if (entry.level == LogLevel::Warning) {
+				color = ImVec4{1.0f, 0.8f, 0.3f, 1.0f};
+			} else if (entry.level == LogLevel::Error) {
+				color = ImVec4{1.0f, 0.4f, 0.4f, 1.0f};
+			}
+			ImGui::PushStyleColor(ImGuiCol_Text, color);
+			ImGui::TextUnformatted(entry.text.c_str());
+			ImGui::PopStyleColor();
+		}
+		if (console_scroll_) {
+			ImGui::SetScrollHereY(1.0f);
+			console_scroll_ = false;
+		}
+		ImGui::EndChild();
+
+		if (refocus_console_) {
+			ImGui::SetKeyboardFocusHere();
+			refocus_console_ = false;
+		}
+		ImGui::SetNextItemWidth(-1);
+		if (ImGui::InputTextWithHint("##command", "command (try: help)",
+		                             console_input_, sizeof(console_input_),
+		                             ImGuiInputTextFlags_EnterReturnsTrue)) {
+			const std::string line = console_input_;
+			if (!line.empty()) {
+				console_history_.push_back(line);
+				console_->execute(line);
+				console_scroll_ = true;
+			}
+			console_input_[0]     = '\0';
+			console_history_pos_  = -1;
+			refocus_console_      = true;
+		}
+		if (ImGui::IsItemActive() && !console_history_.empty()) {
+			if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
+				if (console_history_pos_ < 0) {
+					console_history_pos_ =
+					        static_cast<int>(console_history_.size());
+				}
+				if (console_history_pos_ > 0) {
+					--console_history_pos_;
+					std::snprintf(console_input_,
+					              sizeof(console_input_),
+					              "%s",
+					              console_history_[console_history_pos_].c_str());
+				}
+			}
+			if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
+				if (console_history_pos_ >= 0 &&
+				    console_history_pos_ + 1 <
+				            static_cast<int>(console_history_.size())) {
+					++console_history_pos_;
+					std::snprintf(console_input_,
+					              sizeof(console_input_),
+					              "%s",
+					              console_history_[console_history_pos_].c_str());
+				} else {
+					console_history_pos_ = -1;
+					console_input_[0]    = '\0';
+				}
+			}
+		}
+	}
+	ImGui::End();
+}
+
+void Editor::draw_keybinds()
+{
+	if (!keybinds_) {
+		return;
+	}
+	ImGui::SetNextWindowSize(ImVec2(360, 260), ImGuiCond_FirstUseEver);
+	if (ImGui::Begin("Keybinds")) {
+		if (ImGui::Button("Save keybinds") && save_keybinds_) {
+			save_keybinds_();
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Reset to defaults")) {
+			keybinds_->reset_to_defaults();
+		}
+		ImGui::Separator();
+		for (const auto& [action, chord] : keybinds_->bindings()) {
+			ImGui::Text("%s", action.c_str());
+			ImGui::SameLine(170.0f);
+			ImGui::TextDisabled("%s", chord.to_string().c_str());
+		}
+	}
+	ImGui::End();
 }
 
 void Editor::draw_hierarchy(Scene& scene)

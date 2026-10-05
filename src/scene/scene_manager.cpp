@@ -58,4 +58,15 @@ Scene& SceneManager::activate(const std::string& name)
 	return created;
 }
 
+std::vector<std::string> SceneManager::names() const
+{
+	std::vector<std::string> out;
+	out.reserve(scenes_.size());
+	for (const auto& [name, scene] : scenes_) {
+		(void)scene;
+		out.push_back(name);
+	}
+	return out;
+}
+
 } // namespace lotus

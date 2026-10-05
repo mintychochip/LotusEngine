@@ -13,10 +13,8 @@ public:
 	using lotus::Application::Application;
 
 protected:
-	void on_ready(lotus::Window& /*window*/, lotus::GpuRenderer& gpu) override
+	void on_ready(lotus::Window& /*window*/, lotus::GpuRenderer& /*gpu*/) override
 	{
-		std::cout << "gpu driver: " << gpu.driver_name() << '\n';
-
 		lotus::Scene& scene = scenes().activate("main");
 
 		// A parent square with two child squares, to exercise hierarchy.

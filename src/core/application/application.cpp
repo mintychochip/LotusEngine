@@ -7,8 +7,35 @@
 #include <cstdlib>
 #include <iostream>
 #include <stdexcept>
+#include <vector>
 
 using namespace lotus;
+
+namespace {
+
+std::string trim(const std::string& text)
+{
+	const auto begin = text.find_first_not_of(" \t\r\n");
+	if (begin == std::string::npos) {
+		return {};
+	}
+	const auto end = text.find_last_not_of(" \t\r\n");
+	return text.substr(begin, end - begin + 1);
+}
+
+std::string join_from(const std::vector<std::string>& parts, std::size_t from)
+{
+	std::string out;
+	for (std::size_t i = from; i < parts.size(); ++i) {
+		if (!out.empty()) {
+			out += ' ';
+		}
+		out += parts[i];
+	}
+	return out;
+}
+
+} // namespace
 
 void Application::on_start()
 {
@@ -16,6 +43,136 @@ void Application::on_start()
 		throw std::runtime_error(SDL_GetError());
 	}
 	Global::flag(LOTUS_SDL_INITIALIZED, true);
+}
+
+void Application::register_commands()
+{
+	console_.add_command("help", "list commands",
+	                     [this](const std::vector<std::string>&) {
+		                     std::string out = "commands:";
+		                     for (const auto& [name, help] : console_.commands()) {
+			                     out += "\n  " + name;
+			                     if (!help.empty()) {
+				                     out += " - " + help;
+			                     }
+		                     }
+		                     return out;
+	                     });
+	console_.add_command("clear", "clear the console",
+	                     [this](const std::vector<std::string>&) {
+		                     console_.clear();
+		                     return std::string{};
+	                     });
+	console_.add_command("echo", "print the arguments",
+	                     [](const std::vector<std::string>& args) {
+		                     return join_from(args, 0);
+	                     });
+	console_.add_command("quit", "stop the engine",
+	                     [this](const std::vector<std::string>&) {
+		                     quit_requested_ = true;
+		                     return std::string{"bye"};
+	                     });
+	console_.add_command("scene.save", "save the active scene",
+	                     [this](const std::vector<std::string>&) {
+		                     std::string error;
+		                     if (!save_scene_now(&error)) {
+			                     return std::string{"save failed: "} + error;
+		                     }
+		                     return scene_status_;
+	                     });
+	console_.add_command("scene.reload", "reload the active scene from disk",
+	                     [this](const std::vector<std::string>&) {
+		                     std::string error;
+		                     if (!reload_scene_now(&error)) {
+			                     return std::string{"reload failed: "} + error;
+		                     }
+		                     return scene_status_;
+	                     });
+	console_.add_command("scene.list", "list scenes",
+	                     [this](const std::vector<std::string>&) {
+		                     std::string out;
+		                     for (const std::string& name : scenes_.names()) {
+			                     if (!out.empty()) {
+				                     out += '\n';
+			                     }
+			                     out += (name == scenes_.active_name() ? "* " : "  ");
+			                     out += name;
+		                     }
+		                     return out.empty() ? std::string{"(no scenes)"} : out;
+	                     });
+	console_.add_command(
+	        "entity.list", "list entities in the active scene",
+	        [this](const std::vector<std::string>&) {
+		        Scene* scene = scenes_.active();
+		        if (!scene) {
+			        return std::string{"no active scene"};
+		        }
+		        std::string out;
+		        for (const Entity entity : scene->registry().view<Name>()) {
+			        if (!out.empty()) {
+				        out += '\n';
+			        }
+			        out += scene->registry().get<Name>(entity).value;
+		        }
+		        return out.empty() ? std::string{"(no entities)"} : out;
+	        });
+	console_.add_command(
+	        "script.reload", "reload all scripts in the active scene",
+	        [this](const std::vector<std::string>&) {
+		        Scene* scene = scenes_.active();
+		        if (!scene) {
+			        return std::string{"no active scene"};
+		        }
+		        std::string error;
+		        if (!scripts_.sync(*scene, &error)) {
+			        return std::string{"script error: "} + error;
+		        }
+		        return std::string{"scripts reloaded"};
+	        });
+	console_.add_command("keybinds.list", "list key bindings",
+	                     [this](const std::vector<std::string>&) {
+		                     std::string out;
+		                     for (const auto& [action, chord] : keybinds_.bindings()) {
+			                     if (!out.empty()) {
+				                     out += '\n';
+			                     }
+			                     out += action + " = " + chord.to_string();
+		                     }
+		                     return out;
+	                     });
+	console_.add_command("keybinds.save", "write keybinds.json",
+	                     [this](const std::vector<std::string>&) {
+		                     std::string error;
+		                     if (!keybinds_.save(keybinds_path_, &error)) {
+			                     return error;
+		                     }
+		                     return std::string{"saved "} + keybinds_path_;
+	                     });
+}
+
+void Application::handle_action(const std::string& action)
+{
+	if (action == "editor.toggle") {
+		editor_.toggle();
+	} else if (action == "console.toggle") {
+		editor_.toggle_console();
+	} else if (action == "undo") {
+		editor_.request_undo();
+	} else if (action == "redo") {
+		editor_.request_redo();
+	} else if (action == "scene.save") {
+		std::string error;
+		if (!save_scene_now(&error)) {
+			console_.warn(error);
+		}
+	} else if (action == "scene.reload") {
+		std::string error;
+		if (!reload_scene_now(&error)) {
+			console_.warn(error);
+		}
+	} else if (action == "quit") {
+		quit_requested_ = true;
+	}
 }
 
 void Application::watch_scene(const std::string& path)
@@ -82,13 +239,13 @@ void Application::poll_hot_reload()
 		}
 		std::string error;
 		if (!reload_scene_now(&error)) {
-			std::cout << "hot reload rejected: " << error << '\n';
+			console_.warn("hot reload rejected: " + error);
 		} else {
 			const Scene* scene = scenes_.active();
 			const std::size_t count =
 			        scene ? scene->registry().view<Name>().size() : 0;
-			std::cout << "hot reloaded " << scene_path_ << " (" << count
-			          << " entities)\n";
+			console_.info("hot reloaded " + scene_path_ + " (" +
+			              std::to_string(count) + " entities)");
 		}
 	}
 }
@@ -107,15 +264,41 @@ void Application::run(int width, int height, const std::string& title)
 			}
 		}
 
+		register_commands();
+		console_.set_sink([](const ConsoleEntry& entry) {
+			std::cout << entry.text << '\n';
+		});
+		console_.info(std::string{"gpu driver: "} + gpu.driver_name());
+
+		// Keybinds: load from disk, or write the defaults so they are editable.
+		std::string keybind_error;
+		if (!keybinds_.load(keybinds_path_, &keybind_error)) {
+			keybinds_ = default_keybinds();
+			keybinds_.save(keybinds_path_, nullptr);
+			console_.info("wrote default keybinds to " + keybinds_path_);
+		} else if (!keybind_error.empty()) {
+			console_.warn(keybind_error);
+		}
+
+		editor_.set_console(&console_);
+		editor_.set_keybinds(&keybinds_, [this] {
+			std::string error;
+			if (!keybinds_.save(keybinds_path_, &error)) {
+				console_.warn(error);
+			} else {
+				console_.info("saved " + keybinds_path_);
+			}
+		});
+
 		on_ready(window, gpu);
 
-		scripts_.set_log([](const std::string& message) {
-			std::cout << message << '\n';
+		scripts_.set_log([this](const std::string& message) {
+			console_.info(message);
 		});
 		if (Scene* scene = scenes_.active()) {
 			std::string error;
 			if (!scripts_.sync(*scene, &error)) {
-				std::cout << "script load: " << error << '\n';
+				console_.warn("script load: " + error);
 			}
 		}
 
@@ -124,6 +307,27 @@ void Application::run(int width, int height, const std::string& title)
 		        [this] { return scene_status_; },
 		        [this] { save_scene_now(); },
 		        [this] { reload_scene_now(); }});
+
+		// Scriptable console: LOTUS_CONSOLE="cmd; cmd; ..." runs at startup,
+		// which makes the console usable from automation and by agents.
+		if (const char* script = std::getenv("LOTUS_CONSOLE")) {
+			const std::string list = script;
+			std::size_t start      = 0;
+			while (start <= list.size()) {
+				const std::size_t end = list.find(';', start);
+				const std::string command = trim(list.substr(
+				        start,
+				        end == std::string::npos ? std::string::npos
+				                                 : end - start));
+				if (!command.empty()) {
+					console_.execute(command);
+				}
+				if (end == std::string::npos) {
+					break;
+				}
+				start = end + 1;
+			}
+		}
 
 		int max_frames = 0;
 		if (const char* env = std::getenv("LOTUS_MAX_FRAMES")) {
@@ -134,9 +338,16 @@ void Application::run(int width, int height, const std::string& title)
 		Uint64 last_counter = SDL_GetPerformanceCounter();
 		const double freq   = static_cast<double>(SDL_GetPerformanceFrequency());
 
-		while (!window.should_close()) {
+		while (!window.should_close() && !quit_requested_) {
 			window.poll_events([this](const SDL_Event& event) {
+				const bool captured = editor_.captures_keyboard();
 				editor_.process_event(event);
+				if (!captured) {
+					const std::string action = keybinds_.action_for(event);
+					if (!action.empty()) {
+						handle_action(action);
+					}
+				}
 			});
 
 			const Uint64 now = SDL_GetPerformanceCounter();

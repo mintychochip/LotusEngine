@@ -4,22 +4,25 @@
 
 #include <functional>
 #include <string>
+#include <vector>
 
 #include "lotus/ecs.hpp"
 #include "lotus/scene/history.hpp"
 
 namespace lotus {
 
+class Console;
+class Keybinds;
 class GpuRenderer;
 class SceneManager;
 class Scene;
 
-/// Dear ImGui editor: scene hierarchy, entity inspector, stats, and scene-file
-/// controls (save / hot reload).
+/// Dear ImGui editor: scene hierarchy, entity inspector, stats, console, and
+/// keybind reference, plus scene-file controls (save / hot reload).
 ///
 /// Structural components (Transform, Hierarchy, Name) are owned by Scene and
-/// are not removable from the UI; optional components (Sprite, Camera2D) can
-/// be added and removed.
+/// are not removable from the UI; optional components (Sprite, Camera2D,
+/// Script) can be added and removed.
 class Editor {
 public:
 	Editor() = default;
@@ -40,8 +43,13 @@ public:
 	void shutdown();
 
 	void set_scene_controls(SceneControls controls);
+	void set_console(Console* console) { console_ = console; }
+	void set_keybinds(Keybinds* keybinds, std::function<void()> on_save);
 
 	void process_event(const SDL_Event& event);
+
+	/// True when ImGui has keyboard focus (so keybinds must not fire).
+	bool captures_keyboard() const;
 
 	/// Starts an ImGui frame. No-op when hidden.
 	void begin_frame();
@@ -54,6 +62,9 @@ public:
 	void set_visible(bool value) { visible_ = value; }
 	void toggle() { visible_ = !visible_; }
 
+	bool console_visible() const { return console_visible_; }
+	void toggle_console() { console_visible_ = !console_visible_; }
+
 	/// True when the UI changed the scene since the last save.
 	bool dirty() const { return dirty_; }
 	void clear_dirty() { dirty_ = false; }
@@ -65,12 +76,17 @@ public:
 	bool can_undo() const { return history_.can_undo(); }
 	bool can_redo() const { return history_.can_redo(); }
 
+	void request_undo() { undo_requested_ = true; }
+	void request_redo() { redo_requested_ = true; }
+
 private:
 	void draw_hierarchy(Scene& scene);
 	void draw_entity_node(Scene& scene, Entity entity);
 	void draw_inspector(Scene& scene);
 	void draw_stats(SceneManager& scenes, float dt);
 	void draw_scene_panel();
+	void draw_console();
+	void draw_keybinds();
 
 	bool initialized_{false};
 	bool visible_{true};
@@ -84,6 +100,16 @@ private:
 
 	SceneHistory history_;
 	const Scene* history_scene_{nullptr};
+
+	Console* console_{nullptr};
+	Keybinds* keybinds_{nullptr};
+	std::function<void()> save_keybinds_;
+	bool console_visible_{false};
+	bool refocus_console_{false};
+	bool console_scroll_{false};
+	char console_input_[256]{};
+	std::vector<std::string> console_history_;
+	int console_history_pos_{-1};
 };
 
 } // namespace lotus
