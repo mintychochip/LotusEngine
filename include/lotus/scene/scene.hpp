@@ -10,13 +10,16 @@ namespace lotus {
 
 class GpuRenderer;
 
-/// A world: owns a registry, a camera, and the systems that run on it.
+/// A world: owns a registry and the systems that run on it.
 class Scene {
 public:
 	explicit Scene(std::string name);
 
 	Scene(const Scene&)            = delete;
 	Scene& operator=(const Scene&) = delete;
+	Scene(Scene&&)                 = default;
+	Scene& operator=(Scene&&)      = default;
+	~Scene()                       = default;
 
 	const std::string& name() const { return name_; }
 
@@ -33,8 +36,9 @@ public:
 	void set_parent(Entity child, Entity parent);
 	void detach(Entity child);
 
-	Camera2D& camera() { return camera_; }
-	const Camera2D& camera() const { return camera_; }
+	/// First entity carrying a Camera2D component, or nullptr if none.
+	Camera2D* active_camera();
+	const Camera2D* active_camera() const;
 
 	/// Root entities (Hierarchy::parent == NullEntity).
 	std::vector<Entity> roots() const;
@@ -53,7 +57,6 @@ public:
 private:
 	std::string name_;
 	Registry registry_;
-	Camera2D camera_;
 	uint32_t vertex_count_{0};
 };
 

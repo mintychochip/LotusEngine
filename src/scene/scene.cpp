@@ -14,8 +14,8 @@ struct GpuVertex {
 
 void propagate(Registry& registry, Entity entity, const glm::mat4& parent_world)
 {
-	auto& transform   = registry.get<Transform>(entity);
-	transform.world   = parent_world * transform.local_matrix();
+	auto& transform = registry.get<Transform>(entity);
+	transform.world = parent_world * transform.local_matrix();
 
 	const auto& hierarchy = registry.get<Hierarchy>(entity);
 	for (Entity child = hierarchy.first_child; child != NullEntity;
@@ -78,15 +78,15 @@ void Scene::set_parent(Entity child, Entity parent)
 	}
 
 	detach(child);
-	auto& hierarchy = registry_.get<Hierarchy>(child);
+	auto& hierarchy  = registry_.get<Hierarchy>(child);
 	hierarchy.parent = parent;
 	if (parent == NullEntity) {
 		return;
 	}
 
-	auto& parent_hierarchy   = registry_.get<Hierarchy>(parent);
-	hierarchy.next_sibling   = parent_hierarchy.first_child;
-	hierarchy.prev_sibling   = NullEntity;
+	auto& parent_hierarchy = registry_.get<Hierarchy>(parent);
+	hierarchy.next_sibling = parent_hierarchy.first_child;
+	hierarchy.prev_sibling = NullEntity;
 	if (parent_hierarchy.first_child != NullEntity) {
 		registry_.get<Hierarchy>(parent_hierarchy.first_child).prev_sibling = child;
 	}
@@ -112,6 +112,24 @@ void Scene::clear()
 {
 	registry_.clear();
 	vertex_count_ = 0;
+}
+
+Camera2D* Scene::active_camera()
+{
+	auto view = registry_.view<Camera2D>();
+	for (const Entity entity : view) {
+		return &view.get<Camera2D>(entity);
+	}
+	return nullptr;
+}
+
+const Camera2D* Scene::active_camera() const
+{
+	const auto view = registry_.view<Camera2D>();
+	for (const Entity entity : view) {
+		return &view.get<Camera2D>(entity);
+	}
+	return nullptr;
 }
 
 std::vector<Entity> Scene::roots() const
@@ -172,7 +190,9 @@ void Scene::draw(GpuRenderer& gpu, float aspect)
 	if (vertex_count_ == 0) {
 		return;
 	}
-	const glm::mat4 mvp = camera_.view_projection(aspect);
+	static const Camera2D fallback{};
+	const Camera2D* camera = active_camera();
+	const glm::mat4 mvp    = (camera ? *camera : fallback).view_projection(aspect);
 	gpu.draw(glm::value_ptr(mvp), vertex_count_);
 }
 

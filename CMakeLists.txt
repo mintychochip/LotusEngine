@@ -11,6 +11,12 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Add EnTT (entity-component-system, header-only, submodule)
 add_subdirectory(dependencies/entt)
 
+# === nlohmann/json (scene serialization, header-only, submodule) ===
+add_library(nlohmann_json INTERFACE)
+add_library(nlohmann_json::nlohmann_json ALIAS nlohmann_json)
+target_include_directories(nlohmann_json INTERFACE
+    ${CMAKE_SOURCE_DIR}/dependencies/json/include)
+
 include(FindLotusSDL3)
 
 # === Dear ImGui (debug overlay) ===
@@ -50,6 +56,7 @@ target_link_libraries(lotus_engine
     PUBLIC
     SDL3::SDL3
     EnTT::EnTT
+    nlohmann_json::nlohmann_json
     imgui
 )
 

@@ -32,6 +32,10 @@ protected:
 		        right, lotus::Sprite{{0.35f, 0.55f, 0.95f, 1.0f}, {0.25f, 0.25f}});
 		scene.registry().get<lotus::Transform>(right).position = {0.8f, 0.0f, 0.0f};
 		scene.set_parent(right, root_);
+
+		// Camera is now an ordinary entity component.
+		const lotus::Entity camera = scene.create("camera");
+		scene.registry().emplace<lotus::Camera2D>(camera);
 	}
 
 	void on_update(float dt) override
