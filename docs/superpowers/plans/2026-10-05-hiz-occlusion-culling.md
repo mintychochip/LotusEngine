@@ -1957,7 +1957,36 @@ struct VertexUniforms {
 };
 ```
 
-and upload it with both matrices in `draw`.
+The C++ struct must grow in the SAME change that binds colour target 1. Widening
+the shader but not the struct fails **silently**: nothing crashes, the depths
+just come from an indeterminate view matrix.
+
+```cpp
+struct VertexUniforms {
+	glm::mat4 view_projection;
+	glm::mat4 view;
+};
+
+// lit.vert declares these as std140 offsets 0 and 64. A mismatch here is a
+// silent data bug, not a compile error.
+static_assert(sizeof(VertexUniforms) == 128, "must match lit.vert's std140 block");
+```
+
+`draw` must therefore change signature, and so must its caller. Today
+`GpuRenderer::draw` takes only the view projection, and `Scene::draw` calls
+`gpu.draw(view_projection_, camera_position_, vertex_count_)`. Task 3 already
+added `Scene::view_`, so the plumbing is:
+
+```cpp
+// include/lotus/gpu/renderer.hpp
+void draw(const glm::mat4& view, const glm::mat4& view_projection,
+          const glm::vec3& camera_position, uint32_t count);
+
+// src/scene/scene.cpp
+gpu.draw(view_, view_projection_, camera_position_, vertex_count_);
+```
+
+and `draw` uploads both matrices, in that order, as `{view_projection, view}`.
 
 At the end of `end_scene_pass`, after the pass is ended, call `record_pyramid()`.
 
