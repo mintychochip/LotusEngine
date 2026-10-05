@@ -154,10 +154,12 @@ void GpuRenderer::create_pipeline()
 	// Must be R32_FLOAT: depth.comp declares both images `r32f`, and a
 	// descriptor whose view format differs is a Vulkan validation error.
 	color_targets[1].format = SDL_GPU_TEXTUREFORMAT_R32_FLOAT;
-	const bool two_targets = pyramid_texture_ != nullptr;
+	// Always two targets. lit.frag unconditionally writes location 1, so a
+	// one-target pipeline is a shader/attachment interface mismatch that
+	// Vulkan rejects at pipeline-creation time. The pyramid texture is
+	// therefore allocated unconditionally; only the compute reduction and the
+	// readback are gated on occlusion_enabled_.
 
-	// Re-entrant: ensure_pyramid calls back here when the pyramid appears or
-	// disappears, because the attachment count is baked into the pipeline.
 	if (pipeline_) {
 		SDL_ReleaseGPUGraphicsPipeline(device_, pipeline_);
 		pipeline_ = nullptr;
@@ -187,7 +189,7 @@ void GpuRenderer::create_pipeline()
 	pipe.vertex_shader   = vert;
 	pipe.fragment_shader = frag;
 	pipe.primitive_type  = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
-	pipe.target_info.num_color_targets         = two_targets ? 2u : 1u;
+	pipe.target_info.num_color_targets         = 2u;
 	pipe.target_info.color_target_descriptions = color_targets;
 	pipe.target_info.has_depth_stencil_target  = true;
 	pipe.target_info.depth_stencil_format      = kDepthFormat;
@@ -314,17 +316,15 @@ void GpuRenderer::ensure_pyramid(uint32_t width, uint32_t height)
 		return;
 	}
 
-	// The colour attachment count is baked into the graphics pipeline, so a
-	// pyramid appearing or vanishing invalidates it.
-	const bool rebuild_pipeline = pipeline_ != nullptr;
 	// Anything referencing the old texture is dropped rather than waited on.
 	destroy_pyramid();
 
-	if (width != 0 && height != 0 && hiz_pipeline_) {
+	// The texture is created whether or not the compute pipeline exists: mip 0
+	// is written by the scene pass as colour target 1, which the pipeline
+	// declares unconditionally. Occlusion-disabled therefore means "no
+	// reduction, no culling", not "a different pipeline".
+	if (width != 0 && height != 0) {
 		ensure_pyramid_texture(width, height);
-	}
-	if (rebuild_pipeline) {
-		create_pipeline();
 	}
 }
 
@@ -447,7 +447,12 @@ void GpuRenderer::poll_pyramid_fence()
 
 void GpuRenderer::record_pyramid()
 {
-	if (!pyramid_texture_ || !hiz_pipeline_ || !pyramid_transfer_ || !cmd_ ||
+	// Gated on occlusion_enabled_, not merely on hiz_pipeline_: the pyramid
+	// texture always exists because the scene pass writes it as color target 1,
+	// so without this the reduction would still run pointlessly whenever
+	// occlusion was disabled.
+	if (!occlusion_enabled_ || !pyramid_texture_ || !hiz_pipeline_ ||
+	    !pyramid_transfer_ || !cmd_ ||
 	    pyramid_levels_ <= kDepthPyramidMinLevel) {
 		return;
 	}
@@ -749,17 +754,16 @@ void GpuRenderer::begin_scene_pass()
 	targets[0].clear_color = SDL_FColor{clear_r_, clear_g_, clear_b_, 1.0f};
 	targets[0].load_op     = SDL_GPU_LOADOP_CLEAR;
 	targets[0].store_op    = SDL_GPU_STOREOP_STORE;
-	if (pyramid_texture_) {
-		// Load-bearing: an unwritten texel reads as ~0 and the min reduction
-		// would spread that zero across the whole pyramid, culling everything.
-		targets[1].texture     = pyramid_texture_;
-		targets[1].mip_level   = 0;
-		targets[1].clear_color = SDL_FColor{kDepthFar, kDepthFar, kDepthFar,
-		                                    kDepthFar};
-		targets[1].load_op     = SDL_GPU_LOADOP_CLEAR;
-		targets[1].store_op    = SDL_GPU_STOREOP_STORE;
-	}
-	const Uint32 target_count = pyramid_texture_ ? 2u : 1u;
+	// Unconditional, matching the pipeline's two declared color targets. The
+	// pyramid texture is allocated in every path for exactly that reason.
+	// Load-bearing: an unwritten texel reads as ~0 and the min reduction would
+	// spread that zero across the whole pyramid, culling everything.
+	targets[1].texture     = pyramid_texture_;
+	targets[1].mip_level   = 0;
+	targets[1].clear_color = SDL_FColor{kDepthFar, kDepthFar, kDepthFar, kDepthFar};
+	targets[1].load_op     = SDL_GPU_LOADOP_CLEAR;
+	targets[1].store_op    = SDL_GPU_STOREOP_STORE;
+	const Uint32 target_count = 2u;
 
 	SDL_GPUDepthStencilTargetInfo depth{};
 	depth.texture          = depth_texture_;
