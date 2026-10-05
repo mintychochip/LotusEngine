@@ -270,10 +270,12 @@ void Application::run(int width, int height, const std::string& title)
 		});
 		console_.info(std::string{"gpu driver: "} + gpu.driver_name());
 
-		// Keybinds: load from disk, or write the defaults so they are editable.
+		// Keybinds: define the defaults first (load only overrides known
+		// actions), then overlay the file, writing it when absent so it is
+		// hand/agent editable.
+		keybinds_ = default_keybinds();
 		std::string keybind_error;
 		if (!keybinds_.load(keybinds_path_, &keybind_error)) {
-			keybinds_ = default_keybinds();
 			keybinds_.save(keybinds_path_, nullptr);
 			console_.info("wrote default keybinds to " + keybinds_path_);
 		} else if (!keybind_error.empty()) {

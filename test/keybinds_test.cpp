@@ -133,6 +133,47 @@ TEST(KeybindsTest, UnknownActionInFileIsIgnored)
 	std::remove(path.c_str());
 }
 
+TEST(KeybindsTest, LoadAfterDefaultsOverridesWithoutWarnings)
+{
+	// The engine's sequence: defaults first, then the file overrides them.
+	const std::string path =
+	        (fs::temp_directory_path() / "lotus_keybinds_order.json").string();
+	{
+		std::ofstream out(path);
+		out << R"({"version":1,"bindings":{"undo":"Ctrl+U"}})";
+	}
+
+	Keybinds keybinds = default_keybinds();
+	std::string error;
+	EXPECT_TRUE(keybinds.load(path, &error));
+	EXPECT_TRUE(error.empty()) << error;
+	EXPECT_EQ(keybinds.action_for(key_event(SDLK_U, SDL_KMOD_CTRL)), "undo");
+	// Unlisted actions keep their defaults.
+	EXPECT_EQ(keybinds.action_for(key_event(SDLK_S, SDL_KMOD_CTRL)), "scene.save");
+
+	std::remove(path.c_str());
+}
+
+TEST(KeybindsTest, LoadWithoutDefinitionsIgnoresEveryAction)
+{
+	// Documents the contract: load() only overrides actions that exist, so a
+	// caller that forgets to define defaults ends up with no bindings.
+	const std::string path =
+	        (fs::temp_directory_path() / "lotus_keybinds_undefined.json").string();
+	{
+		std::ofstream out(path);
+		out << R"({"version":1,"bindings":{"undo":"Ctrl+U"}})";
+	}
+
+	Keybinds undefined;
+	std::string error;
+	EXPECT_TRUE(undefined.load(path, &error));
+	EXPECT_FALSE(error.empty());
+	EXPECT_TRUE(undefined.bindings().empty());
+
+	std::remove(path.c_str());
+}
+
 TEST(KeybindsTest, MissingFileReportsError)
 {
 	Keybinds keybinds = default_keybinds();

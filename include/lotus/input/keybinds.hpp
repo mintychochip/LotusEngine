@@ -52,8 +52,9 @@ public:
 	/// Restores every action to its default chord.
 	void reset_to_defaults();
 
-	/// Loads bindings, overriding defaults for known actions. Unknown actions
-	/// and unparsable chords are ignored (and reported through \p error).
+	/// Loads bindings, overriding defaults for known actions. Define actions
+	/// first (see default_keybinds()); actions that were never defined are
+	/// ignored and reported through \p error, as are unparsable chords.
 	bool load(const std::string& path, std::string* error = nullptr);
 	bool save(const std::string& path, std::string* error = nullptr) const;
 
