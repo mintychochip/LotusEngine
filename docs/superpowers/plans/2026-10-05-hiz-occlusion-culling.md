@@ -2143,6 +2143,17 @@ TEST(OcclusionGpuTest, PyramidReachesTheCpuWithoutBlocking)
 
     EXPECT_TRUE(ready) << "pyramid never reached the CPU";
     EXPECT_GT(occluded, 0u) << "nothing behind the wall was culled";
+    // Readiness alone is NOT sufficient evidence. `occlusion_ready()` goes
+    // true on an all-sky pyramid, and a descriptor-set mismatch produced a
+    // valid pipeline with an empty SDL_GetError() and an all-zero pyramid —
+    // which reads as "geometry zero units away" and culls nothing. Assert that
+    // real depth actually arrived, at a level the query reads.
+    ASSERT_GE(gpu.occlusion_pyramid().level_count(), 3u);
+    const std::vector<float> mip2 = gpu.occlusion_pyramid().level(2);
+    ASSERT_FALSE(mip2.empty());
+    const float nearest = *std::min_element(mip2.begin(), mip2.end());
+    EXPECT_LT(nearest, kDepthFar)
+        << "mip 2 is all far-values: nothing was ever written to it";
 }
 ```
 
@@ -2161,7 +2172,7 @@ than loosening the assertion.
 - [ ] **Step 5: Run the full suite and commit**
 
 Run: `cd build && ./bin/lotus_tests 2>&1 | tail -3`
-Expected: `[  PASSED  ] 135 tests.`
+Expected: `[  PASSED  ] 144 tests.`
 
 ```bash
 git add app/main.cpp src/ui/editor.cpp test/occlusion_gpu_test.cpp
