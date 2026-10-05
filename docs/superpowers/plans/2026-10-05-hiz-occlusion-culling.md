@@ -1631,13 +1631,16 @@ constexpr uint32_t kTransferRowAlignment = 256;
 Implement:
 
 ```cpp
+// Must match DepthPyramid::build exactly: the chain ends when the SMALLER
+// dimension reaches 1. Vulkan's own convention would keep halving until the
+// larger dimension reaches 1, which for an extreme aspect ratio allocates
+// levels DepthPyramid can never address and makes adopt()'s total_levels
+// disagree with the CPU chain.
 uint32_t GpuRenderer::pyramid_level_count(uint32_t width, uint32_t height) const
 {
 	uint32_t count = 1;
-	while (width > 1 || height > 1) {
-		width  = width > 1 ? width / 2 : 1;
-		height = height > 1 ? height / 2 : 1;
-		++count;
+	for (uint32_t m = std::min(width, height); m > 1; ++count) {
+		m = m > 1 ? m / 2 : 1;
 	}
 	return count;
 }
