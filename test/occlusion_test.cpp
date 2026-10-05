@@ -10,6 +10,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include "lotus/scene/depth_pyramid.hpp"
+#include "lotus/scene/scene.hpp"
 
 using namespace lotus;
 
@@ -896,4 +897,89 @@ TEST(DepthPyramidTest, AdoptRejectsShortOrEmptyUploads)
 
 	pyramid.adopt(0, 0, 7, {}); // no dimensions
 	EXPECT_TRUE(pyramid.empty());
+}
+
+// --- Task 3: scene integration ---
+
+TEST(SceneOcclusionTest, OccludedEntityLeavesTheVertexBuffer)
+{
+	Scene scene{"s"};
+	const Entity camera = scene.create("camera");
+	scene.registry().emplace<Camera3D>(camera, Camera3D{{0.0f, 0.0f, 10.0f},
+	                                                    {0.0f, 0.0f, 0.0f},
+	                                                    {0.0f, 1.0f, 0.0f},
+	                                                    60.0f, 0.1f, 100.0f});
+
+	const Entity cube = scene.create("cube");
+	scene.registry().emplace<MeshSource>(cube, MeshSource{"builtin:cube"});
+	scene.update(0.0f);
+
+	// A wall covering the whole screen at linear depth 5.
+	const DepthPyramid pyramid = solid_wall(64, 5.0f);
+
+	const std::vector<GpuVertex> drawn = scene.build_vertices(1.0f, &pyramid);
+
+	EXPECT_TRUE(drawn.empty());
+	EXPECT_EQ(scene.occluded_entities(), 1u);
+	EXPECT_EQ(scene.culled_entities(), 1u);
+	EXPECT_EQ(scene.drawn_entities(), 0u);
+}
+
+TEST(SceneOcclusionTest, VisibleEntitySurvivesTheSamePyramid)
+{
+	Scene scene{"s"};
+	const Entity camera = scene.create("camera");
+	scene.registry().emplace<Camera3D>(camera, Camera3D{{0.0f, 0.0f, 10.0f},
+	                                                    {0.0f, 0.0f, 0.0f},
+	                                                    {0.0f, 1.0f, 0.0f},
+	                                                    60.0f, 0.1f, 100.0f});
+
+	const Entity cube = scene.create("cube");
+	scene.registry().emplace<MeshSource>(cube, MeshSource{"builtin:cube"});
+	// In front of the depth-5 wall.
+	scene.registry().get<Transform>(cube).position = {0.0f, 0.0f, 8.0f};
+	scene.update(0.0f);
+
+	const DepthPyramid pyramid = solid_wall(64, 5.0f);
+	const std::vector<GpuVertex> drawn = scene.build_vertices(1.0f, &pyramid);
+
+	EXPECT_EQ(drawn.size(), 36u); // a cube is 12 triangles
+	EXPECT_EQ(scene.drawn_entities(), 1u);
+	EXPECT_EQ(scene.occluded_entities(), 0u);
+	EXPECT_EQ(scene.culled_entities(), 0u);
+}
+
+TEST(SceneOcclusionTest, NullPyramidMatchesTodayExactly)
+{
+	Scene scene{"s"};
+	const Entity camera = scene.create("camera");
+	scene.registry().emplace<Camera3D>(camera);
+
+	const Entity cube = scene.create("cube");
+	scene.registry().emplace<MeshSource>(cube, MeshSource{"builtin:cube"});
+	scene.update(0.0f);
+
+	const std::vector<GpuVertex> with_null = scene.build_vertices(1.0f, nullptr);
+	const std::vector<GpuVertex> defaulted = scene.build_vertices(1.0f);
+
+	ASSERT_EQ(with_null.size(), defaulted.size());
+	EXPECT_EQ(scene.occluded_entities(), 0u);
+	EXPECT_FALSE(with_null.empty());
+}
+
+TEST(SceneOcclusionTest, EmptyPyramidCullsNothing)
+{
+	Scene scene{"s"};
+	const Entity camera = scene.create("camera");
+	scene.registry().emplace<Camera3D>(camera);
+
+	const Entity cube = scene.create("cube");
+	scene.registry().emplace<MeshSource>(cube, MeshSource{"builtin:cube"});
+	scene.update(0.0f);
+
+	const DepthPyramid empty;
+	const std::vector<GpuVertex> drawn = scene.build_vertices(1.0f, &empty);
+
+	EXPECT_EQ(drawn.size(), 36u);
+	EXPECT_EQ(scene.occluded_entities(), 0u);
 }

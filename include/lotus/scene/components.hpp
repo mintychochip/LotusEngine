@@ -8,6 +8,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include "lotus/ecs.hpp"
+#include "lotus/scene/culling.hpp"
 
 namespace lotus {
 
@@ -53,15 +54,18 @@ struct Camera2D {
 	glm::vec2 position{0.0f};
 	float zoom{1.0f};
 
+	glm::mat4 view() const
+	{
+		return glm::translate(glm::mat4{1.0f}, glm::vec3{-position, 0.0f});
+	}
+
 	glm::mat4 view_projection(float aspect) const
 	{
 		const float half_h = 1.0f / zoom;
 		const float half_w = half_h * aspect;
 		const glm::mat4 proj =
 		        glm::ortho(-half_w, half_w, -half_h, half_h, -1.0f, 1.0f);
-		const glm::mat4 view =
-		        glm::translate(glm::mat4{1.0f}, glm::vec3{-position, 0.0f});
-		return proj * view;
+		return proj * view();
 	}
 };
 
@@ -73,15 +77,35 @@ struct Mesh {
 	std::vector<std::uint32_t> indices;
 	/// Source this geometry was resolved from, used to detect changes.
 	std::string source;
+	/// Local-space bounds, filled in when the mesh is resolved.
+	BoundingSphere bounds;
 
 	bool empty() const { return positions.empty() || indices.empty(); }
 	std::size_t triangle_count() const { return indices.size() / 3; }
 };
 
-/// Serialized reference to mesh geometry: "builtin:cube", "builtin:sphere", or
-/// a path to a .glb file.
+/// Serialized reference to mesh geometry: "builtin:cube", "builtin:sphere",
+/// "builtin:sphere:<segments>:<rings>", or a path to a .glb file.
 struct MeshSource {
 	std::string path;
+};
+
+/// One level of detail: geometry source plus the furthest distance at which it
+/// is still used.
+struct LodLevel {
+	std::string source;
+	float max_distance{20.0f};
+};
+
+/// Distance-based level of detail. Levels are ordered most detailed first;
+/// past the last level's distance the entity is culled entirely.
+struct Lod {
+	std::vector<LodLevel> levels;
+};
+
+/// Resolved geometry for a Lod, parallel to Lod::levels. Transient.
+struct LodGeometry {
+	std::vector<Mesh> levels;
 };
 
 /// Surface colour, multiplied into the lighting result.
@@ -101,13 +125,17 @@ struct Camera3D {
 	float near_plane{0.1f};
 	float far_plane{100.0f};
 
+	glm::mat4 view() const
+	{
+		return glm::lookAtRH(position, target, up);
+	}
+
 	glm::mat4 view_projection(float aspect) const
 	{
-		const glm::mat4 view = glm::lookAtRH(position, target, up);
 		const glm::mat4 projection = glm::perspectiveRH_ZO(
 		        glm::radians(fov_degrees), aspect > 0.0f ? aspect : 1.0f,
 		        near_plane, far_plane);
-		return projection * view;
+		return projection * view();
 	}
 };
 

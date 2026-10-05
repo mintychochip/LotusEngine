@@ -1,10 +1,14 @@
 #include "lotus/scene/scene.hpp"
 
+#include <algorithm>
 #include <cstdint>
 
 #include <glm/gtc/type_ptr.hpp>
 
 #include "lotus/gpu/renderer.hpp"
+#include "lotus/scene/culling.hpp"
+#include "lotus/scene/lod.hpp"
+#include "lotus/scene/depth_pyramid.hpp"
 #include "lotus/scene/mesh.hpp"
 
 namespace lotus {
@@ -20,6 +24,60 @@ void propagate(Registry& registry, Entity entity, const glm::mat4& parent_world)
 	     child         = registry.get<Hierarchy>(child).next_sibling) {
 		propagate(registry, child, transform.world);
 	}
+}
+
+/// Transforms a local-space bounding sphere into world space.
+BoundingSphere world_bounds(const Transform& transform,
+                            const BoundingSphere& local)
+{
+	BoundingSphere world;
+	world.center = glm::vec3{transform.world * glm::vec4{local.center, 1.0f}};
+	// Column lengths of the upper 3x3 are the axis scale factors.
+	const float scale_x = glm::length(glm::vec3{transform.world[0]});
+	const float scale_y = glm::length(glm::vec3{transform.world[1]});
+	const float scale_z = glm::length(glm::vec3{transform.world[2]});
+	world.radius = local.radius * std::max({scale_x, scale_y, scale_z});
+	return world;
+}
+
+/// Emits world-space lit vertices for an indexed mesh.
+void emit_mesh(std::vector<GpuVertex>& out, const Transform& transform,
+               const Mesh& mesh, const glm::vec3& color)
+{
+	// Correct for rotation and uniform scale; non-uniform scale would need the
+	// inverse transpose.
+	const glm::mat3 normal_matrix{transform.world};
+	for (const std::uint32_t index : mesh.indices) {
+		if (index >= mesh.positions.size()) {
+			continue;
+		}
+		const glm::vec3 position =
+		        glm::vec3{transform.world * glm::vec4{mesh.positions[index], 1.0f}};
+		glm::vec3 normal{0.0f, 0.0f, 1.0f};
+		if (index < mesh.normals.size()) {
+			const glm::vec3 transformed = normal_matrix * mesh.normals[index];
+			if (glm::length(transformed) > 0.0f) {
+				normal = glm::normalize(transformed);
+			}
+		}
+		out.push_back(GpuVertex{position, normal, color});
+	}
+}
+
+glm::vec3 material_color(const Registry& registry, Entity entity)
+{
+	if (const Material* material = registry.try_get<Material>(entity)) {
+		return material->base_color;
+	}
+	return glm::vec3{1.0f};
+}
+
+/// True when \p pyramid reports this sphere as hidden. A null pyramid means
+/// occlusion is disabled, which must never cull anything.
+bool hidden(const DepthPyramid* pyramid, const glm::mat4& view,
+            const glm::mat4& view_projection, const BoundingSphere& world)
+{
+	return pyramid != nullptr && pyramid->occluded(view, view_projection, world);
 }
 
 } // namespace
@@ -109,7 +167,9 @@ void Scene::destroy(Entity entity)
 void Scene::clear()
 {
 	registry_.clear();
-	vertex_count_ = 0;
+	vertex_count_     = 0;
+	drawn_entities_   = 0;
+	culled_entities_  = 0;
 }
 
 Camera2D* Scene::active_camera()
@@ -164,26 +224,7 @@ void Scene::update(float /*dt*/)
 {
 	update_world_transforms(*this);
 	sync_meshes();
-}
-
-void Scene::sync_meshes()
-{
-	for (const Entity entity : registry_.view<MeshSource>()) {
-		const std::string& path = registry_.get<MeshSource>(entity).path;
-		Mesh* existing          = registry_.try_get<Mesh>(entity);
-		if (existing && existing->source == path) {
-			continue;
-		}
-		Mesh resolved;
-		std::string error;
-		if (!mesh::resolve_mesh(path, resolved, &error)) {
-			last_mesh_error_ = error;
-			continue;
-		}
-		resolved.source = path;
-		registry_.emplace_or_replace<Mesh>(entity, std::move(resolved));
-		last_mesh_error_.clear();
-	}
+	sync_lod();
 }
 
 Entity Scene::find(const std::string& name) const
@@ -197,13 +238,105 @@ Entity Scene::find(const std::string& name) const
 	return NullEntity;
 }
 
-void Scene::upload(GpuRenderer& gpu)
+void Scene::sync_meshes()
 {
-	std::vector<GpuVertex> vertices;
+	for (const Entity entity : registry_.view<MeshSource>()) {
+		// Entities using Lod get their geometry from sync_lod instead.
+		if (registry_.all_of<Lod>(entity)) {
+			continue;
+		}
+		const std::string& path = registry_.get<MeshSource>(entity).path;
+		Mesh* existing          = registry_.try_get<Mesh>(entity);
+		if (existing && existing->source == path) {
+			continue;
+		}
+		Mesh resolved;
+		std::string error;
+		if (!mesh::resolve_mesh(path, resolved, &error)) {
+			last_mesh_error_ = error;
+			continue;
+		}
+		resolved.source = path;
+		resolved.bounds = mesh::compute_mesh_bounds(resolved);
+		registry_.emplace_or_replace<Mesh>(entity, std::move(resolved));
+		last_mesh_error_.clear();
+	}
+}
 
-	// 2D sprites: axis-aligned quads facing +Z, lit like everything else.
+void Scene::sync_lod()
+{
+	for (const Entity entity : registry_.view<Lod>()) {
+		const Lod& lod = registry_.get<Lod>(entity);
+		LodGeometry* geometry = registry_.try_get<LodGeometry>(entity);
+		if (geometry && geometry->levels.size() == lod.levels.size()) {
+			bool up_to_date = true;
+			for (std::size_t i = 0; i < lod.levels.size(); ++i) {
+				if (geometry->levels[i].source != lod.levels[i].source) {
+					up_to_date = false;
+					break;
+				}
+			}
+			if (up_to_date) {
+				continue;
+			}
+		}
+
+		LodGeometry resolved;
+		resolved.levels.reserve(lod.levels.size());
+		for (const LodLevel& level : lod.levels) {
+			Mesh mesh;
+			std::string error;
+			if (!mesh::resolve_mesh(level.source, mesh, &error)) {
+				last_mesh_error_ = error;
+				continue;
+			}
+			mesh.source = level.source;
+			mesh.bounds = mesh::compute_mesh_bounds(mesh);
+			resolved.levels.push_back(std::move(mesh));
+		}
+		registry_.emplace_or_replace<LodGeometry>(entity, std::move(resolved));
+	}
+}
+
+std::vector<GpuVertex> Scene::build_vertices(float aspect,
+                                              const DepthPyramid* occlusion)
+{
+	// Resolve the camera once, then reuse it for culling and drawing.
+	if (const Camera3D* camera = active_camera3d()) {
+		view_            = camera->view();
+		view_projection_ = camera->view_projection(aspect);
+		camera_position_ = camera->position;
+	} else {
+		static const Camera2D fallback{};
+		const Camera2D* camera2d = active_camera();
+		const Camera2D& chosen   = camera2d ? *camera2d : fallback;
+		view_                   = chosen.view();
+		view_projection_        = chosen.view_projection(aspect);
+		camera_position_        = glm::vec3{chosen.position, 1.0f};
+	}
+	const Frustum frustum = Frustum::from_view_projection(view_projection_);
+
+	std::vector<GpuVertex> vertices;
+	drawn_entities_    = 0;
+	culled_entities_   = 0;
+	occluded_entities_ = 0;
+
+	// 2D sprites: axis-aligned quads facing +Z.
 	const auto sprite_view = registry_.view<Transform, Sprite>();
 	sprite_view.each([&](const Transform& transform, const Sprite& sprite) {
+		const BoundingSphere local{glm::vec3{0.0f}, glm::length(sprite.size) * 0.5f};
+		const BoundingSphere world = world_bounds(transform, local);
+		if (!frustum.intersects(world)) {
+			++culled_entities_;
+			return;
+		}
+		if (hidden(occlusion, view_, view_projection_, world)) {
+			++occluded_entities_;
+			++culled_entities_;
+			return;
+		}
+		++drawn_entities_;
+
 		const float hx = sprite.size.x * 0.5f;
 		const float hy = sprite.size.y * 0.5f;
 		const glm::vec4 corners[4] = {
@@ -212,77 +345,94 @@ void Scene::upload(GpuRenderer& gpu)
 		        { hx, -hy, 0.0f, 1.0f},
 		        {-hx, -hy, 0.0f, 1.0f},
 		};
-		glm::vec3 world[4];
+		glm::vec3 world_vertices[4];
 		for (int i = 0; i < 4; ++i) {
-			world[i] = glm::vec3{transform.world * corners[i]};
+			world_vertices[i] = glm::vec3{transform.world * corners[i]};
 		}
 		const glm::vec3 color{sprite.color};
 		static constexpr int order[6] = {0, 1, 2, 0, 2, 3};
 		for (const int index : order) {
-			vertices.push_back(
-			        GpuVertex{world[index], glm::vec3{0.0f, 0.0f, 1.0f}, color});
+			vertices.push_back(GpuVertex{world_vertices[index],
+			                             glm::vec3{0.0f, 0.0f, 1.0f}, color});
 		}
 	});
 
-	// 3D meshes: indices are expanded here because the renderer draws
-	// non-indexed, and positions/normals are transformed to world space on the
-	// CPU so the whole scene stays in one draw call.
+	// 3D meshes (entities without Lod).
 	const auto mesh_view = registry_.view<Transform, Mesh>();
 	mesh_view.each([&](const Entity entity, const Transform& transform,
 	                   const Mesh& mesh) {
-		if (mesh.empty()) {
+		if (mesh.empty() || registry_.all_of<Lod>(entity)) {
 			return;
 		}
-		glm::vec3 color{1.0f};
-		if (const Material* material = registry_.try_get<Material>(entity)) {
-			color = material->base_color;
+		const BoundingSphere world = world_bounds(transform, mesh.bounds);
+		if (!frustum.intersects(world)) {
+			++culled_entities_;
+			return;
 		}
-		// Correct for rotation and uniform scale; non-uniform scale would need
-		// the inverse transpose.
-		const glm::mat3 normal_matrix = glm::mat3{transform.world};
-
-		for (const std::uint32_t index : mesh.indices) {
-			if (index >= mesh.positions.size()) {
-				continue;
-			}
-			const glm::vec3 position = glm::vec3{
-			        transform.world * glm::vec4{mesh.positions[index], 1.0f}};
-			glm::vec3 normal{0.0f, 0.0f, 1.0f};
-			if (index < mesh.normals.size()) {
-				const glm::vec3 transformed = normal_matrix * mesh.normals[index];
-				if (glm::length(transformed) > 0.0f) {
-					normal = glm::normalize(transformed);
-				}
-			}
-			vertices.push_back(GpuVertex{position, normal, color});
+		if (hidden(occlusion, view_, view_projection_, world)) {
+			++occluded_entities_;
+			++culled_entities_;
+			return;
 		}
+		++drawn_entities_;
+		emit_mesh(vertices, transform, mesh, material_color(registry_, entity));
 	});
 
+	// Lod entities: pick a level by distance, then cull that level's bounds.
+	const auto lod_view = registry_.view<Transform, Lod>();
+	lod_view.each([&](const Entity entity, const Transform& transform,
+	                  const Lod& lod) {
+		const LodGeometry* geometry = registry_.try_get<LodGeometry>(entity);
+		if (!geometry || geometry->levels.empty()) {
+			return;
+		}
+		const glm::vec3 world_position = glm::vec3{transform.world[3]};
+		const float distance = glm::length(world_position - camera_position_);
+
+		std::vector<float> max_distances;
+		max_distances.reserve(lod.levels.size());
+		for (const LodLevel& level : lod.levels) {
+			max_distances.push_back(level.max_distance);
+		}
+		const int level = select_lod_level(max_distances, distance);
+		if (level < 0 || static_cast<std::size_t>(level) >= geometry->levels.size()) {
+			++culled_entities_; // past the last LOD
+			return;
+		}
+		const Mesh& mesh = geometry->levels[static_cast<std::size_t>(level)];
+		const BoundingSphere world = world_bounds(transform, mesh.bounds);
+		if (!frustum.intersects(world)) {
+			++culled_entities_;
+			return;
+		}
+		if (hidden(occlusion, view_, view_projection_, world)) {
+			++occluded_entities_;
+			++culled_entities_;
+			return;
+		}
+		++drawn_entities_;
+		emit_mesh(vertices, transform, mesh, material_color(registry_, entity));
+	});
+
+	return vertices;
+}
+
+void Scene::upload(GpuRenderer& gpu, float aspect)
+{
+	const std::vector<GpuVertex> vertices =
+	        build_vertices(aspect, &gpu.occlusion_pyramid());
 	vertex_count_ = static_cast<std::uint32_t>(vertices.size());
 	if (vertex_count_ != 0) {
 		gpu.upload_vertices(vertices.data(), vertex_count_);
 	}
 }
 
-void Scene::draw(GpuRenderer& gpu, float aspect)
+void Scene::draw(GpuRenderer& gpu)
 {
 	if (vertex_count_ == 0) {
 		return;
 	}
-	glm::mat4 view_projection{1.0f};
-	glm::vec3 camera_position{0.0f};
-
-	if (const Camera3D* camera = active_camera3d()) {
-		view_projection = camera->view_projection(aspect);
-		camera_position = camera->position;
-	} else {
-		static const Camera2D fallback{};
-		const Camera2D* camera2d = active_camera();
-		const Camera2D& chosen   = camera2d ? *camera2d : fallback;
-		view_projection = chosen.view_projection(aspect);
-		camera_position = glm::vec3{chosen.position, 1.0f};
-	}
-	gpu.draw(view_projection, camera_position, vertex_count_);
+	gpu.draw(view_projection_, camera_position_, vertex_count_);
 }
 
 void update_world_transforms(Scene& scene)

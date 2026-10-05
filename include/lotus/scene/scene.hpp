@@ -4,11 +4,13 @@
 #include <vector>
 
 #include "lotus/ecs.hpp"
+#include "lotus/gpu/vertex.hpp"
 #include "lotus/scene/components.hpp"
 
 namespace lotus {
 
 class GpuRenderer;
+class DepthPyramid;
 
 /// A world: owns a registry and the systems that run on it.
 class Scene {
@@ -50,26 +52,49 @@ public:
 	/// First entity whose Name matches, or NullEntity.
 	Entity find(const std::string& name) const;
 
-	/// Advances systems (world-transform propagation, then user systems).
+	/// Advances systems (world-transform propagation, mesh resolution).
 	void update(float dt);
 
-	/// Uploads this scene's vertex data. Must be called OUTSIDE a render pass.
-	void upload(GpuRenderer& gpu);
-	/// Records the draw for the uploaded vertices. Must be INSIDE a render pass.
-	void draw(GpuRenderer& gpu, float aspect);
+	/// Resolves the camera, culls against the view frustum and \p occlusion,
+	/// picks LOD levels, and returns this frame's vertices. Pure CPU work: no
+	/// GPU needed, which is what makes culling and LOD testable. Passing a null
+	/// or empty pyramid disables occlusion culling.
+	std::vector<GpuVertex> build_vertices(float aspect,
+	                                      const DepthPyramid* occlusion = nullptr);
+
+	/// Builds this frame's vertex data and uploads it. OUTSIDE a render pass.
+	void upload(GpuRenderer& gpu, float aspect);
+
+	/// Records the draw for the uploaded vertices. INSIDE a render pass.
+	void draw(GpuRenderer& gpu);
 
 	uint32_t vertex_count() const { return vertex_count_; }
 	uint32_t draw_calls() const { return vertex_count_ ? 1u : 0u; }
+
+	/// Entities submitted last frame.
+	uint32_t drawn_entities() const { return drawn_entities_; }
+	/// Entities rejected last frame by frustum or LOD distance.
+	uint32_t culled_entities() const { return culled_entities_; }
+
+	/// Entities rejected last frame by occlusion, after passing frustum and LOD.
+	uint32_t occluded_entities() const { return occluded_entities_; }
 
 	/// Last mesh-resolution error (empty when the last resolve succeeded).
 	const std::string& last_mesh_error() const { return last_mesh_error_; }
 
 private:
 	void sync_meshes();
+	void sync_lod();
 
 	std::string name_;
 	Registry registry_;
 	uint32_t vertex_count_{0};
+	uint32_t drawn_entities_{0};
+	uint32_t culled_entities_{0};
+	uint32_t occluded_entities_{0};
+	glm::mat4 view_{1.0f};
+	glm::mat4 view_projection_{1.0f};
+	glm::vec3 camera_position_{0.0f};
 	std::string last_mesh_error_;
 };
 

@@ -8,17 +8,12 @@
 
 #include <glm/glm.hpp>
 
+#include "lotus/gpu/vertex.hpp"
+#include "lotus/scene/depth_pyramid.hpp"
+
 struct SDL_Window;
 
 namespace lotus {
-
-/// One vertex of the lit pipeline: world-space position, normal, colour.
-/// Geometry is uploaded pre-transformed, so the scene stays in one draw call.
-struct GpuVertex {
-	glm::vec3 position{0.0f};
-	glm::vec3 normal{0.0f, 0.0f, 1.0f};
-	glm::vec3 color{1.0f};
-};
 
 /// A directional light plus an ambient term (Blinn-Phong).
 struct LightingSettings {
@@ -93,6 +88,10 @@ public:
 	SDL_GPUTexture* swapchain_texture() const { return swapchain_; }
 	SDL_GPUTextureFormat swapchain_format() const { return swapchain_format_; }
 
+	/// CPU copy of the previous frame's depth pyramid. Never null; empty when
+	/// the fence has not landed yet, in which case occlusion is skipped.
+	const DepthPyramid& occlusion_pyramid() const { return occlusion_pyramid_; }
+
 	uint32_t vertex_capacity() const { return capacity_; }
 
 	/// Frames actually submitted (excludes skipped/stalled frames).
@@ -128,6 +127,8 @@ private:
 	SDL_GPURenderPass* pass_{nullptr};
 	SDL_GPUTexture* swapchain_{nullptr};
 	uint64_t frames_rendered_{0};
+
+	DepthPyramid occlusion_pyramid_;
 
 	LightingSettings lighting_;
 	float clear_r_{0.0f}, clear_g_{0.0f}, clear_b_{0.0f};
