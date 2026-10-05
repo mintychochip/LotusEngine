@@ -1,0 +1,47 @@
+#version 450
+
+// Hierarchical Z reduction: one output level per dispatch. Every texel of dst
+// takes the minimum of the 2x2 block of src above it.
+//
+// Min, not average. Averaging blurs occluder boundaries, and a blurred
+// boundary makes geometry that is still partly visible look hidden, which is
+// the one failure this whole feature must never produce.
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+// Both slots are bound as read-write storage textures by
+// SDL_BeginGPUComputePass, because SDL_GPUStorageTextureReadWriteBinding is
+// the only SDL binding that carries a mip_level. The two addresses never
+// overlap within a dispatch, so simultaneous access is safe.
+// GLSL 4.50 rejects an image that is neither readonly/writeonly nor carries
+// a format qualifier, so both spell out r32f to match the R32_FLOAT texture.
+layout(set = 0, binding = 0, r32f) readonly uniform image2D src;
+layout(set = 0, binding = 1, r32f) writeonly uniform image2D dst;
+
+void main()
+{
+    const ivec2 dst_size = imageSize(dst);
+    const ivec2 position  = ivec2(gl_GlobalInvocationID.xy);
+    if (position.x >= dst_size.x || position.y >= dst_size.y) {
+        return;
+    }
+
+    const ivec2 src_size = imageSize(src);
+    const ivec2 base      = position * 2;
+
+    // Must match lotus::kDepthFar. Odd dimensions leave a partial 2x2 block,
+    // and the missing texels must read as "nothing here", not as nearest.
+    float nearest = 1.0e9;
+
+    for (int dy = 0; dy < 2; ++dy) {
+        for (int dx = 0; dx < 2; ++dx) {
+            const ivec2 texel = base + ivec2(dx, dy);
+            if (texel.x >= src_size.x || texel.y >= src_size.y) {
+                continue;
+            }
+            nearest = min(nearest, imageLoad(src, texel).r);
+        }
+    }
+
+    imageStore(dst, position, vec4(nearest, 0.0, 0.0, 1.0));
+}

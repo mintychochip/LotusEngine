@@ -24,23 +24,26 @@ fi
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-for stage in vert frag; do
-    source="$here/lit.$stage"
-    spv="$work/lit.$stage.spv"
-    header="$out_dir/lit.$stage.spv.h"
-    name="lit_${stage}_spv"
+# "<stage> <base>": lit supplies vert and frag, depth supplies comp.
+for pair in "vert lit" "frag lit" "comp depth"; do
+    stage="${pair%% *}"
+    base="${pair##* }"
+    source="$here/$base.$stage"
+    spv="$work/$base.$stage.spv"
+    header="$out_dir/$base.$stage.spv.h"
+    name="${base}_${stage}_spv"
 
     "$glslang" -V "$source" -o "$spv" >/dev/null
 
-    python3 - "$spv" "$name" "$header" "$stage" <<'PY'
+    python3 - "$spv" "$name" "$header" "$base.$stage" <<'PY'
 import sys
 
-spv_path, name, header_path, stage = sys.argv[1:5]
+spv_path, name, header_path, source_name = sys.argv[1:5]
 data = open(spv_path, "rb").read()
 
 lines = [
     "#pragma once",
-    f"// Generated from shaders/lit.{stage} by shaders/build-shaders.sh. Do not edit.",
+    f"// Generated from shaders/{source_name} by shaders/build-shaders.sh. Do not edit.",
     f"static const unsigned char {name}[] = {{",
 ]
 for i in range(0, len(data), 12):
