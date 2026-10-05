@@ -44,6 +44,7 @@ These apply to every task. Copy them verbatim.
 | `include/lotus/scene/components.hpp` | `Camera3D::view()` and `Camera2D::view()`, needed for linear depth. |
 | `app/main.cpp` | A wall in front of the LOD sphere so occlusion is visible. |
 | `src/ui/editor.cpp` | Occluded count on the existing stats line. |
+| `test/occlusion_gpu_test.cpp` | Headless GPU gate driving `init_offscreen`; asserts the pyramid reaches the CPU. |
 
 Generated, committed: `include/lotus/gpu/depth.comp.spv.h`, plus regenerated `lit.vert.spv.h` and `lit.frag.spv.h`.
 
@@ -837,6 +838,7 @@ TEST(DepthPyramidTest, AdoptRejectsShortOrEmptyUploads)
     pyramid.adopt(0, 0, 7, {}); // no dimensions
     EXPECT_TRUE(pyramid.empty());
 }
+```
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -1287,24 +1289,24 @@ In the LOD loop, replace the frustum-only check after level selection with:
 		}
 ```
 
-Finally, update `Scene::upload` to forward the renderer's pyramid:
+Finally, replace the body of `Scene::upload` so it forwards the renderer's
+pyramid. The existing body is `const std::vector<GpuVertex> vertices =
+build_vertices(aspect);` followed by the `vertex_count_` assignment and the
+`gpu.upload_vertices` call; change only the `build_vertices` argument:
 
 ```cpp
 void Scene::upload(GpuRenderer& gpu, float aspect)
 {
-	uploaded_vertices_ = build_vertices(aspect, &gpu.occlusion_pyramid());
-	...
+	const std::vector<GpuVertex> vertices =
+	        build_vertices(aspect, &gpu.occlusion_pyramid());
+	vertex_count_ = static_cast<std::uint32_t>(vertices.size());
+	if (vertex_count_ != 0) {
+		gpu.upload_vertices(vertices.data(), vertex_count_);
+	}
 }
 ```
 
-Rename the existing local that `upload` uses to `uploaded_vertices_` and add that member if it does not exist. If `upload` currently inlines the call, use exactly:
-
-```cpp
-	std::vector<GpuVertex> vertices =
-	        build_vertices(aspect, &gpu.occlusion_pyramid());
-```
-
-and pass `vertices` on to the existing upload path unchanged.
+No new member is introduced; `upload` keeps its local.
 
 - [ ] **Step 6: Build and run**
 
@@ -1424,8 +1426,10 @@ layout(local_size_x = 8, local_size_y = 8) in;
 // SDL_BeginGPUComputePass, because SDL_GPUStorageTextureReadWriteBinding is
 // the only SDL binding that carries a mip_level. The two addresses never
 // overlap within a dispatch, so simultaneous access is safe.
-layout(set = 0, binding = 0) uniform image2D src;
-layout(set = 0, binding = 1) uniform image2D dst;
+// GLSL 4.50 rejects an image that is neither readonly/writeonly nor carries
+// a format qualifier, so both spell out r32f to match the R32_FLOAT texture.
+layout(set = 0, binding = 0, r32f) readonly uniform image2D src;
+layout(set = 0, binding = 1, r32f) writeonly uniform image2D dst;
 
 void main()
 {
@@ -1458,49 +1462,10 @@ void main()
 
 - [ ] **Step 4: Extend `build-shaders.sh` to cover `comp`**
 
-Replace the loop and body of `shaders/build-shaders.sh` with:
-
-```bash
-work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
-
-for pair in "vert lit" "frag lit" "comp depth"; do
-    stage="${pair%% *}"
-    base="${pair##* }"
-    source="$here/$base.$stage"
-    spv="$work/$base.$stage.spv"
-    header="$out_dir/$base.$stage.spv.h"
-    name="${base}_${stage}_spv"
-
-    "$glslang" -V "$source" -o "$spv" >/dev/null
-
-    python3 - "$spv" "$name" "$header" "$stage" <<'PY'
-import sys
-
-spv_path, name, header_path, stage = sys.argv[1:5]
-data = open(spv_path, "rb").read()
-
-lines = [
-    "#pragma once",
-    f"// Generated from shaders/{stage} by shaders/build-shaders.sh. Do not edit.",
-    f"static const unsigned char {name}[] = {{",
-]
-for i in range(0, len(data), 12):
-    chunk = ", ".join(f"0x{b:02x}" for b in data[i:i + 12])
-    lines.append(f"  {chunk},")
-lines.append("};")
-lines.append(f"static const unsigned int {name}_len = {len(data)};")
-lines.append("")
-
-open(header_path, "w").write("\n".join(lines))
-PY
-
-    echo "wrote $header"
-done
-```
-
-Fix the comment line so it names the source file rather than the stage, by passing the base name as a fourth argument. Apply this corrected script:
-
+Replace the whole of `shaders/build-shaders.sh` with the script below. The loop
+is a list of `<stage> <base>` pairs because the original hardcoded
+`source="$here/lit.$stage"`, which would look for `lit.comp` instead of
+`depth.comp`.
 ```bash
 #!/usr/bin/env bash
 #
@@ -1528,6 +1493,7 @@ fi
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
+# "<stage> <base>": lit supplies vert and frag, depth supplies comp.
 for pair in "vert lit" "frag lit" "comp depth"; do
     stage="${pair%% *}"
     base="${pair##* }"
@@ -1538,15 +1504,15 @@ for pair in "vert lit" "frag lit" "comp depth"; do
 
     "$glslang" -V "$source" -o "$spv" >/dev/null
 
-    python3 - "$spv" "$name" "$header" "$base" <<'PY'
+    python3 - "$spv" "$name" "$header" "$base.$stage" <<'PY'
 import sys
 
-spv_path, name, header_path, base = sys.argv[1:5]
+spv_path, name, header_path, source_name = sys.argv[1:5]
 data = open(spv_path, "rb").read()
 
 lines = [
     "#pragma once",
-    f"// Generated from shaders/{base}.{base and spv_path.split('.')[-1]} by shaders/build-shaders.sh. Do not edit.",
+    f"// Generated from shaders/{source_name} by shaders/build-shaders.sh. Do not edit.",
     f"static const unsigned char {name}[] = {{",
 ]
 for i in range(0, len(data), 12):
@@ -2081,30 +2047,88 @@ Add a line reporting readiness, using whichever renderer handle the editor alrea
 		            occlusion_ready ? "active" : "warming up");
 ```
 
-- [ ] **Step 3: Build and run headless**
+- [ ] **Step 3: Add the headless GPU verification test**
 
-Run: `cd build && cmake --build . -j"$(nproc)" 2>&1 | tail -10`
-Expected: compiles clean.
+`bin/lotus` opens a window and cannot run in a headless container — it fails
+with `This surface does not support presenting!`. The gate is therefore a
+gtest that drives `init_offscreen`, which creates a Vulkan device with no
+window at all (verified working here against Mesa lavapipe).
 
-Run: `LOTUS_MAX_FRAMES=120 ./bin/lotus 2>&1 | tail -20`
-Expected: no crash, no SDL errors, no assertion about missing transfer buffers. The wall occludes `lod_sphere` from roughly frame 3 onward, since the fence needs a frame to land.
+Create `test/occlusion_gpu_test.cpp`:
 
-If the run reports an SDL error about storage textures or mip levels, capture the exact `SDL_GetError()` string before changing anything.
+```cpp
+#include <gtest/gtest.h>
 
-- [ ] **Step 4: Verify no false occlusion by visual capture**
+#include "lotus/gpu/renderer.hpp"
+#include "lotus/scene/scene.hpp"
 
-Run: `LOTUS_MAX_FRAMES=10 ./bin/lotus` in a directory where the offscreen capture path runs, then inspect the written PPM.
+using namespace lotus;
 
-Expected: the wall, cube, ball, and camera-facing geometry all render. Nothing that should be visible is missing. A missing object means a false positive in the query — that is a bug, not a tuning issue. Reduce the level selection aggressiveness before touching anything else.
+TEST(OcclusionGpuTest, PyramidReachesTheCpuWithoutBlocking)
+{
+    GpuRenderer gpu;
+    ASSERT_NO_THROW(gpu.init_offscreen(256, 256));
+    ASSERT_TRUE(gpu.occlusion_enabled()) << "compute pipeline unavailable";
+
+    Scene scene{"s"};
+    const Entity camera = scene.create("camera");
+    scene.registry().emplace<Camera3D>(camera, Camera3D{{0.0f, 0.0f, 10.0f},
+                                                       {0.0f, 0.0f, 0.0f},
+                                                       {0.0f, 1.0f, 0.0f},
+                                                       60.0f, 0.1f, 100.0f});
+
+    // A wall across the view, and a cube behind it.
+    const Entity wall = scene.create("wall");
+    scene.registry().emplace<MeshSource>(wall, MeshSource{"builtin:cube"});
+    scene.registry().get<Transform>(wall).scale = {40.0f, 40.0f, 0.25f};
+    scene.registry().get<Transform>(wall).position = {0.0f, 0.0f, 5.0f};
+
+    const Entity hidden = scene.create("hidden");
+    scene.registry().emplace<MeshSource>(hidden, MeshSource{"builtin:cube"});
+    scene.registry().get<Transform>(hidden).position = {0.0f, 0.0f, 0.0f};
+
+    scene.update(0.0f);
+
+    // A few frames so the fence for an early frame lands.
+    bool ready = false;
+    uint32_t occluded = 0;
+    for (int frame = 0; frame < 8 && !ready; ++frame) {
+        gpu.begin_frame_offscreen();
+        scene.upload(gpu, 1.0f);
+        gpu.begin_scene_pass();
+        scene.draw(gpu);
+        gpu.end_scene_pass();
+        gpu.end_frame();
+        SDL_WaitForGPUIdle(gpu.device());
+        ready = gpu.occlusion_ready();
+        occluded = scene.occluded_entities();
+    }
+
+    EXPECT_TRUE(ready) << "pyramid never reached the CPU";
+    EXPECT_GT(occluded, 0u) << "nothing behind the wall was culled";
+}
+```
+
+- [ ] **Step 4: Run it**
+
+Run: `cd build && cmake --build . -j"$(nproc)" 2>&1 | tail -10 && ./bin/lotus_tests --gtest_filter='OcclusionGpuTest.*'`
+Expected: PASS.
+
+If it reports an SDL error about storage textures, mip levels, or the compute
+pipeline, capture the exact `SDL_GetError()` string before changing anything.
+
+If `occlusion_enabled()` is false, the compute pipeline could not be created;
+that is the designed fallback, not a failure of this test — report it rather
+than loosening the assertion.
 
 - [ ] **Step 5: Run the full suite and commit**
 
 Run: `cd build && ./bin/lotus_tests 2>&1 | tail -3`
-Expected: `[  PASSED  ] 131 tests.`
+Expected: `[  PASSED  ] 132 tests.`
 
 ```bash
-git add app/main.cpp src/ui/editor.cpp
-git commit -m "Demo an occluding wall and surface occlusion stats in the editor"
+git add app/main.cpp src/ui/editor.cpp test/occlusion_gpu_test.cpp
+git commit -m "Add a headless GPU gate for the Hi-Z pyramid"
 ```
 
 ---
