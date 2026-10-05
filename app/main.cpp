@@ -1,93 +1,60 @@
 #include "lotus/application.hpp"
 #include "lotus/gpu/renderer.hpp"
+#include "lotus/scene/scene.hpp"
+
 #include <cmath>
-#include <cstring>
 #include <iostream>
-
-namespace {
-
-struct GpuVertex {
-	float x, y, z;
-	float r, g, b;
-};
-
-void identity_mvp(float* m)
-{
-	std::memset(m, 0, sizeof(float) * 16);
-	m[0] = m[5] = m[10] = m[15] = 1.0f;
-}
-
-void translation_mvp(float* m, float tx, float ty)
-{
-	identity_mvp(m);
-	m[12] = tx;
-	m[13] = ty;
-}
-
-void quad_vertices(float ox, float oy, float size, GpuVertex out[6])
-{
-	const float z = 0.0f;
-	const float s = size * 0.5f;
-	const float gray = 0.5f;
-	auto corner = [&](float x, float y) {
-		return GpuVertex{x + ox, y + oy, z, gray, gray, gray};
-	};
-	const GpuVertex v0 = corner(-s, s);
-	const GpuVertex v1 = corner(s, s);
-	const GpuVertex v2 = corner(s, -s);
-	const GpuVertex v3 = corner(-s, -s);
-	out[0] = v0;
-	out[1] = v1;
-	out[2] = v2;
-	out[3] = v0;
-	out[4] = v2;
-	out[5] = v3;
-}
-
-} // namespace
 
 class DemoApplication : public lotus::Application {
 public:
 	using lotus::Application::Application;
 
 protected:
-	void on_ready(lotus::Window& window, lotus::GpuRenderer& gpu) override
+	void on_ready(lotus::Window& /*window*/, lotus::GpuRenderer& gpu) override
 	{
-		(void)window;
 		std::cout << "gpu driver: " << gpu.driver_name() << '\n';
-		GpuVertex verts[6];
-		quad_vertices(0.0f, 0.0f, 0.5f, verts);
-		gpu.set_vertices(verts, sizeof(verts));
+
+		lotus::Scene& scene = scenes().activate("main");
+
+		// A parent square with two child squares, to exercise hierarchy.
+		root_ = scene.create("root");
+		scene.registry().emplace<lotus::Sprite>(
+		        root_, lotus::Sprite{{0.90f, 0.35f, 0.35f, 1.0f}, {0.5f, 0.5f}});
+
+		const lotus::Entity left = scene.create("left");
+		scene.registry().emplace<lotus::Sprite>(
+		        left, lotus::Sprite{{0.35f, 0.85f, 0.45f, 1.0f}, {0.25f, 0.25f}});
+		scene.registry().get<lotus::Transform>(left).position = {-0.8f, 0.0f, 0.0f};
+		scene.set_parent(left, root_);
+
+		const lotus::Entity right = scene.create("right");
+		scene.registry().emplace<lotus::Sprite>(
+		        right, lotus::Sprite{{0.35f, 0.55f, 0.95f, 1.0f}, {0.25f, 0.25f}});
+		scene.registry().get<lotus::Transform>(right).position = {0.8f, 0.0f, 0.0f};
+		scene.set_parent(right, root_);
 	}
 
-	void on_update(float dt) override { anim_time_ += dt; }
-
-	void on_prepare_frame(lotus::GpuRenderer& gpu) override
+	void on_update(float dt) override
 	{
-		GpuVertex verts[6];
-		const float ox = std::sin(anim_time_);
-		quad_vertices(ox, 0.0f, 0.5f, verts);
-		gpu.set_vertices(verts, sizeof(verts));
-	}
-
-	void on_render(lotus::GpuRenderer& gpu) override
-	{
-		float mvp[16];
-		translation_mvp(mvp, 0.0f, 0.0f);
-		gpu.draw(mvp, 6);
+		lotus::Scene* scene = scenes().active();
+		if (!scene || !scene->registry().valid(root_)) {
+			return;
+		}
+		auto& transform = scene->registry().get<lotus::Transform>(root_);
+		transform.rotation.z += dt * 0.8f;
 	}
 
 	void on_shutdown() override {}
 
 private:
-	float anim_time_{0.0f};
+	lotus::Entity root_{lotus::NullEntity};
 };
 
 int main()
 {
 	try {
 		DemoApplication app;
-		app.run(800, 600, "lotus");
+		app.run(960, 600, "lotus");
 	} catch (const std::exception& ex) {
 		std::cerr << "lotus: " << ex.what() << '\n';
 		return 1;

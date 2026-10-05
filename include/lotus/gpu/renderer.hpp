@@ -8,7 +8,15 @@ struct SDL_Window;
 
 namespace lotus {
 
-/// SDL3 GPU backend (Vulkan on Linux). Owns device, pipeline, and frame submission.
+/// SDL3 GPU backend (Vulkan on Linux). Owns the device, one graphics pipeline
+/// (float3 position + float3 color, mat4 MVP), and a dynamic vertex buffer.
+///
+/// Frame stages (all on one command buffer):
+///   begin_frame()  -> acquire command buffer + swapchain
+///   upload_vertices() -> copy pass (must be outside a render pass)
+///   begin_scene_pass() / draw() / end_scene_pass()
+///   [UI layer may open its own pass here]
+///   end_frame()    -> submit
 class GpuRenderer {
 public:
 	GpuRenderer() = default;
@@ -17,32 +25,58 @@ public:
 	GpuRenderer(const GpuRenderer&)            = delete;
 	GpuRenderer& operator=(const GpuRenderer&) = delete;
 
-	/// Creates a Vulkan-backed GPU device and claims \p window for presentation.
+	/// Creates the GPU device, claims \p window, builds the pipeline.
 	void init(SDL_Window* window, bool debug_device = true);
 
+	/// Releases all GPU resources. Safe to call more than once.
+	void shutdown();
+
 	SDL_GPUDevice* device() const { return device_; }
+	const char* driver_name() const;
 
-	/// Uploads triangle-list vertex data (cube test layout: float3 pos + float3 color).
-	void set_vertices(const void* data, uint32_t byte_size);
+	// --- frame ---
 
-	/// Acquires swapchain, begins a color-only render pass (clears to \p clear_bgra-ish RGB).
-	void begin_frame(SDL_Window* window, float clear_r, float clear_g, float clear_b);
+	void begin_frame(SDL_Window* window, float clear_r, float clear_g,
+	                 float clear_b);
 
-	/// Binds pipeline, sets MVP uniform, draws \p vertex_count vertices.
-	void draw(const float* model_view_projection_4x4_column_major,
-	          uint32_t vertex_count);
+	/// Uploads triangle-list vertices (float3 pos + float3 color) for this frame.
+	void upload_vertices(const void* data, uint32_t byte_size);
+
+	void begin_scene_pass();
+	void draw(const float* mvp_4x4_column_major, uint32_t vertex_count);
+	void end_scene_pass();
 
 	void end_frame();
 
-	const char* driver_name() const;
+	// --- for UI layers that open their own pass on the same command buffer ---
+
+	/// False when no swapchain texture was available (frame should be skipped).
+	bool has_frame() const { return cmd_ != nullptr; }
+
+	SDL_GPUCommandBuffer* command_buffer() const { return cmd_; }
+	SDL_GPUTexture* swapchain_texture() const { return swapchain_; }
+	SDL_GPUTextureFormat swapchain_format() const { return swapchain_format_; }
+
+	uint32_t vertex_capacity() const { return capacity_; }
 
 private:
+	void ensure_capacity(uint32_t bytes);
+	void destroy_buffers();
+
 	SDL_GPUDevice* device_{nullptr};
-	SDL_Window* claimed_window_{nullptr};
-	SDL_GPUBuffer* vertex_buffer_{nullptr};
+	SDL_Window* window_{nullptr};
+	SDL_GPUTextureFormat swapchain_format_{SDL_GPU_TEXTUREFORMAT_INVALID};
 	SDL_GPUGraphicsPipeline* pipeline_{nullptr};
+
+	SDL_GPUBuffer* vertex_buffer_{nullptr};
+	SDL_GPUTransferBuffer* transfer_buffer_{nullptr};
+	uint32_t capacity_{0};
+
 	SDL_GPUCommandBuffer* cmd_{nullptr};
 	SDL_GPURenderPass* pass_{nullptr};
+	SDL_GPUTexture* swapchain_{nullptr};
+
+	float clear_r_{0.0f}, clear_g_{0.0f}, clear_b_{0.0f};
 };
 
 } // namespace lotus

@@ -2,6 +2,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <functional>
 #include <stdexcept>
 #include <string>
 
@@ -29,10 +30,14 @@ public:
 		}
 	}
 
-	void poll_events()
+	/// Pumps the event queue; \p on_event (if set) sees every event first.
+	void poll_events(const std::function<void(const SDL_Event&)>& on_event = {})
 	{
 		SDL_Event event{};
 		while (SDL_PollEvent(&event)) {
+			if (on_event) {
+				on_event(event);
+			}
 			if (event.type == SDL_EVENT_QUIT) {
 				close_requested_ = true;
 			} else if (event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
@@ -48,6 +53,12 @@ public:
 
 	int width() const { return width_; }
 	int height() const { return height_; }
+
+	/// Drawable size in pixels (differs from window size on HiDPI).
+	void pixel_size(int& out_w, int& out_h) const
+	{
+		SDL_GetWindowSizeInPixels(handle_, &out_w, &out_h);
+	}
 
 	~Window()
 	{

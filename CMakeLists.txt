@@ -13,12 +13,29 @@ add_subdirectory(dependencies/entt)
 
 include(FindLotusSDL3)
 
+# === Dear ImGui (debug overlay) ===
+add_library(imgui STATIC
+    dependencies/imgui/imgui.cpp
+    dependencies/imgui/imgui_draw.cpp
+    dependencies/imgui/imgui_tables.cpp
+    dependencies/imgui/imgui_widgets.cpp
+    dependencies/imgui/backends/imgui_impl_sdl3.cpp
+    dependencies/imgui/backends/imgui_impl_sdlgpu3.cpp
+)
+target_include_directories(imgui PUBLIC
+    ${CMAKE_SOURCE_DIR}/dependencies/imgui
+    ${CMAKE_SOURCE_DIR}/dependencies/imgui/backends
+)
+target_link_libraries(imgui PUBLIC SDL3::SDL3)
+
 # === Engine Library ===
 
+# Gather all implementation files from src/, excluding app/main.cc
 file(GLOB_RECURSE LOTUS_SOURCES CONFIGURE_DEPENDS src/*.cpp)
 list(REMOVE_ITEM LOTUS_SOURCES
     "${CMAKE_SOURCE_DIR}/src/main.cpp"
     "${CMAKE_SOURCE_DIR}/src/main.cc"
+    # Legacy OpenGL stack: not built.
     "${CMAKE_SOURCE_DIR}/src/gl/shader.cpp"
     "${CMAKE_SOURCE_DIR}/src/gl/shader_program.cpp")
 
@@ -33,11 +50,11 @@ target_link_libraries(lotus_engine
     PUBLIC
     SDL3::SDL3
     EnTT::EnTT
+    imgui
 )
 
 # === Main Executable ===
 
-# Replace with app/main.cpp or app/main.cc
 add_executable(lotus app/main.cpp)
 
 target_link_libraries(lotus
