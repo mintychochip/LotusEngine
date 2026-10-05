@@ -110,12 +110,10 @@ TEST(DepthPyramidTest, BuildRejectsNullAndZeroSizedInput)
 	pyramid.build(flat_image(4, 4, 1.0f).data(), 4, 4);
 	ASSERT_FALSE(pyramid.empty());
 
-	pyramid.build(nullptr, 0, 0);
-	EXPECT_TRUE(pyramid.empty());
-
+	// A non-null pointer with a zero dimension must still be refused.
 	const float pixel = 1.0f;
-	pyramid.build(&pixel, 8, 8);
 	pyramid.build(&pixel, 0, 8);
+
 	EXPECT_TRUE(pyramid.empty());
 }
 
@@ -161,4 +159,40 @@ TEST(DepthPyramidTest, AdoptRejectsShortOrEmptyUploads)
 
 	pyramid.adopt(0, 0, 7, {}); // no dimensions
 	EXPECT_TRUE(pyramid.empty());
+}
+
+TEST(DepthPyramidTest, AdoptRejectionDiscardsThePreviouslyInstalledChain)
+{
+	DepthPyramid pyramid;
+	pyramid.build(flat_image(16, 16, 1.0f).data(), 16, 16);
+	ASSERT_FALSE(pyramid.empty());
+
+	// A rejected upload must leave no pyramid at all: keeping frame N-1's
+	// depth would pair it with frame N's camera.
+	pyramid.adopt(64, 64, 7, {}); // too few mips
+	EXPECT_TRUE(pyramid.empty());
+	EXPECT_EQ(pyramid.level_count(), 0u);
+
+	pyramid.build(flat_image(16, 16, 1.0f).data(), 16, 16);
+	pyramid.adopt(0, 0, 7, {}); // no dimensions
+	EXPECT_TRUE(pyramid.empty());
+}
+
+TEST(DepthPyramidTest, AdoptRejectsMipsWhoseSizeContradictsTheAccessors)
+{
+	std::vector<std::vector<float>> mips(7);
+	mips[2] = flat_image(16, 16, 4.0f);
+	mips[3] = flat_image(8, 8, 4.0f);
+	mips[4] = flat_image(4, 4, 4.0f);
+	mips[5] = flat_image(2, 2, 4.0f);
+	mips[6] = flat_image(1, 1, 4.0f);
+	// Level 3 reports 8x8, so three texels would let a consumer run off the end.
+	mips[3] = flat_image(2, 2, 4.0f);
+
+	DepthPyramid pyramid;
+	pyramid.build(flat_image(16, 16, 1.0f).data(), 16, 16);
+	pyramid.adopt(64, 64, 7, mips);
+
+	EXPECT_TRUE(pyramid.empty());
+	EXPECT_EQ(pyramid.level_count(), 0u);
 }

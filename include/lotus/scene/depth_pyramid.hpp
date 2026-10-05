@@ -48,6 +48,10 @@ public:
 	}
 
 	/// Dimensions of \p level, clamped to 1x1 at the coarsest level.
+	///
+	/// These answer max(1u, w >> level) for ANY level value, including past the
+	/// end of the chain and on an empty pyramid. Bounds-check against
+	/// level_count() before using them to index a mip.
 	uint32_t level_width(uint32_t level) const;
 	uint32_t level_height(uint32_t level) const;
 

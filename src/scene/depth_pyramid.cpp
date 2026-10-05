@@ -79,22 +79,17 @@ void DepthPyramid::build(const float* depth, uint32_t width, uint32_t height)
 
 		for (uint32_t y = 0; y < dst_h; ++y) {
 			for (uint32_t x = 0; x < dst_w; ++x) {
-				// Odd dimensions leave a partial 2x2 block; the missing texels
-				// stay at the far value.
+				// Mip dimensions follow Vulkan's max(1, w >> level)
+				// convention, exactly as shaders/depth.comp does. With that
+				// rule, dst_w = src_w >> 1, so every 2x2 window lies wholly
+				// inside the source and a texel in a ragged edge column or
+				// row simply falls outside all of them and is never sampled.
 				float nearest = kDepthFar;
 				for (uint32_t dy = 0; dy < 2; ++dy) {
-					const uint32_t sy = y * 2 + dy;
-					if (sy >= src_h) {
-						continue;
-					}
 					for (uint32_t dx = 0; dx < 2; ++dx) {
-						const uint32_t sx = x * 2 + dx;
-						if (sx >= src_w) {
-							continue;
-						}
-						nearest = std::min(
-						    nearest,
-						    src[static_cast<std::size_t>(sy) * src_w + sx]);
+						const std::size_t sx = x * 2 + dx;
+						const std::size_t sy = y * 2 + dy;
+						nearest = std::min(nearest, src[sy * src_w + sx]);
 					}
 				}
 				dst[static_cast<std::size_t>(y) * dst_w + x] = nearest;
@@ -103,10 +98,12 @@ void DepthPyramid::build(const float* depth, uint32_t width, uint32_t height)
 	}
 }
 
-
 void DepthPyramid::adopt(uint32_t width, uint32_t height, uint32_t total_levels,
 	                    const std::vector<std::vector<float>>& mips)
 {
+	// A rejected upload must leave no pyramid at all, never the previous
+	// frame's chain paired with this frame's camera.
+	clear();
 	if (width == 0 || height == 0 || total_levels == 0) {
 		return;
 	}
@@ -116,6 +113,19 @@ void DepthPyramid::adopt(uint32_t width, uint32_t height, uint32_t total_levels,
 
 	width_  = width;
 	height_ = height;
+
+	// Every transferred mip must match the dimensions its accessors report, or
+	// a consumer indexing by level_width/level_height would run off the end.
+	// Levels below kDepthPyramidMinLevel are legitimately empty and skipped.
+	for (uint32_t level = kDepthPyramidMinLevel; level < total_levels; ++level) {
+		const std::size_t expected = static_cast<std::size_t>(level_width(level)) *
+		                             level_height(level);
+		if (mips[level].size() != expected) {
+			clear();
+			return;
+		}
+	}
+
 	levels_.assign(total_levels, {});
 	for (uint32_t level = kDepthPyramidMinLevel; level < total_levels; ++level) {
 		levels_[level] = mips[level];
