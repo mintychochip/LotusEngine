@@ -13,8 +13,12 @@ class GpuRenderer;
 class SceneManager;
 class Scene;
 
-/// Dear ImGui debug overlay: scene hierarchy, entity inspector, stats, and
-/// scene-file controls (save / hot reload).
+/// Dear ImGui editor: scene hierarchy, entity inspector, stats, and scene-file
+/// controls (save / hot reload).
+///
+/// Structural components (Transform, Hierarchy, Name) are owned by Scene and
+/// are not removable from the UI; optional components (Sprite, Camera2D) can
+/// be added and removed.
 class Editor {
 public:
 	Editor() = default;
@@ -23,8 +27,7 @@ public:
 	Editor(const Editor&)            = delete;
 	Editor& operator=(const Editor&) = delete;
 
-	/// Pull-based controls for the scene file panel. State is fetched each
-	/// frame so the panel always reflects the live values.
+	/// Pull-based controls for the scene file panel.
 	struct SceneControls {
 		std::function<std::string()> path;
 		std::function<std::string()> status;
@@ -50,6 +53,11 @@ public:
 	void set_visible(bool value) { visible_ = value; }
 	void toggle() { visible_ = !visible_; }
 
+	/// True when the UI changed the scene since the last save.
+	bool dirty() const { return dirty_; }
+	void clear_dirty() { dirty_ = false; }
+	bool auto_save() const { return auto_save_; }
+
 private:
 	void draw_hierarchy(Scene& scene);
 	void draw_entity_node(Scene& scene, Entity entity);
@@ -59,6 +67,8 @@ private:
 
 	bool initialized_{false};
 	bool visible_{true};
+	bool dirty_{false};
+	bool auto_save_{false};
 	Entity selected_{NullEntity};
 	SceneControls scene_controls_;
 };

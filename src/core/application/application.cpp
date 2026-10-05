@@ -43,6 +43,7 @@ bool Application::save_scene_now(std::string* error)
 		return false;
 	}
 	scene_status_ = "saved " + scene_path_;
+	editor_.clear_dirty();
 	// Re-baseline so our own write does not trigger a reload.
 	watcher_.watch("scene", scene_path_);
 	return true;

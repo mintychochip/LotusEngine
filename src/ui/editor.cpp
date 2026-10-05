@@ -6,6 +6,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <utility>
 
 #include "lotus/gpu/renderer.hpp"
 #include "lotus/scene/scene.hpp"
@@ -72,13 +73,18 @@ void Editor::shutdown()
 	initialized_ = false;
 }
 
+void Editor::set_scene_controls(SceneControls controls)
+{
+	scene_controls_ = std::move(controls);
+}
+
 void Editor::process_event(const SDL_Event& event)
 {
 	if (!initialized_) {
 		return;
 	}
-	if (event.type == SDL_EVENT_KEY_DOWN &&
-	    event.key.key == SDLK_F1 && !event.key.repeat) {
+	if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_F1 &&
+	    !event.key.repeat) {
 		toggle();
 	}
 	ImGui_ImplSDL3_ProcessEvent(&event);
@@ -101,6 +107,9 @@ void Editor::draw(SceneManager& scenes, float dt)
 	}
 	Scene* scene = scenes.active();
 	if (scene) {
+		if (selected_ != NullEntity && !scene->registry().valid(selected_)) {
+			selected_ = NullEntity;
+		}
 		draw_hierarchy(*scene);
 		draw_inspector(*scene);
 	}
@@ -108,47 +117,33 @@ void Editor::draw(SceneManager& scenes, float dt)
 	draw_scene_panel();
 }
 
-void Editor::set_scene_controls(SceneControls controls)
-{
-	scene_controls_ = std::move(controls);
-}
-
-void Editor::draw_scene_panel()
-{
-	if (!scene_controls_.path || !scene_controls_.on_save) {
-		return;
-	}
-	ImGui::SetNextWindowSize(ImVec2(420, 120), ImGuiCond_FirstUseEver);
-	if (ImGui::Begin("Scene File")) {
-		ImGui::TextWrapped("File: %s", scene_controls_.path().c_str());
-		if (ImGui::Button("Save")) {
-			scene_controls_.on_save();
-		}
-		ImGui::SameLine();
-		if (ImGui::Button("Reload")) {
-			scene_controls_.on_reload();
-		}
-		ImGui::SameLine();
-		ImGui::TextDisabled("(edits reload automatically)");
-		if (scene_controls_.status) {
-			ImGui::TextWrapped("%s", scene_controls_.status().c_str());
-		}
-	}
-	ImGui::End();
-}
-
 void Editor::draw_hierarchy(Scene& scene)
 {
-	ImGui::SetNextWindowSize(ImVec2(280, 320), ImGuiCond_FirstUseEver);
+	ImGui::SetNextWindowSize(ImVec2(300, 340), ImGuiCond_FirstUseEver);
 	if (ImGui::Begin("Hierarchy")) {
-		if (ImGui::Button("Add entity")) {
-			scene.create("entity");
+		if (ImGui::Button("Add root")) {
+			selected_ = scene.create("entity");
+			dirty_    = true;
+		}
+		const bool has_selection =
+		        selected_ != NullEntity && scene.registry().valid(selected_);
+		ImGui::SameLine();
+		if (ImGui::Button("Add child") && has_selection) {
+			const Entity child = scene.create("entity");
+			scene.set_parent(child, selected_);
+			selected_ = child;
+			dirty_    = true;
 		}
 		ImGui::SameLine();
-		if (selected_ != NullEntity && scene.registry().valid(selected_) &&
-		    ImGui::Button("Destroy selected")) {
+		if (ImGui::Button("Destroy") && has_selection) {
 			scene.destroy(selected_);
 			selected_ = NullEntity;
+			dirty_    = true;
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Unparent") && has_selection) {
+			scene.detach(selected_);
+			dirty_ = true;
 		}
 		ImGui::Separator();
 		for (const Entity root : scene.roots()) {
@@ -180,7 +175,7 @@ void Editor::draw_entity_node(Scene& scene, Entity entity)
 	}
 	if (open && !is_leaf) {
 		for (Entity child = hierarchy.first_child; child != NullEntity;
-		     child         = scene.registry().get<Hierarchy>(child).next_sibling) {
+		     child = scene.registry().get<Hierarchy>(child).next_sibling) {
 			draw_entity_node(scene, child);
 		}
 		ImGui::TreePop();
@@ -189,31 +184,81 @@ void Editor::draw_entity_node(Scene& scene, Entity entity)
 
 void Editor::draw_inspector(Scene& scene)
 {
-	ImGui::SetNextWindowSize(ImVec2(320, 360), ImGuiCond_FirstUseEver);
+	ImGui::SetNextWindowSize(ImVec2(340, 420), ImGuiCond_FirstUseEver);
 	if (ImGui::Begin("Inspector")) {
 		if (selected_ == NullEntity || !scene.registry().valid(selected_)) {
 			ImGui::TextUnformatted("Nothing selected");
-		} else {
-			auto& registry = scene.registry();
+			ImGui::End();
+			return;
+		}
+		auto& registry = scene.registry();
 
-			auto& name = registry.get<Name>(selected_).value;
-			char buffer[128];
-			std::snprintf(buffer, sizeof(buffer), "%s", name.c_str());
-			if (ImGui::InputText("Name", buffer, sizeof(buffer))) {
-				name = buffer;
-			}
+		auto& name = registry.get<Name>(selected_).value;
+		char buffer[128];
+		std::snprintf(buffer, sizeof(buffer), "%s", name.c_str());
+		if (ImGui::InputText("Name", buffer, sizeof(buffer))) {
+			name   = buffer;
+			dirty_ = true;
+		}
 
-			if (auto* transform = registry.try_get<Transform>(selected_)) {
-				ImGui::SeparatorText("Transform");
-				ImGui::DragFloat3("Position", &transform->position.x, 0.01f);
-				ImGui::DragFloat3("Rotation", &transform->rotation.x, 0.01f);
-				ImGui::DragFloat3("Scale", &transform->scale.x, 0.01f, 0.001f,
-				                  100.0f);
+		if (auto* transform = registry.try_get<Transform>(selected_)) {
+			ImGui::SeparatorText("Transform (structural)");
+			if (ImGui::DragFloat3("Position", &transform->position.x, 0.01f)) {
+				dirty_ = true;
 			}
-			if (auto* sprite = registry.try_get<Sprite>(selected_)) {
-				ImGui::SeparatorText("Sprite");
-				ImGui::ColorEdit3("Color", &sprite->color.x);
-				ImGui::DragFloat2("Size", &sprite->size.x, 0.01f, 0.001f, 100.0f);
+			if (ImGui::DragFloat3("Rotation", &transform->rotation.x, 0.01f)) {
+				dirty_ = true;
+			}
+			if (ImGui::DragFloat3("Scale", &transform->scale.x, 0.01f, 0.001f,
+			                      100.0f)) {
+				dirty_ = true;
+			}
+		}
+		if (auto* sprite = registry.try_get<Sprite>(selected_)) {
+			ImGui::SeparatorText("Sprite");
+			if (ImGui::ColorEdit3("Color", &sprite->color.x)) {
+				dirty_ = true;
+			}
+			if (ImGui::DragFloat2("Size", &sprite->size.x, 0.01f, 0.001f,
+			                      100.0f)) {
+				dirty_ = true;
+			}
+		}
+		if (auto* camera = registry.try_get<Camera2D>(selected_)) {
+			ImGui::SeparatorText("Camera2D");
+			if (ImGui::DragFloat2("Cam position", &camera->position.x, 0.01f)) {
+				dirty_ = true;
+			}
+			if (ImGui::DragFloat("Zoom", &camera->zoom, 0.01f, 0.01f, 100.0f)) {
+				dirty_ = true;
+			}
+		}
+
+		// Add / remove optional components.
+		ImGui::SeparatorText("Components");
+		static const char* kAddable[] = {"Sprite", "Camera2D"};
+		static int choice             = 0;
+		ImGui::SetNextItemWidth(140);
+		ImGui::Combo("##add", &choice, kAddable, 2);
+		ImGui::SameLine();
+		if (ImGui::Button("Add component")) {
+			if (choice == 0 && !registry.all_of<Sprite>(selected_)) {
+				registry.emplace<Sprite>(selected_);
+			} else if (choice == 1 && !registry.all_of<Camera2D>(selected_)) {
+				registry.emplace<Camera2D>(selected_);
+			}
+			dirty_ = true;
+		}
+		if (registry.all_of<Sprite>(selected_)) {
+			if (ImGui::Button("Remove Sprite")) {
+				registry.remove<Sprite>(selected_);
+				dirty_ = true;
+			}
+		}
+		if (registry.all_of<Camera2D>(selected_)) {
+			if (ImGui::Button("Remove Camera2D")) {
+				registry.remove<Camera2D>(selected_);
+				dirty_ = true;
 			}
 		}
 	}
@@ -222,7 +267,7 @@ void Editor::draw_inspector(Scene& scene)
 
 void Editor::draw_stats(SceneManager& scenes, float dt)
 {
-	ImGui::SetNextWindowSize(ImVec2(280, 140), ImGuiCond_FirstUseEver);
+	ImGui::SetNextWindowSize(ImVec2(280, 150), ImGuiCond_FirstUseEver);
 	if (ImGui::Begin("Stats")) {
 		const Scene* scene = scenes.active();
 		ImGui::Text("Scene: %s", scene ? scene->name().c_str() : "(none)");
@@ -233,6 +278,39 @@ void Editor::draw_stats(SceneManager& scenes, float dt)
 		ImGui::Text("Draw calls: %u", scene ? scene->draw_calls() : 0u);
 		ImGui::Text("Frame: %.2f ms (%.0f FPS)", dt * 1000.0f,
 		            ImGui::GetIO().Framerate);
+	}
+	ImGui::End();
+}
+
+void Editor::draw_scene_panel()
+{
+	if (!scene_controls_.path || !scene_controls_.on_save) {
+		return;
+	}
+	ImGui::SetNextWindowSize(ImVec2(440, 150), ImGuiCond_FirstUseEver);
+	if (ImGui::Begin("Scene File")) {
+		ImGui::TextWrapped("File: %s", scene_controls_.path().c_str());
+		if (ImGui::Button("Save")) {
+			scene_controls_.on_save();
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Reload")) {
+			scene_controls_.on_reload();
+		}
+		ImGui::SameLine();
+		ImGui::Checkbox("Auto-save", &auto_save_);
+		if (dirty_) {
+			ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f),
+			                   "unsaved changes");
+		} else {
+			ImGui::TextDisabled("up to date");
+		}
+		if (scene_controls_.status) {
+			ImGui::TextWrapped("%s", scene_controls_.status().c_str());
+		}
+		if (auto_save_ && dirty_) {
+			scene_controls_.on_save();
+		}
 	}
 	ImGui::End();
 }
