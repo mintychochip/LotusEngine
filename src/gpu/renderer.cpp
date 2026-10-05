@@ -270,6 +270,7 @@ void GpuRenderer::end_frame()
 			throw std::runtime_error(SDL_GetError());
 		}
 		cmd_ = nullptr;
+		++frames_rendered_;
 	}
 	swapchain_ = nullptr;
 }

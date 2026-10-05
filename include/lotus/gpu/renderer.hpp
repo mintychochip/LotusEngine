@@ -59,6 +59,9 @@ public:
 
 	uint32_t vertex_capacity() const { return capacity_; }
 
+	/// Frames actually submitted (excludes skipped/stalled frames).
+	uint64_t frames_rendered() const { return frames_rendered_; }
+
 private:
 	void ensure_capacity(uint32_t bytes);
 	void destroy_buffers();
@@ -75,6 +78,7 @@ private:
 	SDL_GPUCommandBuffer* cmd_{nullptr};
 	SDL_GPURenderPass* pass_{nullptr};
 	SDL_GPUTexture* swapchain_{nullptr};
+	uint64_t frames_rendered_{0};
 
 	float clear_r_{0.0f}, clear_g_{0.0f}, clear_b_{0.0f};
 };

@@ -4,6 +4,7 @@
 #include "lotus/scene/scene.hpp"
 
 #include <cstdlib>
+#include <iostream>
 #include <stdexcept>
 
 using namespace lotus;
@@ -91,6 +92,7 @@ void Application::run(int width, int height, const std::string& title)
 
 		editor_.shutdown();
 		on_shutdown();
+		std::cout << "frames rendered: " << gpu.frames_rendered() << '\n';
 	} // GPU + window must be destroyed before SDL_Quit()
 
 	SDL_Quit();
