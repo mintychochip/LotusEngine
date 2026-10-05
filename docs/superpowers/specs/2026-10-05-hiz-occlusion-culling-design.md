@@ -45,9 +45,11 @@ The scene pass clears color target 1 to `(1e9, 1e9, 1e9, 1e9)` every frame, befo
 
 ## Pyramid
 
-`shaders/depth.comp` reduces each mip from the one above it with `min()`. A single `SDL_GPUComputePass` loops the levels, binding the previous mip as a read-only storage texture and the next as a read-write one before each `SDL_DispatchGPUCompute`.
+`shaders/depth.comp` reduces each mip from the one above it with `min()`. It runs as **one compute pass per level**, each opened by `SDL_BeginGPUComputePass` with exactly two `SDL_GPUStorageTextureReadWriteBinding` entries: slot 0 on mip `L-1`, slot 1 on mip `L`. Both are declared `uniform image2D` in GLSL; the shader reads slot 0 and writes slot 1, and the two addresses never overlap within a dispatch.
 
-The pyramid texture is `R32_FLOAT` with mip count `floor(log2(min(width, height)))`, flagged `SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_READ | SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_WRITE`. This SDL version has no `SDL_GPU_TEXTUREUSAGE_COPY_SRC`; copy usage is inferred by the backend.
+This shape is forced by the API. `SDL_BindGPUComputeStorageTextures` takes bare `SDL_GPUTexture *const *` with no mip level (SDL_gpu.h:3712), and `SDL_GPUTextureSamplerBinding` carries none either (SDL_gpu.h:2142). `SDL_GPUStorageTextureReadWriteBinding` is the only binding with a `mip_level` field (SDL_gpu.h:2174), and it is fixed when the pass begins, so bindings cannot be swapped mid-pass. One pass per level is therefore the only way to address a specific mip.
+
+The pyramid texture is `R32_FLOAT` with mip count `floor(log2(min(width, height)))`, flagged `SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_SIMULTANEOUS_READ_WRITE`. Both compute slots are read-write bindings, so the simultaneous flag is required and is explicitly not equivalent to `READ | WRITE` (SDL_gpu.h:912). This SDL version has no `SDL_GPU_TEXTUREUSAGE_COPY_SRC`; copy usage is inferred by the backend.
 
 Mip 0 is full resolution. It is the render target the scene pass writes; it is never transferred to the CPU.
 
