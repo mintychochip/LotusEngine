@@ -1,7 +1,9 @@
 #include "lotus/scene/depth_pyramid.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
+#include <limits>
 
 namespace lotus {
 namespace {
@@ -10,6 +12,16 @@ namespace {
 uint32_t halve(uint32_t value)
 {
 	return value > 1 ? value / 2 : 1;
+}
+
+/// Grows the sphere so it does not occlude itself and then flicker as the
+/// camera moves.
+constexpr float kRadiusBias = 1.02f;
+
+/// Clamps \p value into [lo, hi].
+uint32_t clamp_index(uint32_t value, uint32_t lo, uint32_t hi)
+{
+	return value < lo ? lo : (value > hi ? hi : value);
 }
 
 } // namespace
@@ -130,6 +142,123 @@ void DepthPyramid::adopt(uint32_t width, uint32_t height, uint32_t total_levels,
 	for (uint32_t level = kDepthPyramidMinLevel; level < total_levels; ++level) {
 		levels_[level] = mips[level];
 	}
+}
+
+bool DepthPyramid::occluded(const glm::mat4& view,
+                           const glm::mat4& view_projection,
+                           const BoundingSphere& world_sphere) const
+{
+	if (empty() || world_sphere.radius <= 0.0f) {
+		return false;
+	}
+
+	const uint32_t count = level_count();
+	if (count == 0) {
+		return false;
+	}
+
+	const float radius = world_sphere.radius * kRadiusBias;
+
+	// View-space centre, and the sphere's nearest extent along the view axis.
+	const glm::vec3 view_center{view * glm::vec4{world_sphere.center, 1.0f}};
+	const float nearest_depth = -view_center.z - radius;
+	if (nearest_depth <= 0.0f) {
+		return false; // straddles or crosses the camera plane
+	}
+
+	// Project the eight corners of the sphere's view-space AABB. Including the
+	// z extremes widens the footprint, which is the conservative direction.
+	glm::vec2 screen_min{std::numeric_limits<float>::max(),
+	                    std::numeric_limits<float>::max()};
+	glm::vec2 screen_max{std::numeric_limits<float>::lowest(),
+	                    std::numeric_limits<float>::lowest()};
+	for (int corner = 0; corner < 8; ++corner) {
+		const glm::vec3 offset{(corner & 1) ? radius : -radius,
+		                       (corner & 2) ? radius : -radius,
+		                       (corner & 4) ? radius : -radius};
+		const glm::vec4 clip =
+		        view_projection * glm::vec4{view_center + offset, 1.0f};
+		if (clip.w <= 0.0f) {
+			return false;
+		}
+		// Not clip.xyz / clip.w: the bundled GLM predates that swizzle.
+		const glm::vec2 ndc{clip.x / clip.w, clip.y / clip.w};
+		screen_min = glm::min(screen_min, ndc);
+		screen_max = glm::max(screen_max, ndc);
+	}
+
+	// NDC to pixels.
+	const float width_f  = static_cast<float>(width_);
+	const float height_f = static_cast<float>(height_);
+	const float min_x = (screen_min.x * 0.5f + 0.5f) * width_f;
+	const float max_x = (screen_max.x * 0.5f + 0.5f) * width_f;
+	const float min_y = (screen_min.y * 0.5f + 0.5f) * height_f;
+	const float max_y = (screen_max.y * 0.5f + 0.5f) * height_f;
+
+	// Outside the viewport: leave it to the frustum test.
+	if (max_x < 0.0f || min_x > width_f || max_y < 0.0f || min_y > height_f) {
+		return false;
+	}
+
+	const float clamped_min_x = std::max(0.0f, min_x);
+	const float clamped_max_x = std::min(width_f, max_x);
+	const float clamped_min_y = std::max(0.0f, min_y);
+	const float clamped_max_y = std::min(height_f, max_y);
+
+	// Read the finest mip the chain actually holds, then take the maximum over
+	// the footprint. Coarser mips would be cheaper, but this pyramid is
+	// min-reduced: a coarse texel is the NEAREST occluder anywhere in its
+	// block, so taking the max over coarse texels smears one small occluder
+	// across a whole block and reports the far, empty parts of the footprint as
+	// covered. That culls spheres that are genuinely visible. Soundness wins
+	// over the handful of texels this costs.
+	const uint32_t last = count - 1;
+	const uint32_t level = clamp_index(kDepthPyramidMinLevel, 0, last);
+
+	// adopt() accepts chains shorter than kDepthPyramidMinLevel, leaving those
+	// levels empty. Reading one would run off the end, so treat it as "no
+	// depth recorded" and keep the sphere.
+	if (levels_[level].empty()) {
+		return false;
+	}
+
+	const uint32_t mip_w = level_width(level);
+	const uint32_t mip_h = level_height(level);
+	const float scale_x = static_cast<float>(mip_w) / width_f;
+	const float scale_y = static_cast<float>(mip_h) / height_f;
+
+	uint32_t x0 = static_cast<uint32_t>(
+	    std::max(0.0f, std::floor(clamped_min_x * scale_x)));
+	uint32_t y0 = static_cast<uint32_t>(
+	    std::max(0.0f, std::floor(clamped_min_y * scale_y)));
+	uint32_t x1 = static_cast<uint32_t>(
+	    std::min(static_cast<float>(mip_w), std::ceil(clamped_max_x * scale_x)));
+	uint32_t y1 = static_cast<uint32_t>(
+	    std::min(static_cast<float>(mip_h), std::ceil(clamped_max_y * scale_y)));
+
+	x0 = std::min(x0, mip_w - 1);
+	y0 = std::min(y0, mip_h - 1);
+	x1 = std::max(x1, x0 + 1);
+	y1 = std::max(y1, y0 + 1);
+
+	// The farthest occluder anywhere under the footprint. Using the maximum is
+	// what makes the test conservative: the sphere must beat even the most
+	// distant occluder covering it to be called hidden.
+	//
+	// Seeded with the lowest float, not kDepthFar: kDepthFar is the "nothing
+	// here" sentinel and is the largest value a texel can hold, so seeding
+	// with it would pin `farthest` there and never cull anything. A footprint
+	// touching even one far texel still yields kDepthFar and stays visible.
+	const std::vector<float>& mip = levels_[level];
+	float farthest = std::numeric_limits<float>::lowest();
+	for (uint32_t y = y0; y < y1; ++y) {
+		const std::size_t row = static_cast<std::size_t>(y) * mip_w;
+		for (uint32_t x = x0; x < x1; ++x) {
+			farthest = std::max(farthest, mip[row + x]);
+		}
+	}
+
+	return nearest_depth >= farthest;
 }
 
 } // namespace lotus

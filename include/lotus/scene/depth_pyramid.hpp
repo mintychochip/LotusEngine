@@ -68,6 +68,18 @@ public:
 	void adopt(uint32_t width, uint32_t height, uint32_t total_levels,
 	           const std::vector<std::vector<float>>& mips);
 
+	/// True when \p world_sphere is entirely behind everything already drawn.
+	///
+	/// Conservative by construction: false means "draw it", which may still turn
+	/// out to be occluded. True is only returned when the sphere's nearest point
+	/// is behind the farthest depth in its screen footprint, so a partially
+	/// visible sphere is never culled.
+	///
+	/// \p view maps world space to view space; \p view_projection must use the
+	/// zero-to-one depth convention that Camera3D produces, matching Frustum.
+	bool occluded(const glm::mat4& view, const glm::mat4& view_projection,
+	              const BoundingSphere& world_sphere) const;
+
 private:
 	std::vector<std::vector<float>> levels_;
 	uint32_t width_{0};
