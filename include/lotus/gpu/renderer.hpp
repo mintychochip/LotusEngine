@@ -72,8 +72,10 @@ public:
 
 	void begin_scene_pass();
 
-	/// Draws \p count vertices using the lit pipeline.
-	void draw(const glm::mat4& view_projection,
+	/// Draws \p count vertices using the lit pipeline. \p view is uploaded
+	/// alongside \p view_projection because the vertex stage also writes
+	/// view-space depth for the occlusion pyramid.
+	void draw(const glm::mat4& view, const glm::mat4& view_projection,
 	          const glm::vec3& camera_position, uint32_t count);
 
 	void end_scene_pass();
@@ -92,6 +94,14 @@ public:
 	/// the fence has not landed yet, in which case occlusion is skipped.
 	const DepthPyramid& occlusion_pyramid() const { return occlusion_pyramid_; }
 
+	/// False when compute shaders or R32 storage are unavailable. Culling then
+	/// falls back to frustum and LOD only, with no errors.
+	bool occlusion_enabled() const { return occlusion_enabled_; }
+
+	/// True once a downloaded pyramid has landed. False means this frame skips
+	/// occlusion because the previous frame's fence is still outstanding.
+	bool occlusion_ready() const { return occlusion_ready_; }
+
 	uint32_t vertex_capacity() const { return capacity_; }
 
 	/// Frames actually submitted (excludes skipped/stalled frames).
@@ -105,6 +115,14 @@ private:
 	void ensure_vertex_capacity(uint32_t bytes);
 	void ensure_depth_target(uint32_t width, uint32_t height);
 	void destroy_buffers();
+
+	bool create_occlusion_pipeline();
+	void destroy_occlusion();
+	void destroy_pyramid();
+	void ensure_pyramid(uint32_t width, uint32_t height);
+	void ensure_pyramid_texture(uint32_t width, uint32_t height);
+	void poll_pyramid_fence();
+	void record_pyramid();
 
 	SDL_GPUDevice* device_{nullptr};
 	SDL_Window* window_{nullptr};
@@ -127,6 +145,23 @@ private:
 	SDL_GPURenderPass* pass_{nullptr};
 	SDL_GPUTexture* swapchain_{nullptr};
 	uint64_t frames_rendered_{0};
+
+	SDL_GPUTexture* pyramid_texture_{nullptr};
+	uint32_t pyramid_width_{0};
+	uint32_t pyramid_height_{0};
+	/// Byte offset of each mip inside pyramid_transfer_. Only mips from
+	/// kDepthPyramidMinLevel are ever written or read.
+	std::vector<uint32_t> pyramid_offset_;
+	uint32_t pyramid_levels_{0};
+	SDL_GPUTransferBuffer* pyramid_transfer_{nullptr};
+	SDL_GPUFence* pyramid_fence_{nullptr};
+	bool pyramid_in_flight_{false};
+	/// True when record_pyramid actually recorded a download this frame, so
+	/// end_frame knows the submit needs a fence.
+	bool pyramid_recorded_{false};
+	SDL_GPUComputePipeline* hiz_pipeline_{nullptr};
+	bool occlusion_enabled_{false};
+	bool occlusion_ready_{false};
 
 	DepthPyramid occlusion_pyramid_;
 

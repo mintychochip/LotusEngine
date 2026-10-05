@@ -432,7 +432,7 @@ void Scene::draw(GpuRenderer& gpu)
 	if (vertex_count_ == 0) {
 		return;
 	}
-	gpu.draw(view_projection_, camera_position_, vertex_count_);
+	gpu.draw(view_, view_projection_, camera_position_, vertex_count_);
 }
 
 void update_world_transforms(Scene& scene)
