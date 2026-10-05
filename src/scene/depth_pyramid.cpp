@@ -224,37 +224,56 @@ bool DepthPyramid::occluded(const glm::mat4& view,
 
 	const uint32_t mip_w = level_width(level);
 	const uint32_t mip_h = level_height(level);
-	const float scale_x = static_cast<float>(mip_w) / width_f;
-	const float scale_y = static_cast<float>(mip_h) / height_f;
 
-	uint32_t x0 = static_cast<uint32_t>(
-	    std::max(0.0f, std::floor(clamped_min_x * scale_x)));
-	uint32_t y0 = static_cast<uint32_t>(
-	    std::max(0.0f, std::floor(clamped_min_y * scale_y)));
+	// A texel at this level always covers exactly 2^kDepthPyramidMinLevel
+	// level-0 texels on each axis; only the texel COUNT is ragged. Scaling by
+	// block size, and the trailing ragged column would be judged by its
+	// left-hand neighbour.
+	const float block = static_cast<float>(1u << kDepthPyramidMinLevel);
+	const float span_x = block * static_cast<float>(mip_w);
+	const float span_y = block * static_cast<float>(mip_h);
+
+	// Pixels beyond the representable span have no texel at this level, so
+	// there is no data to prove occlusion. Assume visible.
+	if (clamped_max_x > span_x || clamped_max_y > span_y) {
+		return false;
+	}
+
+	uint32_t x0 = static_cast<uint32_t>(std::floor(clamped_min_x / block));
+	uint32_t y0 = static_cast<uint32_t>(std::floor(clamped_min_y / block));
 	uint32_t x1 = static_cast<uint32_t>(
-	    std::min(static_cast<float>(mip_w), std::ceil(clamped_max_x * scale_x)));
+	    std::min(span_x, std::ceil(clamped_max_x / block)));
 	uint32_t y1 = static_cast<uint32_t>(
-	    std::min(static_cast<float>(mip_h), std::ceil(clamped_max_y * scale_y)));
+	    std::min(span_y, std::ceil(clamped_max_y / block)));
 
 	x0 = std::min(x0, mip_w - 1);
 	y0 = std::min(y0, mip_h - 1);
 	x1 = std::max(x1, x0 + 1);
 	y1 = std::max(y1, y0 + 1);
 
-	// The farthest occluder anywhere under the footprint. Using the maximum is
-	// what makes the test conservative: the sphere must beat even the most
-	// distant occluder covering it to be called hidden.
+	// The farthest occluder anywhere under the footprint, as far as this
+	// min-reduced mip can tell. A texel summarises its block by taking the
+	// NEAREST value in it, so `farthest` is a lower bound on the footprint's
+	// true maximum, not an upper one -- taking the maximum alone is therefore
+	// NOT what makes the test conservative. What makes it conservative is the
+	// kDepthFar veto below: one footprint texel reading "nothing here" drives
+	// `farthest` to kDepthFar and rejects the cull.
+	//
+	// Accepted residual limitation: a texel summarising a block can still
+	// lose a sphere that is only partly covered by that block's occluder.
 	//
 	// Seeded with the lowest float, not kDepthFar: kDepthFar is the "nothing
 	// here" sentinel and is the largest value a texel can hold, so seeding
-	// with it would pin `farthest` there and never cull anything. A footprint
-	// touching even one far texel still yields kDepthFar and stays visible.
+	// with it would pin `farthest` there and never cull anything.
 	const std::vector<float>& mip = levels_[level];
 	float farthest = std::numeric_limits<float>::lowest();
 	for (uint32_t y = y0; y < y1; ++y) {
 		const std::size_t row = static_cast<std::size_t>(y) * mip_w;
 		for (uint32_t x = x0; x < x1; ++x) {
 			farthest = std::max(farthest, mip[row + x]);
+			if (farthest >= kDepthFar) {
+				return false; // nothing there: visible, and stop scanning
+			}
 		}
 	}
 
