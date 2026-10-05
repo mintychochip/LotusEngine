@@ -1,6 +1,9 @@
 #pragma once
 
+#include <string>
+
 #include "lotus/application/window.hpp"
+#include "lotus/io/file_watcher.hpp"
 #include "lotus/scene/scene_manager.hpp"
 #include "lotus/ui/editor.hpp"
 
@@ -12,7 +15,8 @@ struct GpuSettings {
 	bool debug_device{true};
 };
 
-/// Owns the window, GPU renderer, scene manager, and editor, and runs the loop.
+/// Owns the window, GPU renderer, scene manager, editor, and the scene-file
+/// hot-reload watcher, and runs the loop.
 class Application {
 public:
 	explicit Application(GpuSettings settings = {}) : settings_{settings} {}
@@ -24,6 +28,17 @@ public:
 	SceneManager& scenes() { return scenes_; }
 	Editor& editor() { return editor_; }
 
+	/// Watches \p path; when it changes, the active scene is reloaded. The
+	/// reload is atomic, so a half-written file is rejected and the live
+	/// scene survives.
+	void watch_scene(const std::string& path);
+
+	bool save_scene_now(std::string* error = nullptr);
+	bool reload_scene_now(std::string* error = nullptr);
+
+	const std::string& scene_path() const { return scene_path_; }
+	const std::string& scene_status() const { return scene_status_; }
+
 protected:
 	void on_start();
 	/// Called once after the GPU device and editor exist.
@@ -34,8 +49,13 @@ protected:
 	GpuSettings settings_;
 
 private:
+	void poll_hot_reload();
+
 	SceneManager scenes_;
 	Editor editor_;
+	FileWatcher watcher_;
+	std::string scene_path_;
+	std::string scene_status_;
 };
 
 // Legacy aliases while migrating call sites.

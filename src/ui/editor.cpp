@@ -105,6 +105,36 @@ void Editor::draw(SceneManager& scenes, float dt)
 		draw_inspector(*scene);
 	}
 	draw_stats(scenes, dt);
+	draw_scene_panel();
+}
+
+void Editor::set_scene_controls(SceneControls controls)
+{
+	scene_controls_ = std::move(controls);
+}
+
+void Editor::draw_scene_panel()
+{
+	if (!scene_controls_.path || !scene_controls_.on_save) {
+		return;
+	}
+	ImGui::SetNextWindowSize(ImVec2(420, 120), ImGuiCond_FirstUseEver);
+	if (ImGui::Begin("Scene File")) {
+		ImGui::TextWrapped("File: %s", scene_controls_.path().c_str());
+		if (ImGui::Button("Save")) {
+			scene_controls_.on_save();
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Reload")) {
+			scene_controls_.on_reload();
+		}
+		ImGui::SameLine();
+		ImGui::TextDisabled("(edits reload automatically)");
+		if (scene_controls_.status) {
+			ImGui::TextWrapped("%s", scene_controls_.status().c_str());
+		}
+	}
+	ImGui::End();
 }
 
 void Editor::draw_hierarchy(Scene& scene)

@@ -149,6 +149,17 @@ void Scene::update(float /*dt*/)
 	update_world_transforms(*this);
 }
 
+Entity Scene::find(const std::string& name) const
+{
+	const auto view = registry_.view<Name>();
+	for (const Entity entity : view) {
+		if (view.get<Name>(entity).value == name) {
+			return entity;
+		}
+	}
+	return NullEntity;
+}
+
 void Scene::upload(GpuRenderer& gpu)
 {
 	std::vector<GpuVertex> vertices;

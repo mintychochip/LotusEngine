@@ -43,6 +43,9 @@ public:
 	/// Root entities (Hierarchy::parent == NullEntity).
 	std::vector<Entity> roots() const;
 
+	/// First entity whose Name matches, or NullEntity.
+	Entity find(const std::string& name) const;
+
 	/// Advances systems (world-transform propagation, then user systems).
 	void update(float dt);
 
