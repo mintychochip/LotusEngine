@@ -6,6 +6,7 @@
 #include <string>
 
 #include "lotus/ecs.hpp"
+#include "lotus/scene/history.hpp"
 
 namespace lotus {
 
@@ -58,6 +59,12 @@ public:
 	void clear_dirty() { dirty_ = false; }
 	bool auto_save() const { return auto_save_; }
 
+	/// Drops the undo history (e.g. after a hot reload replaced the scene).
+	void reset_history() { history_scene_ = nullptr; }
+
+	bool can_undo() const { return history_.can_undo(); }
+	bool can_redo() const { return history_.can_redo(); }
+
 private:
 	void draw_hierarchy(Scene& scene);
 	void draw_entity_node(Scene& scene, Entity entity);
@@ -69,8 +76,14 @@ private:
 	bool visible_{true};
 	bool dirty_{false};
 	bool auto_save_{false};
+	bool edited_{false};
+	bool undo_requested_{false};
+	bool redo_requested_{false};
 	Entity selected_{NullEntity};
 	SceneControls scene_controls_;
+
+	SceneHistory history_;
+	const Scene* history_scene_{nullptr};
 };
 
 } // namespace lotus

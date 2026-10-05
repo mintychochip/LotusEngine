@@ -68,6 +68,8 @@ bool Application::reload_scene_now(std::string* error)
 		return false;
 	}
 	scene_status_ = "reloaded " + scene_path_;
+	// The scene was replaced wholesale; undo history no longer applies.
+	editor_.reset_history();
 	return true;
 }
 

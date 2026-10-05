@@ -87,6 +87,14 @@ void Editor::process_event(const SDL_Event& event)
 	    !event.key.repeat) {
 		toggle();
 	}
+	const bool ctrl = (event.key.mod & SDL_KMOD_CTRL) != 0;
+	if (event.type == SDL_EVENT_KEY_DOWN && ctrl && !event.key.repeat) {
+		if (event.key.key == SDLK_Z) {
+			undo_requested_ = true;
+		} else if (event.key.key == SDLK_Y) {
+			redo_requested_ = true;
+		}
+	}
 	ImGui_ImplSDL3_ProcessEvent(&event);
 }
 
@@ -110,8 +118,30 @@ void Editor::draw(SceneManager& scenes, float dt)
 		if (selected_ != NullEntity && !scene->registry().valid(selected_)) {
 			selected_ = NullEntity;
 		}
+		// A different scene (or a hot reload) invalidates the history.
+		if (scene != history_scene_) {
+			history_.reset(*scene);
+			history_scene_ = scene;
+		}
+		if (undo_requested_) {
+			if (history_.undo(*scene)) {
+				dirty_ = true;
+			}
+			undo_requested_ = false;
+		}
+		if (redo_requested_) {
+			if (history_.redo(*scene)) {
+				dirty_ = true;
+			}
+			redo_requested_ = false;
+		}
 		draw_hierarchy(*scene);
 		draw_inspector(*scene);
+		if (edited_) {
+			history_.commit(*scene);
+			dirty_  = true;
+			edited_ = false;
+		}
 	}
 	draw_stats(scenes, dt);
 	draw_scene_panel();
@@ -123,7 +153,7 @@ void Editor::draw_hierarchy(Scene& scene)
 	if (ImGui::Begin("Hierarchy")) {
 		if (ImGui::Button("Add root")) {
 			selected_ = scene.create("entity");
-			dirty_    = true;
+			edited_   = true;
 		}
 		const bool has_selection =
 		        selected_ != NullEntity && scene.registry().valid(selected_);
@@ -132,19 +162,31 @@ void Editor::draw_hierarchy(Scene& scene)
 			const Entity child = scene.create("entity");
 			scene.set_parent(child, selected_);
 			selected_ = child;
-			dirty_    = true;
+			edited_   = true;
 		}
 		ImGui::SameLine();
 		if (ImGui::Button("Destroy") && has_selection) {
 			scene.destroy(selected_);
 			selected_ = NullEntity;
-			dirty_    = true;
+			edited_   = true;
 		}
 		ImGui::SameLine();
 		if (ImGui::Button("Unparent") && has_selection) {
 			scene.detach(selected_);
-			dirty_ = true;
+			edited_ = true;
 		}
+		ImGui::SameLine();
+		ImGui::BeginDisabled(!history_.can_undo());
+		if (ImGui::Button("Undo")) {
+			undo_requested_ = true;
+		}
+		ImGui::EndDisabled();
+		ImGui::SameLine();
+		ImGui::BeginDisabled(!history_.can_redo());
+		if (ImGui::Button("Redo")) {
+			redo_requested_ = true;
+		}
+		ImGui::EndDisabled();
 		ImGui::Separator();
 		for (const Entity root : scene.roots()) {
 			draw_entity_node(scene, root);
@@ -197,40 +239,47 @@ void Editor::draw_inspector(Scene& scene)
 		char buffer[128];
 		std::snprintf(buffer, sizeof(buffer), "%s", name.c_str());
 		if (ImGui::InputText("Name", buffer, sizeof(buffer))) {
-			name   = buffer;
-			dirty_ = true;
+			name = buffer;
+		}
+		if (ImGui::IsItemDeactivatedAfterEdit()) {
+			edited_ = true;
 		}
 
 		if (auto* transform = registry.try_get<Transform>(selected_)) {
 			ImGui::SeparatorText("Transform (structural)");
-			if (ImGui::DragFloat3("Position", &transform->position.x, 0.01f)) {
-				dirty_ = true;
+			ImGui::DragFloat3("Position", &transform->position.x, 0.01f);
+			if (ImGui::IsItemDeactivatedAfterEdit()) {
+				edited_ = true;
 			}
-			if (ImGui::DragFloat3("Rotation", &transform->rotation.x, 0.01f)) {
-				dirty_ = true;
+			ImGui::DragFloat3("Rotation", &transform->rotation.x, 0.01f);
+			if (ImGui::IsItemDeactivatedAfterEdit()) {
+				edited_ = true;
 			}
-			if (ImGui::DragFloat3("Scale", &transform->scale.x, 0.01f, 0.001f,
-			                      100.0f)) {
-				dirty_ = true;
+			ImGui::DragFloat3("Scale", &transform->scale.x, 0.01f, 0.001f, 100.0f);
+			if (ImGui::IsItemDeactivatedAfterEdit()) {
+				edited_ = true;
 			}
 		}
 		if (auto* sprite = registry.try_get<Sprite>(selected_)) {
 			ImGui::SeparatorText("Sprite");
-			if (ImGui::ColorEdit3("Color", &sprite->color.x)) {
-				dirty_ = true;
+			ImGui::ColorEdit3("Color", &sprite->color.x);
+			if (ImGui::IsItemDeactivatedAfterEdit()) {
+				edited_ = true;
 			}
-			if (ImGui::DragFloat2("Size", &sprite->size.x, 0.01f, 0.001f,
-			                      100.0f)) {
-				dirty_ = true;
+			ImGui::DragFloat2("Size", &sprite->size.x, 0.01f, 0.001f, 100.0f);
+			if (ImGui::IsItemDeactivatedAfterEdit()) {
+				edited_ = true;
 			}
 		}
 		if (auto* camera = registry.try_get<Camera2D>(selected_)) {
 			ImGui::SeparatorText("Camera2D");
-			if (ImGui::DragFloat2("Cam position", &camera->position.x, 0.01f)) {
-				dirty_ = true;
+			ImGui::DragFloat2("Cam position", &camera->position.x, 0.01f);
+			if (ImGui::IsItemDeactivatedAfterEdit()) {
+				edited_ = true;
 			}
-			if (ImGui::DragFloat("Zoom", &camera->zoom, 0.01f, 0.01f, 100.0f)) {
-				dirty_ = true;
+			ImGui::DragFloat("Zoom", &camera->zoom, 0.01f, 0.01f, 100.0f);
+			if (ImGui::IsItemDeactivatedAfterEdit()) {
+				edited_ = true;
 			}
 		}
 
@@ -247,18 +296,18 @@ void Editor::draw_inspector(Scene& scene)
 			} else if (choice == 1 && !registry.all_of<Camera2D>(selected_)) {
 				registry.emplace<Camera2D>(selected_);
 			}
-			dirty_ = true;
+			edited_ = true;
 		}
 		if (registry.all_of<Sprite>(selected_)) {
 			if (ImGui::Button("Remove Sprite")) {
 				registry.remove<Sprite>(selected_);
-				dirty_ = true;
+				edited_ = true;
 			}
 		}
 		if (registry.all_of<Camera2D>(selected_)) {
 			if (ImGui::Button("Remove Camera2D")) {
 				registry.remove<Camera2D>(selected_);
-				dirty_ = true;
+				edited_ = true;
 			}
 		}
 	}
