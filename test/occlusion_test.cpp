@@ -110,10 +110,12 @@ TEST(DepthPyramidTest, BuildRejectsNullAndZeroSizedInput)
 	pyramid.build(flat_image(4, 4, 1.0f).data(), 4, 4);
 	ASSERT_FALSE(pyramid.empty());
 
+	pyramid.build(nullptr, 0, 0);
+	EXPECT_TRUE(pyramid.empty());
+
 	// A non-null pointer with a zero dimension must still be refused.
 	const float pixel = 1.0f;
 	pyramid.build(&pixel, 0, 8);
-
 	EXPECT_TRUE(pyramid.empty());
 }
 
@@ -195,4 +197,30 @@ TEST(DepthPyramidTest, AdoptRejectsMipsWhoseSizeContradictsTheAccessors)
 
 	EXPECT_TRUE(pyramid.empty());
 	EXPECT_EQ(pyramid.level_count(), 0u);
+}
+
+TEST(DepthPyramidTest, OddDimensionsFollowVulkanMipConvention)
+{
+	// 3x4 reduces to a 1x2 level 1 under Vulkan's max(1, w >> level) rule.
+	// Columns 0-1 are sampled by level 1; the ragged edge column 2 lies
+	// outside every 2x2 window and is never sampled, matching depth.comp.
+	std::vector<float> image = flat_image(3, 4, kDepthFar);
+	image[0] = 1.5f; // row 0, column 0: sampled, so it must propagate
+	image[2] = 0.25f; // row 0, column 2: ragged edge, must NOT propagate
+	image[5] = 0.5f; // row 1, column 2: ragged edge, must NOT propagate
+
+	DepthPyramid pyramid;
+	pyramid.build(image.data(), 3, 4);
+
+	ASSERT_EQ(pyramid.level_count(), 2u);
+	EXPECT_EQ(pyramid.level_width(1), 1u);
+	EXPECT_EQ(pyramid.level_height(1), 2u);
+
+	// Level 1 texel 0 covers source columns 0-1 of rows 0-1; texel 1 covers
+	// the same columns of rows 2-3. Both ragged-edge values are unsampled, so
+	// the far value survives instead of the smaller 0.25f / 0.5f.
+	const std::vector<float> level1 = pyramid.level(1);
+	ASSERT_EQ(level1.size(), 2u);
+	EXPECT_FLOAT_EQ(level1[0], 1.5f);
+	EXPECT_FLOAT_EQ(level1[1], kDepthFar);
 }
