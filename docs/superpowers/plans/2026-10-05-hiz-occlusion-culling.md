@@ -1001,7 +1001,7 @@ Expected: PASS, all `DepthPyramidTest.*` and `DepthPyramidOcclusion.*`.
 If `ClassificationFollowsCameraDistance` fails, the wall depth and sphere depth are inconsistent: re-check that a camera at `eye_z` puts world `z` at linear depth `eye_z - z`.
 
 Run: `./bin/lotus_tests 2>&1 | tail -3`
-Expected: `[  PASSED  ] 127 tests.`
+Expected: `[  PASSED  ] 130 tests.` (the brief's 127 assumed three Task 1 tests had been deleted; they must be kept)
 
 - [ ] **Step 6: Commit**
 
@@ -1326,7 +1326,7 @@ Run: `./bin/lotus_tests --gtest_filter='SceneOcclusion*'`
 Expected: PASS, 4 tests.
 
 Run: `./bin/lotus_tests 2>&1 | tail -3`
-Expected: `[  PASSED  ] 131 tests.` If any `SceneCullingTest` or `SceneLodTest` fails, the frustum or LOD path regressed — fix before continuing.
+Expected: `[  PASSED  ] 134 tests.` If any `SceneCullingTest` or `SceneLodTest` fails, the frustum or LOD path regressed — fix before continuing.
 
 - [ ] **Step 7: Commit**
 
@@ -1706,7 +1706,9 @@ void GpuRenderer::ensure_pyramid(uint32_t width, uint32_t height)
 		return;
 	}
 
-	const uint32_t levels = pyramid_level_count(width, height);
+	// Only mips 0..K exist: the query reads mip K and nothing coarser, so
+	// reducing further and transferring more would be pure waste.
+	const uint32_t levels = kDepthPyramidMinLevel + 1;
 
 	SDL_GPUTextureCreateInfo info{};
 	info.type                 = SDL_GPU_TEXTURETYPE_2D;
@@ -1790,7 +1792,7 @@ void GpuRenderer::poll_pyramid_fence()
 	// on the CPU here would make depth.comp pointless.
 	std::vector<std::vector<float>> mips(pyramid_levels_);
 	for (uint32_t level = kDepthPyramidMinLevel; level < pyramid_levels_;
-	     ++level) {
+	     ++level) { // exactly one iteration: only mip K is read
 		const uint32_t w = std::max(1u, pyramid_width_ >> level);
 		const uint32_t h = std::max(1u, pyramid_height_ >> level);
 		const uint32_t pitch =
@@ -1834,7 +1836,7 @@ void GpuRenderer::record_pyramid()
 
 	// One compute pass per level: SDL fixes storage bindings when a pass
 	// begins, so the mip pair cannot change within one pass.
-	for (uint32_t level = 1; level < pyramid_levels_; ++level) {
+	for (uint32_t level = 1; level <= kDepthPyramidMinLevel; ++level) {
 		SDL_GPUStorageTextureReadWriteBinding bindings[2]{};
 		bindings[0].texture   = pyramid_texture_;
 		bindings[0].mip_level = level - 1;
@@ -1861,7 +1863,7 @@ void GpuRenderer::record_pyramid()
 	if (!copy) {
 		return;
 	}
-	for (uint32_t level = kDepthPyramidMinLevel; level < pyramid_levels_; ++level) {
+	for (uint32_t level = kDepthPyramidMinLevel; level < pyramid_levels_; ++level) { // mip K only
 		const uint32_t w = std::max(1u, pyramid_width_ >> level);
 		const uint32_t h = std::max(1u, pyramid_height_ >> level);
 
@@ -1992,7 +1994,7 @@ Run: `cd build && cmake --build . -j"$(nproc)" 2>&1 | tail -20`
 Expected: compiles clean.
 
 Run: `./bin/lotus_tests 2>&1 | tail -3`
-Expected: `[  PASSED  ] 131 tests.`
+Expected: `[  PASSED  ] 134 tests.`
 
 - [ ] **Step 8: Commit**
 
@@ -2127,7 +2129,7 @@ than loosening the assertion.
 - [ ] **Step 5: Run the full suite and commit**
 
 Run: `cd build && ./bin/lotus_tests 2>&1 | tail -3`
-Expected: `[  PASSED  ] 132 tests.`
+Expected: `[  PASSED  ] 135 tests.`
 
 ```bash
 git add app/main.cpp src/ui/editor.cpp test/occlusion_gpu_test.cpp

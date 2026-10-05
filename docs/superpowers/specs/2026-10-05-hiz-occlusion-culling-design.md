@@ -57,11 +57,24 @@ Mip 0 is full resolution. It is the render target the scene pass writes; it is n
 
 ## Readback and latency
 
-`end_frame` submits the single per-frame command buffer with `SDL_SubmitGPUCommandBufferAndAcquireFence` (`src/core/application/application.cpp:374-390` already runs exactly one command buffer per frame, so no extra synchronisation is needed). After the scene pass, and before that submit, a copy pass downloads mips `K..N` (`K = 2`, quarter resolution and coarser — about 675 KB total at 1080p) into a transfer buffer.
+`end_frame` submits the single per-frame command buffer with `SDL_SubmitGPUCommandBufferAndAcquireFence` (`src/core/application/application.cpp:374-390` already runs exactly one command buffer per frame, so no extra synchronisation is needed). After the scene pass, and before that submit, a copy pass downloads **only mip K** (`K = 2`, quarter resolution — about 506 KB at 1080p) into a transfer buffer. See "Levels actually read" below for why the coarser mips are neither transferred nor queried.
 
 The compute pass and the copy pass are sequential on that one command buffer: `SDL_EndGPUComputePass` runs first, then `SDL_BeginGPUCopyPass`. `SDL_DownloadFromGPUTexture` takes a `SDL_GPUCopyPass*`, so a copy pass cannot overlap an open compute pass. Mips are downloaded in ascending order.
 
-Per-mip addressing is explicit. `SDL_GPUTextureRegion` carries its own `mip_level` (SDL_gpu.h:1469), but SDL does not pack the mip chain, so each download computes its own `SDL_GPUTextureTransferInfo`: `offset` is the running byte total and `rows_per_layer` is the mip's own height. Rows are padded to a 256-byte pitch, so `pixels_per_row` is that padded pitch expressed in pixels, not the raw width — it is the destination row stride, and setting it to the raw width makes the GPU write row $y$ at $y \cdot w \cdot 4$ while the CPU unpack walks $y \cdot \text{pitch}$, so every row after the first is garbage. Leaving the field zero is worse still: it falls back to the region size (SDL_gpu.h:1395-1399). The padding keeps SDL from inserting a temporary repacking copy on D3D12 (SDL_gpu.h:1401-1405).
+## Levels actually read
+
+The pyramid is reduced all the way down only as far as mip K, and only mip K is read. This is a deliberate reversal of the usual Hi-Z design, and it is forced by the one-directional error contract.
+
+A min-reduced texel stores the *nearest* occluder anywhere in its block. It therefore cannot certify that the whole block is covered: a block holding one small occluder reports that occluder's depth even though the rest of the block is empty sky. Selecting a coarse level so a sphere's footprint collapses into one texel, then comparing against that texel, is the textbook Hi-Z test — and it is unsound. For a sphere of radius 4 whose footprint is 28 px across at a 64 px pyramid, the coarse level holding it is the 2x2 top mip, which covers the entire screen; one wall in that screen makes every texel report the wall's depth, and a sphere that is mostly visible is culled.
+
+There is no mip level at which the test becomes sound, because the loss of coverage information is a property of min-reduction itself, not of the resolution. The sound formulation is therefore: take the maximum depth over the sphere's footprint **at the finest level the CPU holds**, and cull only when the sphere's nearest depth is at least that maximum. Any footprint texel with no occluder carries `kDepthFar` and rejects the cull.
+
+The cost is real and stated plainly: a query reads `aabb_width * aabb_height / 4^K` texels instead of one, which gives up the per-query speedup the pyramid structure was reaching for. The accepted mitigation is an early-out — if any texel in the footprint reads `kDepthFar`, return visible immediately, which is the common case for visible geometry and bounds the average query cost.
+
+Residual limitation, accepted: a texel at mip K still summarises a `4^K`-pixel block, so a sphere can in principle be culled while a sliver of it remains visible, if every texel under its footprint happens to contain some occluder at or in front of it. Tightening this further means transferring mip 0 or 1, which costs 8 MB and 2 MB per frame respectively at 1080p. The `2%` radius bias in step 4 is what keeps this from showing up as visible flicker in practice.
+
+Consequences for the GPU path: the compute reduction runs only `K` passes, the transfer buffer holds one mip, and mips above K are not allocated.
+
 
 At the start of frame N+1 the fence is polled with `SDL_QueryGPUFence`, never waited on. Ready maps the buffer with `SDL_MapGPUTransferBuffer` and replaces the CPU-side pyramid. Not ready skips occlusion for that frame.
 
@@ -84,12 +97,14 @@ Steps:
 2. Project the eight corners of the sphere's view-space AABB, divide by `w`, and take the screen-space min and max as the sphere's pixel AABB. Reject when any corner has `w <= 0`.
 3. Reject when the AABB does not overlap the viewport.
 4. Inflate the radius by 2% before this point, so an entity does not occlude itself and flicker as the camera moves.
-5. Pick the level as `clamp(ceil(log2(max(aabb_width_texels, aabb_height_texels))), K, N)`, the coarsest mip that still contains the AABB in at least one texel.
-6. Return true only when the sphere's nearest linear depth, `-center_view.z - radius`, is at least the maximum depth over the selected mip region.
+5. Always read mip K. Do not select a level from the footprint size.
+6. Return true only when the sphere's nearest linear depth, `-center_view.z - radius`, is at least the maximum depth over the footprint at mip K. Early-out and return false as soon as a footprint texel reads `kDepthFar`.
 
 Step 6 in isolation:
 
-$$\min d_{\text{sphere}} \;\ge\; \max_{\text{mip}} d_{\text{occluder}} \;\Rightarrow\; \text{occluded}$$
+$$d_{\text{nearest sphere}} \;\ge\; \max_{\text{footprint at mip } K} d_{\text{occluder}} \;\Rightarrow\; \text{occluded}$$
+
+Any footprint texel reading `kDepthFar` means "nothing here", which drives the maximum to `kDepthFar` and rejects the cull.
 
 Projection uses the same zero-to-one depth convention as `Frustum::from_view_projection`, since both consume the same `Camera3D::view_projection`.
 
