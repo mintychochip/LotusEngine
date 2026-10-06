@@ -435,6 +435,10 @@ void Editor::draw_stats(SceneManager& scenes, float dt)
 		            scene ? scene->registry().view<Transform>().size() : 0u);
 		ImGui::Text("Vertices: %u", scene ? scene->vertex_count() : 0u);
 		ImGui::Text("Draw calls: %u", scene ? scene->draw_calls() : 0u);
+		ImGui::Text("Drawn: %u  Culled: %u  Occluded: %u",
+		            scene ? scene->drawn_entities() : 0u,
+		            scene ? scene->culled_entities() : 0u,
+		            scene ? scene->occluded_entities() : 0u);
 		ImGui::Text("Frame: %.2f ms (%.0f FPS)", dt * 1000.0f,
 		            ImGui::GetIO().Framerate);
 	}

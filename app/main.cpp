@@ -35,6 +35,20 @@ protected:
 		        ball, lotus::Material{{0.28f, 0.52f, 0.90f}});
 		scene.registry().get<lotus::Transform>(ball).position = {1.1f, 0.0f, 0.0f};
 
+		// Occlusion: a panel between the camera and the LOD sphere. Its centre
+		// sits on the camera->sphere ray at z = 2.2 (the sphere is at z = -1.2,
+		// the default camera at {3, 2.5, 4}), and it is sized to cover the
+		// sphere's whole screen footprint, so once the Hi-Z pyramid holds a
+		// frame of depth the sphere is culled as hidden. The cube and ball sit
+		// outside that footprint and stay visible.
+		const lotus::Entity wall = scene.create("wall");
+		scene.registry().emplace<lotus::MeshSource>(
+		        wall, lotus::MeshSource{"builtin:cube"});
+		scene.registry().emplace<lotus::Material>(
+		        wall, lotus::Material{{0.55f, 0.55f, 0.58f}});
+		scene.registry().get<lotus::Transform>(wall).scale = {1.5f, 1.7f, 0.25f};
+		scene.registry().get<lotus::Transform>(wall).position = {1.96f, 1.63f, 2.2f};
+
 		const lotus::Entity camera = scene.create("camera");
 		scene.registry().emplace<lotus::Camera3D>(camera);
 
