@@ -80,7 +80,6 @@ Out of scope for this milestone, each with its reason. Do not start these.
 | Async / non-blocking load | `nlohmann::json` parse is synchronous and single-threaded; a correctness-only milestone does not need it, and it adds a concurrency surface. |
 | Asset reference indirection (`AssetRef`) | Changes `MeshSource`/`Script`; a format change on top of a format change. Do it in the same pass as the next version bump. |
 | Undo scalability (snapshot → diff) | Snapshot undo at capacity 64 is correct and fine for a level editor. Only worth it if profiling says so; until then the cost should be documented in `history.hpp`. |
-| External codec registration | Prefabs copy components through the existing codec by name, so nothing here needs it. Small and self-contained; a good standalone follow-up. |
 | General prefab overrides (per-component diffs at instantiate time) | The milestone ships transform-free cloning only. Overrides need a diff format and a merge rule, which is a design of its own. |
 | Prefab nesting (a prefab referencing another prefab) | Works by accident today (an inner EntityRef to an entity outside the fragment is left unresolved and reported), but the semantics are unspecified. Pin them before relying on it. |
 | Per-scene environment (lighting/skybox/fog) | Touches renderer call sites and global state; unrelated to identity or instancing. |
@@ -91,7 +90,8 @@ Out of scope for this milestone, each with its reason. Do not start these.
 Delivered in this milestone, beyond the three workstreams: `prefab.list`,
 `prefab.save <name> <entity>` and `prefab.instantiate <name> [parent]` console
 commands, and a Prefabs editor panel (create from selection, instantiate) wired
-through `Editor::PrefabControls`.
+through `Editor::PrefabControls`. Also `register_component_codec(name, write,
+read)`, so game code can serialize component types the engine does not know.
 
 ## Tests
 

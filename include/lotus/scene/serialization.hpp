@@ -52,6 +52,13 @@ private:
 /// rebuilt by Scene::resolve_refs(). None of those are serialized.
 const ComponentCodecs& default_component_codecs();
 
+/// Registers \p name so game code can serialize its own component types.
+/// Re-registering a name replaces the previous codec; the built-ins can be
+/// overridden this way, which is deliberate. Registration is process-global and
+/// not thread-safe: do it once at startup, before any scene is saved or loaded.
+void register_component_codec(std::string name, ComponentCodecs::WriteFn write,
+                              ComponentCodecs::ReadFn read);
+
 /// Serializes a scene (roots, recursively) to JSON text.
 std::string to_json_string(const Scene& scene);
 

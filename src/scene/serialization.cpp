@@ -270,9 +270,13 @@ const ComponentCodecs::ReadFn* ComponentCodecs::reader(const std::string& name) 
 	return it == codecs_.end() ? nullptr : &it->second.read;
 }
 
-const ComponentCodecs& default_component_codecs()
+namespace {
+
+/// The one registry instance. Registration mutates it, so it is not const;
+/// registration happens at startup, so no synchronisation is needed.
+ComponentCodecs& mutable_component_codecs()
 {
-	static const ComponentCodecs codecs = [] {
+	static ComponentCodecs codecs = [] {
 		ComponentCodecs c;
 		c.add(
 		        "Transform",
@@ -407,6 +411,20 @@ const ComponentCodecs& default_component_codecs()
 		return c;
 	}();
 	return codecs;
+}
+
+} // namespace
+
+const ComponentCodecs& default_component_codecs()
+{
+	return mutable_component_codecs();
+}
+
+void register_component_codec(std::string name, ComponentCodecs::WriteFn write,
+                              ComponentCodecs::ReadFn read)
+{
+	mutable_component_codecs().add(std::move(name), std::move(write),
+	                               std::move(read));
 }
 
 // --- scene -> text ---------------------------------------------------------

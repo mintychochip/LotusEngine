@@ -379,3 +379,55 @@ TEST(SceneSerialization, LegacyDocumentGetsGuids)
 	ASSERT_NE(e, NullEntity);
 	EXPECT_NE(scene.guid_of(e).value, 0u);
 }
+
+namespace {
+
+/// A component the engine knows nothing about, to prove registration is what
+/// makes a custom type serializable rather than anything built in.
+struct TestTag {
+	int value{0};
+};
+
+} // namespace
+
+TEST(SceneSerialization, RegisteredComponentRoundTrips)
+{
+	// Without registration the codec registry has no reader for TestTag, so the
+	// component is skipped on load and the round trip silently loses it.
+	const std::size_t before = default_component_codecs().names().size();
+	EXPECT_EQ(default_component_codecs().reader("TestTag"), nullptr);
+
+	register_component_codec(
+	        "TestTag",
+	        [](const Registry& r, Entity e, nlohmann::json& j) {
+		        const auto* tag = r.try_get<TestTag>(e);
+		        if (tag == nullptr) {
+			        return false;
+		        }
+		        j = nlohmann::json{{"value", tag->value}};
+		        return true;
+	        },
+	        [](Registry& r, Entity e, const nlohmann::json& j) {
+		        r.emplace_or_replace<TestTag>(
+		                e, TestTag{j.value("value", 0)});
+	        });
+
+	Scene source{"s"};
+	const Entity e = source.create("tagged");
+	source.registry().emplace<TestTag>(e, TestTag{42});
+
+	const std::string text = to_json_string(source);
+	EXPECT_NE(text.find("\"TestTag\""), std::string::npos) << text;
+
+	Scene loaded{"s"};
+	ASSERT_TRUE(scene_from_json(loaded, text, nullptr));
+	const Entity le = find_by_name(loaded, "tagged");
+	ASSERT_NE(le, NullEntity);
+	ASSERT_TRUE(loaded.registry().all_of<TestTag>(le));
+	EXPECT_EQ(loaded.registry().get<TestTag>(le).value, 42);
+
+	// Registration adds one name and disturbs nothing already registered.
+	EXPECT_EQ(default_component_codecs().names().size(), before + 1);
+	EXPECT_NE(default_component_codecs().reader("Transform"), nullptr);
+	EXPECT_NE(default_component_codecs().reader("SceneGuid"), nullptr);
+}
