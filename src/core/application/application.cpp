@@ -150,6 +150,28 @@ void Application::register_commands()
 		               " entities)";
 	        });
 	console_.add_command(
+	        "scene.unload", "scene.unload <origin> - destroy every entity merged "
+	                        "from that scene, leaving the rest",
+	        [this](const std::vector<std::string>& args) {
+		        Scene* scene = scenes_.active();
+		        if (scene == nullptr) {
+			        return std::string{"no active scene"};
+		        }
+		        if (args.empty()) {
+			        return std::string{"usage: scene.unload <origin>"};
+		        }
+		        const std::size_t removed = scene->destroy_by_origin(args[0]);
+		        if (removed == 0) {
+			        return std::string{"nothing tagged '"} + args[0] + "'";
+		        }
+		        std::string out = "unloaded " + std::to_string(removed) +
+		                          " entities from " + args[0];
+		        for (const std::string& err : scene->reference_errors()) {
+			        out += "\n  " + err;
+		        }
+		        return out;
+	        });
+	console_.add_command(
 	        "entity.list", "list entities in the active scene",
 	        [this](const std::vector<std::string>&) {
 		        Scene* scene = scenes_.active();
