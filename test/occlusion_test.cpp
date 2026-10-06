@@ -386,12 +386,13 @@ TEST(DepthPyramidTest, AdoptRejectsMipsWhoseSizeContradictsTheAccessors)
 {
 	std::vector<std::vector<float>> mips(7);
 	mips[2] = flat_image(16, 16, 4.0f);
-	mips[3] = flat_image(8, 8, 4.0f);
+	// Level 3 reports 8x8, but this installs only 2x2's worth of texels, so a
+	// consumer trusting the accessors would read past the end. Overwritten
+	// deliberately below; no need for a correct 8x8 first.
+	mips[3] = flat_image(2, 2, 4.0f);
 	mips[4] = flat_image(4, 4, 4.0f);
 	mips[5] = flat_image(2, 2, 4.0f);
 	mips[6] = flat_image(1, 1, 4.0f);
-	// Level 3 reports 8x8, so three texels would let a consumer run off the end.
-	mips[3] = flat_image(2, 2, 4.0f);
 
 	DepthPyramid pyramid;
 	pyramid.build(flat_image(16, 16, 1.0f).data(), 16, 16);
