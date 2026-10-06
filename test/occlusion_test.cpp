@@ -65,6 +65,46 @@ DepthPyramid split_wall(uint32_t size, float depth)
 	return pyramid;
 }
 
+/// A 64x64 pyramid that is a wall of \p depth on rows [0, half) and far
+/// everywhere below. This is the vertical counterpart of split_wall, and it is
+/// the only shape that can catch a NDC-to-row mapping error: every other test
+/// pyramid is either uniform or symmetric about the horizontal axis, so a
+/// vertically mirrored read maps its footprint onto itself.
+DepthPyramid split_wall_rows(uint32_t size, float depth)
+{
+	std::vector<float> image(static_cast<std::size_t>(size) * size, kDepthFar);
+	for (uint32_t y = 0; y < size / 2; ++y) {
+		for (uint32_t x = 0; x < size; ++x) {
+			image[static_cast<std::size_t>(y) * size + x] = depth;
+		}
+	}
+	DepthPyramid pyramid;
+	pyramid.build(image.data(), size, size);
+	return pyramid;
+}
+
+TEST(DepthPyramidOcclusion, VerticalSplitIsNotReadMirrored)
+{
+	// The wall covers rows [0, half) and the sky is below. SDL's Vulkan backend
+	// flips the viewport, so ndc.y = +1 is framebuffer row 0. A query that
+	// forgot the flip would look the sphere up in the sky half, find nothing,
+	// and report it visible here -- and, worse, would cull a sphere that really
+	// is behind the wall. Both directions are checked below.
+	const DepthPyramid pyramid = split_wall_rows(64, 5.0f);
+	const TestCamera camera    = camera_from_z(10.0f);
+
+	// World -Y maps to the LOWER half of the framebuffer, which is the sky.
+	EXPECT_FALSE(pyramid.occluded(camera.view, camera.view_projection,
+                                  {{0.0f, -3.07f, 0.0f}, 0.5f}))
+	    << "sphere in the sky half must not be culled";
+
+	// World +Y maps to the upper framebuffer half, which is the wall. The same
+	// sphere there must be culled; reading it mirrored would return visible.
+	EXPECT_TRUE(pyramid.occluded(camera.view, camera.view_projection,
+                                {{0.0f, 3.07f, 0.0f}, 0.5f}))
+	    << "sphere in the wall half must be culled";
+}
+
 /// Highest level-0 pixel the level-kDepthPyramidMinLevel mip can sample. The
 /// mip holds (size >> kDepthPyramidMinLevel) texels and each covers a fixed
 /// block, so pixels at or past this are in no texel at all.
@@ -127,6 +167,17 @@ float world_offset_for_pixel(float target, uint32_t size, float view_depth)
 {
 	const float ndc = (target / static_cast<float>(size)) * 2.0f - 1.0f;
 	return ndc * view_depth * 0.5773503f; // tan(30 degrees)
+}
+
+/// Same conversion as world_offset_for_pixel, but for the framebuffer ROW axis.
+///
+/// SDL's Vulkan backend sets a negative viewport height, so framebuffer row 0
+/// is ndc.y = +1 (the top of the image), the mirror of the left-to-right axis
+/// world_offset_for_pixel assumes. Row-targeted tests must use this, or they
+/// silently place their sphere in the opposite half of the image.
+float world_offset_for_row(float target, uint32_t size, float view_depth)
+{
+	return -world_offset_for_pixel(target, size, view_depth);
 }
 
 /// tan(half the 60-degree vertical field of view) used by camera_from_z.
@@ -707,7 +758,7 @@ TEST(DepthPyramidOcclusion, SphereInTheTrailingRaggedColumnIsNotCulled)
 	                             0.0f,
 	                             0.0f},
 	                            0.02f};
-	const BoundingSphere row{{0.0f, world_offset_for_pixel(12.5f, 13, 10.0f),
+	const BoundingSphere row{{0.0f, world_offset_for_row(12.5f, 13, 10.0f),
 	                          0.0f},
 	                         0.02f};
 	// Measured footprint pixels x[12.465, 12.535] y[6.477, 6.523], and the
@@ -778,7 +829,7 @@ TEST(DepthPyramidOcclusion, NoFalseCullAcrossOddHeightsInTheRaggedRow)
 		    0.5f * (static_cast<float>(representable_span(size)) +
 		            static_cast<float>(size));
 		const BoundingSphere sphere{{0.0f,
-		                             world_offset_for_pixel(centre, size, 10.0f),
+		                             world_offset_for_row(centre, size, 10.0f),
 		                             0.0f},
 		                            0.02f};
 		report_footprint("ragged row sweep", camera, sphere, size);
@@ -833,7 +884,7 @@ TEST(DepthPyramidOcclusion, RaggedHeightWithADivisibleWidthIsHandled)
 	// past the representable height of 12. The helper takes a square size and
 	// only the y axis matters here, so 13 is the right number to pass.
 	const BoundingSphere past_span{{0.0f,
-	                                world_offset_for_pixel(12.5f, 13, 10.0f),
+	                                world_offset_for_row(12.5f, 13, 10.0f),
 	                                0.0f},
 	                               0.02f};
 	report_footprint("ragged row", camera, past_span, 13);
@@ -842,7 +893,7 @@ TEST(DepthPyramidOcclusion, RaggedHeightWithADivisibleWidthIsHandled)
 	// The same sphere inside the sampled area is behind the wall, so the
 	// result really does depend on the unrepresented row.
 	const BoundingSphere inside_span{{0.0f,
-	                                  world_offset_for_pixel(6.0f, 13, 10.0f),
+	                                  world_offset_for_row(6.0f, 13, 10.0f),
 	                                  0.0f},
 	                                 0.02f};
 	report_footprint("sampled row", camera, inside_span, 13);

@@ -89,7 +89,12 @@ TEST_F(OcclusionGpuTest, PyramidReachesTheCpuWithoutBlocking)
 	}
 
 	EXPECT_TRUE(ready) << "pyramid never reached the CPU";
-	EXPECT_GT(occluded, 0u) << "nothing behind the wall was culled";
+	// Exact counts, not "> 0". Culling everything also yields a non-zero
+	// occluded count, so EXPECT_GT would pass on a mass false cull. The wall
+	// must survive: it is nearer than the cube behind it, so exactly one
+	// entity is occluded and exactly one is still drawn.
+	EXPECT_EQ(occluded, 1u) << "expected only the cube behind the wall";
+	EXPECT_EQ(scene.drawn_entities(), 1u) << "the wall itself must stay drawn";
 
 	// Readiness alone is NOT sufficient evidence. `occlusion_ready()` goes
 	// true on an all-sky pyramid, and a descriptor-set mismatch produced a
@@ -100,8 +105,16 @@ TEST_F(OcclusionGpuTest, PyramidReachesTheCpuWithoutBlocking)
 	const std::vector<float> mip2 = gpu.occlusion_pyramid().level(2);
 	ASSERT_FALSE(mip2.empty());
 	const float nearest = *std::min_element(mip2.begin(), mip2.end());
-	EXPECT_LT(nearest, kDepthFar)
-	    << "mip 2 is all far-values: nothing was ever written to it";
+	// Both bounds matter. An all-zero pyramid (the descriptor-set bug) gives
+	// nearest == 0, which satisfies `nearest < kDepthFar` but means every
+	// entity is treated as zero-units away. Real linear depth is strictly
+	// greater than zero and strictly less than the clear.
+	EXPECT_GT(nearest, 0.0f) << "mip 2 is all zeros: nothing was written";
+	EXPECT_LT(nearest, kDepthFar) << "mip 2 is all far-values: nothing written";
+	const uint32_t covered_texels = static_cast<uint32_t>(
+	    std::count_if(mip2.begin(), mip2.end(),
+	                  [](float v) { return v > 0.0f && v < kDepthFar; }));
+	EXPECT_GT(covered_texels, 0u) << "mip 2 has no real depth texels at all";
 
 	// Evidence, printed rather than asserted: the numbers a reviewer needs to
 	// confirm this test is exercising real depth, not an empty pyramid.

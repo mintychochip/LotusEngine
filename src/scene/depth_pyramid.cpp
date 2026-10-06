@@ -195,8 +195,13 @@ bool DepthPyramid::occluded(const glm::mat4& view,
 	const float height_f = static_cast<float>(height_);
 	const float min_x = (screen_min.x * 0.5f + 0.5f) * width_f;
 	const float max_x = (screen_max.x * 0.5f + 0.5f) * width_f;
-	const float min_y = (screen_min.y * 0.5f + 0.5f) * height_f;
-	const float max_y = (screen_max.y * 0.5f + 0.5f) * height_f;
+	// Y is flipped. SDL's Vulkan backend sets a negative viewport height
+	// "for consistency with other backends" (SDL_gpu_vulkan.c:7366-7368), so
+	// ndc.y = +1 lands in framebuffer row 0, not row height-1. The pyramid is
+	// built from, and downloaded in, framebuffer order, so the conversion must
+	// flip too. Flipping also swaps the extremes, hence max feeds min_y.
+	const float min_y = (1.0f - (screen_max.y * 0.5f + 0.5f)) * height_f;
+	const float max_y = (1.0f - (screen_min.y * 0.5f + 0.5f)) * height_f;
 
 	// Outside the viewport: leave it to the frustum test.
 	if (max_x < 0.0f || min_x > width_f || max_y < 0.0f || min_y > height_f) {
