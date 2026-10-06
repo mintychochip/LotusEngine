@@ -200,3 +200,35 @@ TEST(SceneManagerTest, NamesAreSortedAndStable)
 	EXPECT_EQ(names[1], "mike");
 	EXPECT_EQ(names[2], "zulu");
 }
+
+TEST(SceneIdentity, ClearRestartsGuidAllocation)
+{
+	Scene scene{"s"};
+	const Entity first = scene.create("first");
+	const uint64_t before = scene.guid_of(first).value;
+	ASSERT_NE(before, 0u);
+
+	scene.clear();
+	EXPECT_EQ(scene.registry().view<Name>().size(), 0u);
+
+	// A cleared scene is a fresh one: the counter restarts, so GUIDs do not
+	// climb forever across a reset. Deleting the reset in Scene::clear leaves
+	// this failing, which is the point.
+	const Entity after = scene.create("after");
+	EXPECT_EQ(scene.guid_of(after).value, 1u);
+}
+
+TEST(SceneIdentity, GuidSurvivesReordering)
+{
+	Scene scene{"s"};
+	const Entity a = scene.create("a");
+	const Entity b = scene.create("b");
+	const SceneGuid guid_b = scene.guid_of(b);
+	EXPECT_NE(guid_b.value, scene.guid_of(a).value);
+	EXPECT_EQ(scene.find_by_guid(guid_b), b);
+
+	// Destroying an earlier entity must not disturb the identity of a later one.
+	scene.destroy(a);
+	EXPECT_EQ(scene.find_by_guid(guid_b), b);
+	EXPECT_EQ(scene.guid_of(b).value, guid_b.value);
+}

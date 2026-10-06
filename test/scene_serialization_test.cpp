@@ -263,8 +263,10 @@ TEST(SceneSerialization, GuidRoundTripsThroughSaveLoad)
 	source.registry().emplace<EntityRef>(a, EntityRef{source.guid_of(b)});
 
 	const std::string text = to_json_string(source);
-	// Derived state must not be written: `resolved` is rebuilt on load.
+	// Derived state must not be written: `resolved` is rebuilt on load. The
+	// target must be, or the reference is lost across a save.
 	EXPECT_EQ(text.find("resolved"), std::string::npos) << text;
+	EXPECT_NE(text.find("\"target\""), std::string::npos) << text;
 
 	Scene loaded{"s"};
 	ASSERT_TRUE(scene_from_json(loaded, text, nullptr));

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 #include "lotus/application/window.hpp"
 #include "lotus/console/console.hpp"
@@ -45,6 +46,19 @@ public:
 	const std::string& scene_path() const { return scene_path_; }
 	const std::string& scene_status() const { return scene_status_; }
 
+	/// Directory prefabs are read from and written to.
+	void set_prefab_dir(const std::string& dir) { prefab_dir_ = dir; }
+
+	/// Saves \p root and its descendants as prefabs/<name>.json. Returns false
+	/// and fills \p error on failure.
+	bool save_prefab_now(Entity root, const std::string& name,
+	                     std::string* error = nullptr);
+	/// Instantiates the named prefab into the active scene under \p parent.
+	Entity instantiate_prefab(const std::string& name,
+	                          Entity parent = NullEntity);
+	/// Names of the prefabs currently on disk, sorted.
+	std::vector<std::string> prefab_names() const;
+
 	/// Requests the main loop to stop (used by the `quit` console command).
 	void request_quit() { quit_requested_ = true; }
 
@@ -71,6 +85,7 @@ private:
 	std::string scene_path_;
 	std::string scene_status_;
 	std::string keybinds_path_{"keybinds.json"};
+	std::string prefab_dir_{"prefabs"};
 	bool quit_requested_{false};
 };
 

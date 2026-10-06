@@ -39,10 +39,28 @@ public:
 		std::function<void()> on_reload;
 	};
 
+	/// Pull-based controls for the prefab panel. The Application owns the
+	/// prefab directory and the active scene, so the editor asks rather than
+	/// reaching for either.
+	struct PrefabControls {
+		std::function<std::vector<std::string>()> names;
+		/// Saves \p root and its descendants as a named prefab. Returns false
+		/// and fills \p error on failure.
+		std::function<bool(Entity root, const std::string& name,
+		                   std::string* error)>
+		        create_from;
+		/// Instantiates \p name under \p parent. NullEntity on failure.
+		std::function<Entity(const std::string& name, Entity parent)> instantiate;
+	};
+
 	bool init(SDL_Window* window, GpuRenderer& gpu);
 	void shutdown();
 
 	void set_scene_controls(SceneControls controls);
+	void set_prefab_controls(PrefabControls controls)
+	{
+		prefab_controls_ = std::move(controls);
+	}
 	void set_console(Console* console) { console_ = console; }
 	void set_keybinds(Keybinds* keybinds, std::function<void()> on_save);
 
@@ -87,6 +105,7 @@ private:
 	void draw_scene_panel();
 	void draw_console();
 	void draw_keybinds();
+	void draw_prefabs(Scene& scene);
 
 	bool initialized_{false};
 	bool visible_{true};
@@ -97,6 +116,9 @@ private:
 	bool redo_requested_{false};
 	Entity selected_{NullEntity};
 	SceneControls scene_controls_;
+	PrefabControls prefab_controls_;
+	char prefab_name_[64]{"prefab"};
+	std::string prefab_error_;
 
 	SceneHistory history_;
 	const Scene* history_scene_{nullptr};

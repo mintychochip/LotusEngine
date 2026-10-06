@@ -143,6 +143,7 @@ void Editor::draw(SceneManager& scenes, float dt)
 		}
 		draw_hierarchy(*scene);
 		draw_inspector(*scene);
+		draw_prefabs(*scene);
 		if (edited_) {
 			history_.commit(*scene);
 			dirty_  = true;
@@ -473,6 +474,53 @@ void Editor::draw_scene_panel()
 		}
 		if (auto_save_ && dirty_) {
 			scene_controls_.on_save();
+		}
+	}
+	ImGui::End();
+}
+
+void Editor::draw_prefabs(Scene& scene)
+{
+	if (!prefab_controls_.names || !prefab_controls_.instantiate) {
+		return;
+	}
+	ImGui::SetNextWindowSize(ImVec2(380, 200), ImGuiCond_FirstUseEver);
+	if (ImGui::Begin("Prefabs")) {
+		const bool has_selection =
+		        selected_ != NullEntity && scene.registry().valid(selected_);
+
+		ImGui::SetNextItemWidth(160);
+		ImGui::InputText("##prefabname", prefab_name_, sizeof(prefab_name_));
+		ImGui::SameLine();
+		ImGui::BeginDisabled(!has_selection || !prefab_controls_.create_from);
+		if (ImGui::Button("Create from selection")) {
+			std::string error;
+			if (!prefab_controls_.create_from(selected_, prefab_name_, &error)) {
+				prefab_error_ = error;
+			} else {
+				prefab_error_.clear();
+			}
+		}
+		ImGui::EndDisabled();
+
+		ImGui::Separator();
+		for (const std::string& name : prefab_controls_.names()) {
+			ImGui::TextUnformatted(name.c_str());
+			ImGui::SameLine();
+			// Push an id per row: the button label is identical for every entry.
+			ImGui::PushID(name.c_str());
+			if (ImGui::Button("Instantiate")) {
+				if (prefab_controls_.instantiate(name, selected_) == NullEntity) {
+					prefab_error_ = "could not instantiate " + name;
+				} else {
+					prefab_error_.clear();
+				}
+			}
+			ImGui::PopID();
+		}
+		if (!prefab_error_.empty()) {
+			ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s",
+			                   prefab_error_.c_str());
 		}
 	}
 	ImGui::End();

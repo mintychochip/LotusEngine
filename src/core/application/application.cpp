@@ -3,8 +3,12 @@
 #include "lotus/gpu/renderer.hpp"
 #include "lotus/scene/scene.hpp"
 #include "lotus/scene/serialization.hpp"
+#include "lotus/scene/prefab.hpp"
 
+#include <algorithm>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <stdexcept>
 #include <vector>
@@ -148,6 +152,111 @@ void Application::register_commands()
 		                     }
 		                     return std::string{"saved "} + keybinds_path_;
 	                     });
+	console_.add_command(
+	        "prefab.list", "list prefabs on disk",
+	        [this](const std::vector<std::string>&) {
+		        std::string out;
+		        for (const std::string& name : prefab_names()) {
+			        if (!out.empty()) {
+				        out += '\n';
+			        }
+			        out += name;
+		        }
+		        return out.empty() ? std::string{"(no prefabs)"} : out;
+	        });
+	console_.add_command(
+	        "prefab.save", "prefab.save <name> <entity> - save an entity subtree",
+	        [this](const std::vector<std::string>& args) {
+		        Scene* scene = scenes_.active();
+		        if (!scene) {
+			        return std::string{"no active scene"};
+		        }
+		        if (args.size() < 2) {
+			        return std::string{"usage: prefab.save <name> <entity>"};
+		        }
+		        const Entity root = scene->find(args[1]);
+		        if (root == NullEntity) {
+			        return std::string{"no entity named "} + args[1];
+		        }
+		        std::string error;
+		        if (!save_prefab_now(root, args[0], &error)) {
+			        return error;
+		        }
+		        return std::string{"saved prefab "} + args[0];
+	        });
+	console_.add_command(
+	        "prefab.instantiate", "prefab.instantiate <name> [parent]",
+	        [this](const std::vector<std::string>& args) {
+		        if (args.empty()) {
+			        return std::string{"usage: prefab.instantiate <name> [parent]"};
+		        }
+		        Scene* scene = scenes_.active();
+		        Entity parent = NullEntity;
+		        if (args.size() >= 2 && scene) {
+			        parent = scene->find(args[1]);
+		        }
+		        const Entity created = instantiate_prefab(args[0], parent);
+		        if (created == NullEntity) {
+			        return std::string{"could not instantiate "} + args[0];
+		        }
+		        return std::string{"instantiated "} + args[0];
+	        });
+}
+
+bool Application::save_prefab_now(Entity root, const std::string& name,
+                                  std::string* error)
+{
+	Scene* scene = scenes_.active();
+	if (!scene || root == NullEntity || !scene->registry().valid(root)) {
+		if (error) {
+			*error = "no active scene or invalid entity";
+		}
+		return false;
+	}
+	std::error_code code;
+	std::filesystem::create_directories(prefab_dir_, code);
+	const std::string path = prefab_dir_ + "/" + name + ".json";
+
+	const Prefab prefab = prefab_from_scene(*scene, root);
+	std::ofstream out(path, std::ios::binary | std::ios::trunc);
+	if (!out) {
+		if (error) {
+			*error = "cannot write " + path;
+		}
+		return false;
+	}
+	out << prefab.document.dump(2) << '\n';
+	return true;
+}
+
+Entity Application::instantiate_prefab(const std::string& name, Entity parent)
+{
+	Scene* scene = scenes_.active();
+	if (!scene) {
+		return NullEntity;
+	}
+	Prefab prefab;
+	std::string error;
+	if (!load_prefab(prefab, prefab_dir_ + "/" + name + ".json", &error)) {
+		return NullEntity;
+	}
+	return instantiate(prefab, *scene, parent);
+}
+
+std::vector<std::string> Application::prefab_names() const
+{
+	std::vector<std::string> out;
+	std::error_code code;
+	if (!std::filesystem::is_directory(prefab_dir_, code)) {
+		return out;
+	}
+	for (const auto& entry : std::filesystem::directory_iterator(prefab_dir_, code)) {
+		if (entry.is_regular_file() && entry.path().extension() == ".json") {
+			out.push_back(entry.path().stem().string());
+		}
+	}
+	std::sort(out.begin(), out.end());
+	return out;
 }
 
 void Application::handle_action(const std::string& action)
@@ -310,6 +419,15 @@ void Application::run(int width, int height, const std::string& title)
 		        [this] { save_scene_now(); },
 		        [this] { reload_scene_now(); }});
 
+		editor_.set_prefab_controls(Editor::PrefabControls{
+		        [this] { return prefab_names(); },
+		        [this](Entity root, const std::string& name, std::string* error) {
+			        return save_prefab_now(root, name, error);
+		        },
+		        [this](const std::string& name, Entity parent) {
+			        return instantiate_prefab(name, parent);
+		        }});
+
 		// Scriptable console: LOTUS_CONSOLE="cmd; cmd; ..." runs at startup,
 		// which makes the console usable from automation and by agents.
 		if (const char* script = std::getenv("LOTUS_CONSOLE")) {
@@ -374,9 +492,9 @@ void Application::run(int width, int height, const std::string& title)
 			gpu.begin_frame(window.handle(), 0.05f, 0.05f, 0.08f);
 			if (gpu.has_frame()) {
 				if (Scene* scene = scenes_.active()) {
-					scene->upload(gpu);
+					scene->upload(gpu, aspect);
 					gpu.begin_scene_pass();
-					scene->draw(gpu, aspect);
+					scene->draw(gpu);
 					gpu.end_scene_pass();
 				} else {
 					gpu.begin_scene_pass();
