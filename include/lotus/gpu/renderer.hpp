@@ -55,6 +55,13 @@ public:
 	/// Downloads the offscreen colour target as tightly packed RGBA8.
 	/// Returns an empty vector if this renderer is not in offscreen mode.
 	std::vector<uint8_t> capture_rgba(uint32_t& width, uint32_t& height);
+	/// Resizes the offscreen target, and with it the depth buffer and the
+	/// occlusion pyramid. Offscreen mode only. Returns false, leaving the
+	/// renderer untouched, when not in offscreen mode or the new colour
+	/// target could not be created. The pyramid is invalidated either way, so
+	/// occlusion_ready() is false until a frame has been recorded at the new
+	/// size.
+	bool resize_offscreen(uint32_t width, uint32_t height);
 
 	/// Offscreen capture written as a binary PPM (P6), which needs no encoder.
 	bool write_ppm(const std::string& path, std::string* error = nullptr);
@@ -123,6 +130,17 @@ private:
 	void ensure_pyramid_texture(uint32_t width, uint32_t height);
 	void poll_pyramid_fence();
 	void record_pyramid();
+	/// Creates the single-mip R32F texture the scene pass writes as colour
+	/// target 1 when the reduction is unavailable. lit.frag writes location 1
+	/// unconditionally, so the attachment must exist even with occlusion off.
+	void ensure_pyramid_stand_in(uint32_t width, uint32_t height);
+	/// Releases fences whose submission has already been superseded (a resize
+	/// dropped the pyramid they were reading into) but which the GPU may still
+	/// be using. Releasing one of those would hand it straight back to SDL's
+	/// pool, and the next SDL_AcquireGPUCommandBuffer would vkResetFences a
+	/// fence that is still in use. Each is therefore released only once
+	/// SDL_QueryGPUFence reports it signalled.
+	void release_retired_fences();
 
 	SDL_GPUDevice* device_{nullptr};
 	SDL_Window* window_{nullptr};
@@ -156,6 +174,17 @@ private:
 	SDL_GPUTransferBuffer* pyramid_transfer_{nullptr};
 	SDL_GPUFence* pyramid_fence_{nullptr};
 	bool pyramid_in_flight_{false};
+	/// Fences still owned by the GPU but no longer read from, e.g. when a
+	/// resize destroyed the transfer buffer they were reading into. Released
+	/// by release_retired_fences() once signalled, never before.
+	std::vector<SDL_GPUFence*> retired_fences_;
+	/// True once SDL_CreateGPUTexture has failed for the mip-chain pyramid
+	/// texture. The scene pass still needs an R32F target 1 (lit.frag writes
+	/// it unconditionally), so a single-mip stand-in takes over, but the
+	/// compute reduction is never attempted again: the cause is a missing
+	/// usage flag or an unsupported format, not the size, so retrying would
+	/// log once per frame forever.
+	bool pyramid_reduction_unavailable_{false};
 	/// True when record_pyramid actually recorded a download this frame, so
 	/// end_frame knows the submit needs a fence.
 	bool pyramid_recorded_{false};

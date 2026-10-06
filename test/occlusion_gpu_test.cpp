@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <vector>
@@ -133,6 +134,260 @@ TEST_F(OcclusionGpuTest, PyramidReachesTheCpuWithoutBlocking)
 	    gpu.occlusion_pyramid().level_height(2), static_cast<double>(nearest),
 	    static_cast<double>(*std::max_element(mip2.begin(), mip2.end())),
 	    sum / static_cast<double>(mip2.size()), covered, mip2.size());
+}
+
+/// A wall across the view and a cube behind it, plus the camera that sees
+/// them. Shared by the tests below so a change to the scene cannot silently
+/// stop exercising the occlusion path.
+Scene make_wall_and_cube_scene()
+{
+	Scene scene{"s"};
+	const Entity camera = scene.create("camera");
+	scene.registry().emplace<Camera3D>(camera, Camera3D{{0.0f, 0.0f, 10.0f},
+	                                                   {0.0f, 0.0f, 0.0f},
+	                                                   {0.0f, 1.0f, 0.0f},
+	                                                   60.0f, 0.1f, 100.0f});
+	const Entity wall = scene.create("wall");
+	scene.registry().emplace<MeshSource>(wall, MeshSource{"builtin:cube"});
+	scene.registry().get<Transform>(wall).scale    = {40.0f, 40.0f, 0.25f};
+	scene.registry().get<Transform>(wall).position = {0.0f, 0.0f, 5.0f};
+	const Entity hidden = scene.create("hidden");
+	scene.registry().emplace<MeshSource>(hidden, MeshSource{"builtin:cube"});
+	scene.registry().get<Transform>(hidden).position = {0.0f, 0.0f, 0.0f};
+	scene.update(0.0f);
+	return scene;
+}
+
+/// Runs one offscreen frame with no synchronisation of any kind: no
+/// SDL_WaitForGPUIdle, no fence wait.
+void render_frame(GpuRenderer& gpu, Scene& scene, float aspect)
+{
+	gpu.begin_frame_offscreen();
+	scene.upload(gpu, aspect);
+	gpu.begin_scene_pass();
+	scene.draw(gpu);
+	gpu.end_scene_pass();
+	gpu.end_frame();
+}
+
+/// The engine never blocks: a run of frames completes in wall-clock time
+/// consistent with its frame count.
+///
+/// The existing GPU test calls SDL_WaitForGPUIdle after every frame, which
+/// measures the opposite of what this asserts — it forces the very stall the
+/// feature promises not to cause, and then reports success. This runs the
+/// whole loop with no wait call anywhere in it.
+///
+/// The absolute bound is deliberately loose. On Mesa lavapipe a non-blocking
+/// frame costs well under a millisecond, so a tight threshold would measure
+/// the machine rather than the code. What makes the bound meaningful is the
+/// paired control below: the same loop re-run with a blocking wait after every
+/// frame, which is what a synchronous implementation would cost. Measured on
+/// this configuration the blocking loop runs 2-7x slower per frame (up to
+/// ~107ms against ~13ms for 120 frames), because each SDL_WaitForGPUIdle
+/// drains the queue and re-serialises CPU against GPU. The assertion is that
+/// the no-wait loop is never slower than that control; it held in 12/12
+/// consecutive repetitions. A ratio or a tight deadline would flake on a
+/// shared box, so neither is used.
+TEST_F(OcclusionGpuTest, RenderingALongRunNeverBlocks)
+{
+	constexpr int    kFrames          = 120;
+	constexpr double kGenerousBoundMs = 5000.0; // ~42ms/frame
+	double           non_blocking_ms  = 0.0;
+	double           blocking_ms      = 0.0;
+
+	// --- the loop under test: no wait call anywhere in it ---
+	{
+		GpuRenderer gpu;
+		ASSERT_NO_THROW(gpu.init_offscreen(256, 256));
+		ASSERT_TRUE(gpu.occlusion_enabled()) << "compute pipeline unavailable";
+		Scene scene = make_wall_and_cube_scene();
+
+		const auto start = std::chrono::steady_clock::now();
+		for (int frame = 0; frame < kFrames; ++frame) {
+			render_frame(gpu, scene, 1.0f);
+		}
+		non_blocking_ms =
+		        std::chrono::duration<double, std::milli>(
+		            std::chrono::steady_clock::now() - start)
+		            .count();
+
+		// Every frame really was submitted, so the loop cannot pass by
+		// silently skipping work.
+		EXPECT_EQ(gpu.frames_rendered(), static_cast<uint64_t>(kFrames));
+		EXPECT_LT(non_blocking_ms, kGenerousBoundMs)
+		    << "a blocking implementation would serialise CPU against GPU on "
+		       "every frame; this loop calls no wait at all";
+
+		std::printf("never-blocks: frames=%d elapsed=%.1fms per-frame=%.3fms "
+		            "(generous bound %.0fms)\n",
+		            kFrames, non_blocking_ms, non_blocking_ms / kFrames,
+		            kGenerousBoundMs);
+	}
+
+	// --- the control: what blocking actually costs here ---
+	{
+		GpuRenderer gpu;
+		ASSERT_NO_THROW(gpu.init_offscreen(256, 256));
+		Scene scene = make_wall_and_cube_scene();
+
+		const auto start = std::chrono::steady_clock::now();
+		for (int frame = 0; frame < kFrames; ++frame) {
+			render_frame(gpu, scene, 1.0f);
+			SDL_WaitForGPUIdle(gpu.device());
+		}
+		blocking_ms =
+		        std::chrono::duration<double, std::milli>(
+		            std::chrono::steady_clock::now() - start)
+		            .count();
+		std::printf("never-blocks: blocking control frames=%d elapsed=%.1fms "
+		            "per-frame=%.3fms\n",
+		            kFrames, blocking_ms, blocking_ms / kFrames);
+	}
+
+	EXPECT_LE(non_blocking_ms, blocking_ms)
+	    << "the no-wait loop is slower than the same loop with a blocking wait "
+	       "after every frame, so the loop is not the thing being measured";
+}
+
+/// Resizing mid-run invalidates the pyramid and then rebuilds it, with no
+/// crash and no false occlusion in between.
+///
+/// The dangerous window is the one between the resize and the first download
+/// that lands at the new size. occlusion_ready() must be false and the
+/// pyramid empty throughout it, because a stale chain queried against the new
+/// camera would cull geometry against depths that no longer describe it.
+TEST_F(OcclusionGpuTest, ResizingMidRunInvalidatesThenRebuildsThePyramid)
+{
+	GpuRenderer gpu;
+	ASSERT_NO_THROW(gpu.init_offscreen(256, 256));
+	ASSERT_TRUE(gpu.occlusion_enabled()) << "compute pipeline unavailable";
+	Scene scene = make_wall_and_cube_scene();
+
+	// Settle first: a resize means nothing until a download has landed.
+	bool ready = false;
+	for (int frame = 0; frame < 16 && !ready; ++frame) {
+		render_frame(gpu, scene, 1.0f);
+		SDL_WaitForGPUIdle(gpu.device());
+		ready = gpu.occlusion_ready();
+	}
+	ASSERT_TRUE(ready) << "pyramid never reached the CPU before the resize";
+	ASSERT_EQ(scene.occluded_entities(), 1u);
+
+	// --- the resize ---
+	constexpr uint32_t kNewWidth  = 384;
+	constexpr uint32_t kNewHeight = 192;
+	ASSERT_TRUE(gpu.resize_offscreen(kNewWidth, kNewHeight));
+
+	// Invalidated immediately: not ready, and empty, so nothing is culled
+	// against a chain describing the old framebuffer.
+	EXPECT_FALSE(gpu.occlusion_ready())
+	    << "the pyramid was not invalidated by the resize";
+	EXPECT_TRUE(gpu.occlusion_pyramid().empty())
+	    << "the CPU-side pyramid survived the resize";
+
+	// --- frames across the resize ---
+	// No wait calls: this runs exactly as the real loop does, so the frames
+	// between the resize and the first new download are exercised rather than
+	// skipped.
+	bool        rebuilt  = false;
+	int         frame    = 0;
+	std::string sequence;
+	for (; frame < 32 && !rebuilt; ++frame) {
+		render_frame(gpu, scene, float(kNewWidth) / float(kNewHeight));
+
+		const bool now_ready = gpu.occlusion_ready();
+
+		// The one-directional contract: nothing visible may be culled. While
+		// the pyramid is unavailable an empty chain never occludes, so every
+		// entity must draw. Once it is ready, exactly the cube behind the wall
+		// may go and the wall itself must stay.
+		if (!now_ready) {
+			EXPECT_EQ(scene.occluded_entities(), 0u)
+			    << "an entity was culled at frame " << frame
+			    << " with no pyramid to cull it against";
+			EXPECT_EQ(scene.drawn_entities(), 2u)
+			    << "both entities must draw while the pyramid is unavailable";
+		} else {
+			EXPECT_EQ(scene.occluded_entities(), 1u)
+			    << "expected only the cube behind the wall at frame " << frame;
+			EXPECT_EQ(scene.drawn_entities(), 1u)
+			    << "the wall itself must stay drawn at frame " << frame;
+		}
+
+		sequence += now_ready ? '1' : '0';
+		rebuilt = now_ready;
+	}
+
+	EXPECT_TRUE(rebuilt) << "the pyramid was never rebuilt after the resize";
+	// Rebuilt at the new size, not the old one.
+	EXPECT_EQ(gpu.occlusion_pyramid().width(), kNewWidth);
+	EXPECT_EQ(gpu.occlusion_pyramid().height(), kNewHeight);
+
+	// Capturing proves the resized target is coherent enough to read back and
+	// really is the size that was asked for.
+	uint32_t                    captured_w = 0;
+	uint32_t                    captured_h = 0;
+	const std::vector<uint8_t> pixels      = gpu.capture_rgba(captured_w,
+	                                                        captured_h);
+	EXPECT_EQ(captured_w, kNewWidth);
+	EXPECT_EQ(captured_h, kNewHeight);
+	EXPECT_EQ(pixels.size(),
+	          static_cast<std::size_t>(kNewWidth) * kNewHeight * 4)
+	    << "the resized offscreen target did not render";
+
+	std::printf(
+	    "resize: ready-sequence=%s frames=%d pyramid=%ux%u captured=%ux%u\n",
+	    sequence.c_str(), frame, gpu.occlusion_pyramid().width(),
+	    gpu.occlusion_pyramid().height(), captured_w, captured_h);
+}
+
+/// clear() resets every derived counter, occlusion included.
+///
+/// Not a restatement of the line: occluded_entities_ is read by the GPU gate
+/// above, and a just-cleared scene reporting the previous frame's occlusion
+/// count would be attributed to the new (empty) frame.
+TEST(OcclusionClearTest, ClearResetsTheOcclusionCounter)
+{
+	Scene scene{"s"};
+	const Entity camera = scene.create("camera");
+	scene.registry().emplace<Camera3D>(camera, Camera3D{{0.0f, 0.0f, 10.0f},
+	                                                   {0.0f, 0.0f, 0.0f},
+	                                                   {0.0f, 1.0f, 0.0f},
+	                                                   60.0f, 0.1f, 100.0f});
+	const Entity wall = scene.create("wall");
+	scene.registry().emplace<MeshSource>(wall, MeshSource{"builtin:cube"});
+	scene.registry().get<Transform>(wall).scale    = {40.0f, 40.0f, 0.25f};
+	scene.registry().get<Transform>(wall).position = {0.0f, 0.0f, 5.0f};
+	const Entity hidden = scene.create("hidden");
+	scene.registry().emplace<MeshSource>(hidden, MeshSource{"builtin:cube"});
+	scene.registry().get<Transform>(hidden).position = {0.0f, 0.0f, 0.0f};
+	scene.update(0.0f);
+
+	ASSERT_EQ(scene.occluded_entities(), 0u)
+	    << "a fresh scene must start with no occlusion";
+
+	// A uniform near-depth image: every footprint texel reads closer than
+	// anything in the scene, so the occlusion query has to fire. An empty
+	// pyramid would cull nothing, which is why this builds one instead of
+	// passing nullptr.
+	constexpr uint32_t kWidth  = 256;
+	constexpr uint32_t kHeight = 256;
+	const std::vector<float> near_image(kWidth * kHeight, 1.0f);
+	DepthPyramid           pyramid;
+	pyramid.build(near_image.data(), kWidth, kHeight);
+	ASSERT_FALSE(pyramid.empty());
+
+	scene.build_vertices(1.0f, &pyramid);
+	ASSERT_GT(scene.occluded_entities(), 0u)
+	    << "the fixture must actually produce an occlusion, or this test "
+	       "would pass on a broken query";
+
+	scene.clear();
+	EXPECT_EQ(scene.occluded_entities(), 0u)
+	    << "clear() left the previous frame's occlusion count in place";
+	EXPECT_EQ(scene.drawn_entities(), 0u);
+	EXPECT_EQ(scene.culled_entities(), 0u);
 }
 
 } // namespace

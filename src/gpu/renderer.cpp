@@ -278,7 +278,14 @@ bool GpuRenderer::create_occlusion_pipeline()
 void GpuRenderer::destroy_pyramid()
 {
 	if (pyramid_fence_) {
-		SDL_ReleaseGPUFence(device_, pyramid_fence_);
+		// Retired, never released outright. This fence's vkQueueSubmit may
+		// still be pending, and releasing it drops the reference count to
+		// zero and returns the handle to SDL's pool — where the next submit
+		// pops it and calls vkResetFences on a fence Vulkan still considers in
+		// use. A prematurely reset fence also reports signalled, which would
+	// let the poll map a download that has not landed. release_retired_fences
+		// collects each one only once SDL_QueryGPUFence agrees.
+		retired_fences_.push_back(pyramid_fence_);
 		pyramid_fence_ = nullptr;
 	}
 	if (pyramid_transfer_) {
@@ -309,8 +316,36 @@ void GpuRenderer::destroy_occlusion()
 	occlusion_enabled_ = false;
 }
 
+void GpuRenderer::release_retired_fences()
+{
+	for (auto it = retired_fences_.begin(); it != retired_fences_.end();) {
+		// Query, never wait. A fence that is not signalled yet stays retired
+		// and is retried next frame; a resize must not stall the loop.
+		if (SDL_QueryGPUFence(device_, *it)) {
+			SDL_ReleaseGPUFence(device_, *it);
+			it = retired_fences_.erase(it);
+		} else {
+			++it;
+		}
+	}
+}
+
 void GpuRenderer::ensure_pyramid(uint32_t width, uint32_t height)
 {
+	if (pyramid_reduction_unavailable_) {
+		// The reduction is permanently off. A resize must still be able to
+		// refresh the stand-in texture the scene pass writes as colour target
+		// 1, but the mip chain is never attempted again.
+		if (pyramid_texture_ && pyramid_width_ == width &&
+		    pyramid_height_ == height) {
+			return;
+		}
+		destroy_pyramid();
+		if (width != 0 && height != 0) {
+			ensure_pyramid_stand_in(width, height);
+		}
+		return;
+	}
 	if (pyramid_texture_ && pyramid_width_ == width &&
 	    pyramid_height_ == height) {
 		return;
@@ -326,6 +361,39 @@ void GpuRenderer::ensure_pyramid(uint32_t width, uint32_t height)
 	if (width != 0 && height != 0) {
 		ensure_pyramid_texture(width, height);
 	}
+}
+
+/// Colour target 1 when the reduction is unavailable: one R32F mip, no mip
+/// chain and no compute usage. lit.frag writes location 1 unconditionally, so
+/// the scene pass cannot simply drop the attachment — that would leave the
+/// render pass with one target against a two-target pipeline. Writing the
+/// depth into a texture nothing ever reads keeps the two in agreement and
+/// costs one mip.
+void GpuRenderer::ensure_pyramid_stand_in(uint32_t width, uint32_t height)
+{
+	SDL_GPUTextureCreateInfo info{};
+	info.type                 = SDL_GPU_TEXTURETYPE_2D;
+	info.format               = SDL_GPU_TEXTUREFORMAT_R32_FLOAT;
+	info.usage                = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET;
+	info.width                = width;
+	info.height               = height;
+	info.layer_count_or_depth = 1;
+	info.num_levels           = 1;
+	info.sample_count         = SDL_GPU_SAMPLECOUNT_1;
+
+	pyramid_texture_ = SDL_CreateGPUTexture(device_, &info);
+	if (!pyramid_texture_) {
+		// Not an occlusion failure any more: lit.frag writes colour target 1
+		// for every draw, so an R32F colour target is a rendering requirement
+		// and the scene pass cannot be formed without one. Matches
+		// ensure_depth_target, which throws on the same class of failure.
+		throw std::runtime_error(std::string("cannot create the linear-depth "
+		                                    "colour target: ") +
+		                         SDL_GetError());
+	}
+	pyramid_width_  = width;
+	pyramid_height_ = height;
+	pyramid_levels_ = 0; // nothing to reduce and nothing to read back
 }
 
 void GpuRenderer::ensure_pyramid_texture(uint32_t width, uint32_t height)
@@ -349,9 +417,20 @@ void GpuRenderer::ensure_pyramid_texture(uint32_t width, uint32_t height)
 
 	pyramid_texture_ = SDL_CreateGPUTexture(device_, &info);
 	if (!pyramid_texture_) {
-		occlusion_enabled_ = false;
-		std::cerr << "occlusion: depth pyramid unavailable: " << SDL_GetError()
-		          << '\n';
+		// Degrade rather than leave pyramid_texture_ null: the scene pass binds
+		// it as colour target 1 unconditionally, and SDL's Vulkan backend
+		// dereferences colorTargetInfos[i].texture with no null check, so a
+		// null here is a crash inside the driver, not a skipped feature.
+		//
+		// The flag makes this permanent. ensure_pyramid matches on
+		// pyramid_texture_ being non-null, so without it the next frame would
+		// retry and log again, forever, for a cause that is a missing usage
+		// flag or format rather than the size.
+		pyramid_reduction_unavailable_ = true;
+		occlusion_enabled_             = false;
+		std::cerr << "occlusion: depth pyramid unavailable, continuing without "
+		             "occlusion culling: " << SDL_GetError() << '\n';
+		ensure_pyramid_stand_in(width, height);
 		return;
 	}
 
@@ -389,6 +468,8 @@ void GpuRenderer::ensure_pyramid_texture(uint32_t width, uint32_t height)
 
 void GpuRenderer::poll_pyramid_fence()
 {
+	// Drains fences a resize superseded. Polls, never waits.
+	release_retired_fences();
 	occlusion_ready_ = false;
 	if (!pyramid_in_flight_ || !pyramid_fence_) {
 		return;
@@ -440,9 +521,14 @@ void GpuRenderer::poll_pyramid_fence()
 	}
 	SDL_UnmapGPUTransferBuffer(device_, pyramid_transfer_);
 
-	occlusion_pyramid_.adopt(pyramid_width_, pyramid_height_,
-	                         pyramid_levels_, mips);
-	occlusion_ready_ = true;
+	// adopt() rejects a chain whose transferred mips disagree with the
+	// accessors and leaves the pyramid empty, so readiness is read back off
+	// the object rather than assumed. Reporting ready after a rejection is the
+	// false reassurance an empty pyramid is worst at: an empty pyramid never
+	// occludes, so the failure is invisible in the culling counts.
+	occlusion_pyramid_.adopt(pyramid_width_, pyramid_height_, pyramid_levels_,
+	                         mips);
+	occlusion_ready_ = !occlusion_pyramid_.empty();
 }
 
 void GpuRenderer::record_pyramid()
@@ -451,8 +537,16 @@ void GpuRenderer::record_pyramid()
 	// texture always exists because the scene pass writes it as color target 1,
 	// so without this the reduction would still run pointlessly whenever
 	// occlusion was disabled.
+	//
+	// pyramid_in_flight_ keeps this to at most one outstanding fence. Recording
+	// a second download into the same transfer buffer while the first
+	// submission is still pending would overwrite the bytes the poll is going
+	// to map, and would leave end_frame holding a fence nobody has consumed —
+	// releasing that is the premature-vkResetFences bug. Skipping the download
+	// costs one frame of occlusion, which is the direction this project calls
+	// safe: the frame still renders, it just culls nothing.
 	if (!occlusion_enabled_ || !pyramid_texture_ || !hiz_pipeline_ ||
-	    !pyramid_transfer_ || !cmd_ ||
+	    !pyramid_transfer_ || !cmd_ || pyramid_in_flight_ ||
 	    pyramid_levels_ <= kDepthPyramidMinLevel) {
 		return;
 	}
@@ -618,6 +712,47 @@ std::vector<uint8_t> GpuRenderer::capture_rgba(uint32_t& width, uint32_t& height
 	return pixels;
 }
 
+bool GpuRenderer::resize_offscreen(uint32_t width, uint32_t height)
+{
+	if (!offscreen_ || !offscreen_color_ || width == 0 || height == 0) {
+		return false;
+	}
+	if (width == offscreen_width_ && height == offscreen_height_) {
+		return true;
+	}
+
+	SDL_GPUTextureCreateInfo color{};
+	color.type                 = SDL_GPU_TEXTURETYPE_2D;
+	color.format               = swapchain_format_;
+	color.usage                = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET |
+	                             SDL_GPU_TEXTUREUSAGE_SAMPLER;
+	color.width                = width;
+	color.height               = height;
+	color.layer_count_or_depth = 1;
+	color.num_levels           = 1;
+	color.sample_count         = SDL_GPU_SAMPLECOUNT_1;
+
+	// Created before the old one is released, so a failed resize leaves the
+	// renderer on its old target rather than on none.
+	SDL_GPUTexture* replacement = SDL_CreateGPUTexture(device_, &color);
+	if (!replacement) {
+		return false;
+	}
+	SDL_ReleaseGPUTexture(device_, offscreen_color_);
+	offscreen_color_  = replacement;
+	offscreen_width_  = width;
+	offscreen_height_ = height;
+
+	// Both are sized from the target, and both drop what they had: the depth
+	// buffer because it is now the wrong size, the pyramid because its mip
+	// chain is. destroy_pyramid clears the CPU-side chain and occlusion_ready_,
+	// so the frame after a resize treats every entity as visible rather than
+	// querying a stale chain against the new camera.
+	ensure_depth_target(width, height);
+	ensure_pyramid(width, height);
+	return true;
+}
+
 bool GpuRenderer::write_ppm(const std::string& path, std::string* error)
 {
 	uint32_t width  = 0;
@@ -661,6 +796,13 @@ void GpuRenderer::shutdown()
 	}
 	SDL_WaitForGPUIdle(device_);
 	destroy_occlusion();
+	// Every retired fence is now signalled, so this only releases handles; it
+	// cannot block. Releasing them here rather than leaking keeps SDL's fence
+	// pool and the Vulkan device in step through SDL_DestroyGPUDevice.
+	for (SDL_GPUFence* fence : retired_fences_) {
+		SDL_ReleaseGPUFence(device_, fence);
+	}
+	retired_fences_.clear();
 
 	destroy_buffers();
 	if (depth_texture_) {
@@ -754,8 +896,16 @@ void GpuRenderer::begin_scene_pass()
 	targets[0].clear_color = SDL_FColor{clear_r_, clear_g_, clear_b_, 1.0f};
 	targets[0].load_op     = SDL_GPU_LOADOP_CLEAR;
 	targets[0].store_op    = SDL_GPU_STOREOP_STORE;
-	// Unconditional, matching the pipeline's two declared color targets. The
-	// pyramid texture is allocated in every path for exactly that reason.
+	// Unconditional, matching the pipeline's two declared colour targets.
+	// ensure_pyramid guarantees a texture here in every path — the mip chain,
+	// or the single-mip stand-in when the reduction is unavailable — so the
+	// render pass and the pipeline always agree. Asserted rather than assumed:
+	// SDL's Vulkan backend dereferences colorTargetInfos[i].texture with no
+	// null check, so a null would be a crash inside the driver rather than a
+	// skipped frame.
+	if (!pyramid_texture_) {
+		throw std::runtime_error("scene pass has no linear-depth colour target");
+	}
 	// Load-bearing: an unwritten texel reads as ~0 and the min reduction would
 	// spread that zero across the whole pyramid, culling everything.
 	targets[1].texture     = pyramid_texture_;
@@ -829,27 +979,34 @@ void GpuRenderer::end_frame()
 {
 	end_scene_pass();
 	if (cmd_) {
-		// Drop a fence that has not been polled yet rather than leaking it.
-		if (pyramid_in_flight_ && pyramid_fence_) {
-			SDL_ReleaseGPUFence(device_, pyramid_fence_);
-			pyramid_fence_ = nullptr;
-		}
-		pyramid_in_flight_ = false;
+		// Captured before cmd_ is cleared: the submit still needs the buffer,
+		// and cmd_ must not dangle if a submit throws.
+		SDL_GPUCommandBuffer* const submit = cmd_;
+		const bool had_pyramid_download    = pyramid_recorded_;
 
-		bool submitted = false;
-		if (pyramid_recorded_) {
-			pyramid_fence_ = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd_);
-			if (pyramid_fence_) {
-				pyramid_in_flight_ = true;
-				submitted          = true;
+		// No fence is dropped here. pyramid_recorded_ is only ever true when
+		// pyramid_in_flight_ was false, so this submit cannot orphan one: the
+		// fence it acquires is the single outstanding one, and
+		// poll_pyramid_fence releases it once SDL_QueryGPUFence says it has
+		// signalled.
+		pyramid_recorded_ = false;
+		cmd_              = nullptr;
+		++frames_rendered_;
+
+		if (had_pyramid_download) {
+			pyramid_fence_ = SDL_SubmitGPUCommandBufferAndAcquireFence(submit);
+			if (!pyramid_fence_) {
+				// SDL's Vulkan backend has already ended this command buffer
+				// inside the failed call, so there is nothing left to fall back
+				// to: re-submitting would submit an already-ended buffer. Report
+				// it the way every other submit failure in this file is
+				// reported.
+				throw std::runtime_error(SDL_GetError());
 			}
-		}
-		if (!submitted && !SDL_SubmitGPUCommandBuffer(cmd_)) {
+			pyramid_in_flight_ = true;
+		} else if (!SDL_SubmitGPUCommandBuffer(submit)) {
 			throw std::runtime_error(SDL_GetError());
 		}
-		pyramid_recorded_ = false;
-		cmd_             = nullptr;
-		++frames_rendered_;
 	}
 	swapchain_ = nullptr;
 }

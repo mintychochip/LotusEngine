@@ -170,6 +170,10 @@ void Scene::clear()
 	vertex_count_     = 0;
 	drawn_entities_   = 0;
 	culled_entities_  = 0;
+	// Without this the scene reports the previous frame's occlusion count
+	// until the next build_vertices(), which for a just-cleared scene is the
+	// whole lifetime of the next read.
+	occluded_entities_ = 0;
 }
 
 Camera2D* Scene::active_camera()
