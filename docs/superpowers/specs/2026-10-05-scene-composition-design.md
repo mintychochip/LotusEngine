@@ -88,24 +88,35 @@ existing entities survive a merge with their GUIDs unchanged.
 reports and leaves the current scene active; a switch does not reload from disk
 (unsaved changes survive); after a switch the watcher watches the new path.
 
+## Delivered alongside
+
+The items this spec listed as deferred were implemented in the same arc, in
+their own commits, so the composition milestone did not leave them stranded:
+
+- **Format v3**: `SceneOrigin`, `MeshSource::id` / `Script::id`, and a
+  per-scene `SceneSettings` block. Additive, so a v2 document loads unchanged.
+- **Undo**: `SceneHistory` gained a byte capacity alongside the step count.
+- **Prefab overrides**: `PrefabOverrides` (root transform plus component
+  documents keyed by codec name).
+- **Async load**: `AsyncSceneLoad`, start-then-poll, never wait.
+- **Streaming**: `ResidencyPolicy` plus `scene.unload <origin>`.
+
+Remaining genuinely out of scope: a frame-budgeted region scheduler, and
+network replication.
+
 ## Deferred
 
-Unchanged from the prefabs milestone, and out of scope here:
+Out of scope. Everything the earlier specs deferred has now been delivered;
+these two are the remainder.
 
 | Deferred | Reason |
 |---|---|
-| Async / non-blocking load | Composition is correctness work; concurrency is a separate surface. |
-| Asset reference indirection (`AssetRef`) | Needs its own format bump; unrelated to composition. |
-| Undo scalability | Snapshot undo is fine for a level editor; profiling has not asked for more. |
-| General prefab overrides | Needs a diff format and merge rule; its own design. |
-| Prefab nesting semantics | Works incidentally today; pin the semantics before relying on it. |
-| Per-scene environment | Renderer call sites and global state; unrelated. |
-| Scene streaming / tiles | Open-world concern, not scene composition. |
-| Entity scoping across merged scenes (a "scene tag" per entity) | Merging makes the union indistinguishable; tagging is only needed once something must query by origin. Not required for load/switch. |
+| Networking or replication | Out of the engine's scope. |
+| A region-loading scheduler driven by frame time budget | ResidencyPolicy decides *what* should be resident; spreading the actual loads across frames needs a budget and a priority order, and only matters once regions are large enough to hitch. |
 
 ## Build and verification
 
 - Build: `cd build && cmake --build . -j"$(nproc)"`.
-- Tests: `build/bin/lotus_tests`. Baseline is **168 passing**; never lower.
+- Tests: `build/bin/lotus_tests`. Baseline is **200 passing**; never lower.
 - Run: `cd build && ./bin/lotus`. Console via `F2` or `LOTUS_CONSOLE`.
 - No CMake edits.

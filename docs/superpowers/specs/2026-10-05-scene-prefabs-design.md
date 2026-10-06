@@ -72,19 +72,21 @@ The enabling change. Without a persistent identity, a prefab instance has nothin
 
 ## Deferred
 
-Out of scope for this milestone, each with its reason. Do not start these.
+Deferred when this milestone landed, and since delivered in their own commits
+under `2026-10-05-scene-composition-design.md`. Kept here as the record of what
+was knowingly left out at the time:
 
-| Deferred | Reason |
+| Was deferred | Status now |
 |---|---|
-| Additive / multi-scene composition, `scene.switch` | Needs GUIDs (Workstream 1) to be useful; separate milestone once identity lands. |
-| Async / non-blocking load | `nlohmann::json` parse is synchronous and single-threaded; a correctness-only milestone does not need it, and it adds a concurrency surface. |
-| Asset reference indirection (`AssetRef`) | Changes `MeshSource`/`Script`; a format change on top of a format change. Do it in the same pass as the next version bump. |
-| Undo scalability (snapshot → diff) | Snapshot undo at capacity 64 is correct and fine for a level editor. Only worth it if profiling says so; until then the cost should be documented in `history.hpp`. |
-| General prefab overrides (per-component diffs at instantiate time) | The milestone ships transform-free cloning only. Overrides need a diff format and a merge rule, which is a design of its own. |
-| Prefab nesting (a prefab referencing another prefab) | Works by accident today (an inner EntityRef to an entity outside the fragment is left unresolved and reported), but the semantics are unspecified. Pin them before relying on it. |
-| Per-scene environment (lighting/skybox/fog) | Touches renderer call sites and global state; unrelated to identity or instancing. |
-| Scene streaming / tiles | Open-world concern, not a scene-authoring one. |
-| Networking or scene authority | Out of the engine's scope entirely. |
+| Additive / multi-scene composition, `scene.switch` | Delivered: `load_scene_additive`, `scene.switch`, `scene.load`, `scene.merge`. |
+| Async / non-blocking load | Delivered: `AsyncSceneLoad`, start-then-poll, never wait. |
+| Asset reference indirection | Delivered: optional `id` on `MeshSource` and `Script`, resolved through the registry; absent id means "use the path". |
+| Undo scalability | Delivered: `SceneHistory` byte capacity alongside the step count. |
+| General prefab overrides | Delivered: `PrefabOverrides` (root transform + component documents by codec name). |
+| Prefab nesting semantics | Pinned by tests; a nested capture flattens into one document, and a reference outside the fragment is reported, not silently dropped. |
+| Per-scene environment | Delivered: `SceneSettings`, applied every frame when a scene carries one. |
+| Scene streaming / tiles | Partly delivered: `destroy_by_origin` plus `ResidencyPolicy`. A frame-budgeted region scheduler is still open. |
+| Networking or scene authority | Still out of scope. |
 
 
 Delivered in this milestone, beyond the three workstreams: `prefab.list`,
