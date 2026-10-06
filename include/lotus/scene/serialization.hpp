@@ -45,10 +45,11 @@ private:
 	std::vector<std::string> order_;
 };
 
-/// Built-in codecs: Transform, Sprite, Camera2D.
+/// Built-in codecs, all registered by default: Transform, Sprite, Camera2D,
+/// Script, MeshSource, Material, Camera3D, Lod, SceneGuid, EntityRef.
 /// Name is stored as the entity's "name" field; Hierarchy is derived from
-/// nesting; Transform::world is recomputed on load. None are serialized as
-/// components.
+/// nesting; Transform::world is recomputed on load; EntityRef::resolved is
+/// rebuilt by Scene::resolve_refs(). None of those are serialized.
 const ComponentCodecs& default_component_codecs();
 
 /// Serializes a scene (roots, recursively) to JSON text.

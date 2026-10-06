@@ -35,6 +35,21 @@ struct Transform {
 	}
 };
 
+/// Persistent identity that survives save/load and reordering. Zero means
+/// unassigned; Scene::create assigns one, and a document without one gets a
+/// fresh value on load.
+struct SceneGuid {
+	uint64_t value{0};
+};
+
+/// Names another entity by GUID rather than by handle, so a reference survives
+/// a reload. \p resolved is derived state filled by Scene::resolve_refs() and
+/// is never serialized.
+struct EntityRef {
+	SceneGuid target;
+	Entity resolved{NullEntity};
+};
+
 /// Intrusive linked-list hierarchy: O(1) reparent, no allocation.
 struct Hierarchy {
 	Entity parent{NullEntity};

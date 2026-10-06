@@ -90,7 +90,78 @@ Entity Scene::create(std::string name)
 	registry_.emplace<Transform>(entity);
 	registry_.emplace<Hierarchy>(entity);
 	registry_.emplace<Name>(entity, Name{std::move(name)});
+	assign_guid(entity);
 	return entity;
+}
+
+SceneGuid Scene::guid_of(Entity entity) const
+{
+	if (entity == NullEntity || !registry_.valid(entity)) {
+		return SceneGuid{};
+	}
+	const auto* guid = registry_.try_get<SceneGuid>(entity);
+	return guid ? *guid : SceneGuid{};
+}
+
+Entity Scene::find_by_guid(SceneGuid guid) const
+{
+	if (guid.value == 0) {
+		return NullEntity;
+	}
+	const auto view = registry_.view<SceneGuid>();
+	for (const Entity entity : view) {
+		if (view.get<SceneGuid>(entity).value == guid.value) {
+			return entity;
+		}
+	}
+	return NullEntity;
+}
+
+SceneGuid Scene::assign_guid(Entity entity)
+{
+	if (entity == NullEntity || !registry_.valid(entity)) {
+		return SceneGuid{};
+	}
+	const SceneGuid guid{next_guid_++};
+	registry_.emplace_or_replace<SceneGuid>(entity, guid);
+	return guid;
+}
+
+void Scene::resolve_refs()
+{
+	reference_errors_.clear();
+	// A document that predates identity carries no GUIDs; give every entity one
+	// before resolving, so references within a freshly loaded scene can match.
+	for (const Entity entity : registry_.view<Name>()) {
+		if (!registry_.all_of<SceneGuid>(entity) ||
+		    registry_.get<SceneGuid>(entity).value == 0) {
+			assign_guid(entity);
+		}
+	}
+	// A document can carry GUIDs far above the counter (a hand-authored or
+	// merged file). Advance past them, or a later create() collides with an
+	// entity that was just loaded.
+	for (const Entity entity : registry_.view<SceneGuid>()) {
+		const uint64_t value = registry_.get<SceneGuid>(entity).value;
+		if (value >= next_guid_) {
+			next_guid_ = value + 1;
+		}
+	}
+	for (const Entity entity : registry_.view<EntityRef>()) {
+		auto& ref = registry_.get<EntityRef>(entity);
+		ref.resolved = find_by_guid(ref.target);
+		if (ref.resolved == NullEntity && ref.target.value != 0) {
+			// try_get: an entity may carry a reference without a Name.
+			const auto* name = registry_.try_get<Name>(entity);
+			const std::string label =
+			        name ? name->value
+			             : ("entity " + std::to_string(
+			                        static_cast<uint32_t>(entity)));
+			reference_errors_.push_back("unresolved reference from '" +
+			                            label + "' to guid " +
+			                            std::to_string(ref.target.value));
+		}
+	}
 }
 
 void Scene::detach(Entity child)
@@ -174,6 +245,11 @@ void Scene::clear()
 	// until the next build_vertices(), which for a just-cleared scene is the
 	// whole lifetime of the next read.
 	occluded_entities_ = 0;
+	// Identity and reference state are per-scene too: leaving the counter high
+	// would let GUIDs climb across a reset, and stale reference errors would
+	// describe entities that no longer exist.
+	next_guid_ = 1;
+	reference_errors_.clear();
 }
 
 Camera2D* Scene::active_camera()

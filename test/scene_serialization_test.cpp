@@ -254,3 +254,126 @@ TEST(SceneSerialization, MissingFileReportsError)
 	EXPECT_FALSE(load_scene(scene, "definitely_missing_scene.json", &error));
 	EXPECT_FALSE(error.empty());
 }
+
+TEST(SceneSerialization, GuidRoundTripsThroughSaveLoad)
+{
+	Scene source{"s"};
+	const Entity a = source.create("a");
+	const Entity b = source.create("b");
+	source.registry().emplace<EntityRef>(a, EntityRef{source.guid_of(b)});
+
+	const std::string text = to_json_string(source);
+	// Derived state must not be written: `resolved` is rebuilt on load.
+	EXPECT_EQ(text.find("resolved"), std::string::npos) << text;
+
+	Scene loaded{"s"};
+	ASSERT_TRUE(scene_from_json(loaded, text, nullptr));
+
+	const Entity la = find_by_name(loaded, "a");
+	const Entity lb = find_by_name(loaded, "b");
+	ASSERT_NE(la, NullEntity);
+	ASSERT_NE(lb, NullEntity);
+	ASSERT_TRUE(loaded.registry().all_of<EntityRef>(la));
+
+	// Same GUID, and it resolves to this scene's "b", not some other handle.
+	EXPECT_EQ(loaded.registry().get<EntityRef>(la).target.value,
+	          loaded.guid_of(lb).value);
+	EXPECT_EQ(loaded.registry().get<EntityRef>(la).resolved, lb);
+	EXPECT_TRUE(loaded.reference_errors().empty());
+}
+
+TEST(SceneSerialization, UnresolvedReferenceIsReportedNotFatal)
+{
+	Scene source{"s"};
+	const Entity a = source.create("a");
+	source.registry().emplace<EntityRef>(a, EntityRef{SceneGuid{0xDEADBEEF}});
+
+	Scene loaded{"s"};
+	ASSERT_TRUE(scene_from_json(loaded, to_json_string(source), nullptr));
+
+	// The reference is reported, and the scene is still usable.
+	ASSERT_EQ(loaded.reference_errors().size(), 1u);
+	EXPECT_NE(loaded.reference_errors()[0].find("a"), std::string::npos);
+	EXPECT_NE(find_by_name(loaded, "a"), NullEntity);
+	EXPECT_EQ(loaded.registry().get<EntityRef>(find_by_name(loaded, "a")).resolved,
+	          NullEntity);
+}
+
+TEST(SceneSerialization, LoadedGuidsDoNotCollideWithNewOnes)
+{
+	// Parsing calls Scene::create per entity, so the counter is already at 3
+	// when the document's own GUIDs are applied. Entity "b" claims GUID 3 --
+	// exactly the value a fresh create() would hand out next. Without the
+	// advance-past-loaded-GUIDs guard the new entity reuses 3 and two entities
+	// answer to the same identity. Entity "a" claims 7 to make the guard's
+	// max-scan, not just an off-by-one, the thing under test.
+	const std::string text = R"({
+	  "version": 2,
+	  "name": "loaded-scene",
+	  "entities": [
+	    {"name": "a", "components": {"SceneGuid": "7"}},
+	    {"name": "b", "components": {"SceneGuid": "3"}}
+	  ]
+	})";
+
+	Scene scene{"s"};
+	ASSERT_TRUE(scene_from_json(scene, text, nullptr));
+	const Entity a = find_by_name(scene, "a");
+	const Entity b = find_by_name(scene, "b");
+	ASSERT_NE(a, NullEntity);
+	ASSERT_NE(b, NullEntity);
+	EXPECT_EQ(scene.guid_of(a).value, 7u);
+	EXPECT_EQ(scene.guid_of(b).value, 3u);
+
+	const Entity fresh = scene.create("fresh");
+	EXPECT_NE(scene.guid_of(fresh).value, 0u);
+	EXPECT_NE(scene.guid_of(fresh).value, scene.guid_of(a).value);
+	EXPECT_NE(scene.guid_of(fresh).value, scene.guid_of(b).value)
+	    << "a new entity reused a loaded entity's GUID";
+	// The property that matters: every GUID maps back to its own entity.
+	EXPECT_EQ(scene.find_by_guid(scene.guid_of(a)), a);
+	EXPECT_EQ(scene.find_by_guid(scene.guid_of(b)), b);
+	EXPECT_EQ(scene.find_by_guid(scene.guid_of(fresh)), fresh);
+}
+
+TEST(SceneSerialization, ReferencesResolveFromDiskNotJustInMemory)
+{
+	// The path that matters: references must be resolved on the scene that was
+	// actually committed. Resolving before the move would leave the committed
+	// scene's `resolved` fields at their default.
+	const std::string text = R"({
+	  "version": 2,
+	  "name": "refs",
+	  "entities": [
+	    {"name": "a", "components": {"EntityRef": {"target": "2"}}},
+	    {"name": "b", "components": {"SceneGuid": "2"}}
+	  ]
+	})";
+
+	Scene scene{"s"};
+	ASSERT_TRUE(scene_from_json(scene, text, nullptr));
+	const Entity a = find_by_name(scene, "a");
+	const Entity b = find_by_name(scene, "b");
+	ASSERT_NE(a, NullEntity);
+	ASSERT_NE(b, NullEntity);
+
+	ASSERT_TRUE(scene.registry().all_of<EntityRef>(a));
+	EXPECT_EQ(scene.registry().get<EntityRef>(a).resolved, b)
+	    << "the committed scene's reference was never resolved";
+	EXPECT_TRUE(scene.reference_errors().empty());
+}
+
+TEST(SceneSerialization, LegacyDocumentGetsGuids)
+{
+	// A version-1 document has no SceneGuid at all; every entity must still be
+	// addressable afterwards.
+	Scene scene{"s"};
+	ASSERT_TRUE(scene_from_json(
+	        scene,
+	        R"({"version":1,"name":"old","entities":[{"name":"e"}]})",
+	        nullptr));
+
+	const Entity e = find_by_name(scene, "e");
+	ASSERT_NE(e, NullEntity);
+	EXPECT_NE(scene.guid_of(e).value, 0u);
+}

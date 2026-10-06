@@ -52,6 +52,29 @@ public:
 	/// First entity whose Name matches, or NullEntity.
 	Entity find(const std::string& name) const;
 
+	/// Persistent identity of \p entity, or a zero GUID when it has none.
+	SceneGuid guid_of(Entity entity) const;
+
+	/// First entity whose GUID matches \p guid, or NullEntity.
+	Entity find_by_guid(SceneGuid guid) const;
+
+	/// Assigns \p entity a fresh GUID. Called by create(); used on load to give
+	/// a document that predates identity a stable one.
+	SceneGuid assign_guid(Entity entity);
+
+	/// Resolves every EntityRef to a handle, regenerating GUIDs for any entity
+	/// that lacks one first. Unresolved references are appended to the scene's
+	/// reference error list. Safe to call repeatedly.
+	void resolve_refs();
+
+	/// References that failed to resolve on the last resolve_refs(), one line
+	/// each. Separate from last_mesh_error(): mesh and reference failures are
+	/// independent and both need reporting.
+	const std::vector<std::string>& reference_errors() const
+	{
+		return reference_errors_;
+	}
+
 	/// Advances systems (world-transform propagation, mesh resolution).
 	void update(float dt);
 
@@ -96,6 +119,10 @@ private:
 	glm::mat4 view_projection_{1.0f};
 	glm::vec3 camera_position_{0.0f};
 	std::string last_mesh_error_;
+	// Starts at 1: 0 is the "unassigned" sentinel, so the first GUID handed
+	// out must not be it.
+	uint64_t next_guid_{1};
+	std::vector<std::string> reference_errors_;
 };
 
 /// Recomputes Transform::world for every entity, depth-first from the roots.

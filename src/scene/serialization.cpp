@@ -53,6 +53,40 @@ void from_json(const nlohmann::json& j, Name& value)
 	}
 }
 
+// GUIDs are written as hex strings, not numbers: a JSON number is a double in
+// most readers, so a value above 2^53 would silently lose precision.
+void to_json(nlohmann::json& j, const SceneGuid& guid)
+{
+	std::ostringstream out;
+	out << std::hex << guid.value;
+	j = out.str();
+}
+
+void from_json(const nlohmann::json& j, SceneGuid& guid)
+{
+	if (j.is_string()) {
+		try {
+			guid.value = std::stoull(j.get<std::string>(), nullptr, 16);
+		} catch (const std::exception&) {
+			guid.value = 0; // unparseable: treat as unassigned, regenerate
+		}
+	}
+}
+
+// Only the target is written; \p resolved is derived and rebuilt on load.
+void to_json(nlohmann::json& j, const EntityRef& ref)
+{
+	j = nlohmann::json{{"target", ref.target}};
+}
+
+void from_json(const nlohmann::json& j, EntityRef& ref)
+{
+	if (j.is_object() && j.contains("target")) {
+		ref.target = j.at("target").get<SceneGuid>();
+	}
+	ref.resolved = NullEntity;
+}
+
 void to_json(nlohmann::json& j, const Transform& t)
 {
 	j = nlohmann::json{
@@ -317,6 +351,32 @@ const ComponentCodecs& default_component_codecs()
 		        },
 		        [](Registry& r, Entity e, const nlohmann::json& j) {
 			        r.emplace_or_replace<Material>(e, j.get<Material>());
+		        });
+		c.add(
+		        "SceneGuid",
+		        [](const Registry& r, Entity e, nlohmann::json& j) {
+			        const auto* value = r.try_get<SceneGuid>(e);
+			        if (!value || value->value == 0) {
+				        return false; // unassigned: omit, it is regenerated
+			        }
+			        j = *value;
+			        return true;
+		        },
+		        [](Registry& r, Entity e, const nlohmann::json& j) {
+			        r.emplace_or_replace<SceneGuid>(e, j.get<SceneGuid>());
+		        });
+		c.add(
+		        "EntityRef",
+		        [](const Registry& r, Entity e, nlohmann::json& j) {
+			        const auto* value = r.try_get<EntityRef>(e);
+			        if (!value) {
+				        return false;
+			        }
+			        j = *value;
+			        return true;
+		        },
+		        [](Registry& r, Entity e, const nlohmann::json& j) {
+			        r.emplace_or_replace<EntityRef>(e, j.get<EntityRef>());
 		        });
 		c.add(
 		        "Camera3D",
@@ -591,6 +651,9 @@ bool scene_from_json(Scene& scene, const std::string& text, std::string* error)
 	}
 
 	scene = std::move(temp);
+	// Rebuild derived identity state on the committed scene: GUIDs for any
+	// entity that predates identity, and every EntityRef's handle.
+	scene.resolve_refs();
 	return true;
 }
 
