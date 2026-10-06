@@ -14,7 +14,12 @@ namespace lotus {
 class Scene;
 
 /// Version of the on-disk scene format. Bump when the schema changes.
-inline constexpr int kSceneFormatVersion = 1;
+inline constexpr int kSceneFormatVersion = 2;
+
+/// Upgrades a parsed document from \p from to \p to in place. Returns false
+/// when no upgrade path exists. Called by scene_from_json before any component
+/// is read, so a document written by an older version loads unchanged.
+bool migrate_scene_json(nlohmann::json& root, int from, int to);
 
 /// Maps component type names to JSON writers/readers, so adding a new
 /// component needs one registration instead of another branch in a parser.

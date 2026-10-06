@@ -184,3 +184,19 @@ TEST(SceneManagerTest, ActivateCreatesWhenMissing)
 	EXPECT_EQ(manager.count(), 1u);
 	EXPECT_EQ(manager.active(), &scene);
 }
+
+TEST(SceneManagerTest, NamesAreSortedAndStable)
+{
+	SceneManager manager;
+	manager.create("zulu");
+	manager.create("alpha");
+	manager.create("mike");
+
+	// The header promises sorted order; unordered_map iteration is arbitrary,
+	// so without the sort this is whatever bucket order the map produced.
+	const std::vector<std::string> names = manager.names();
+	ASSERT_EQ(names.size(), 3u);
+	EXPECT_EQ(names[0], "alpha");
+	EXPECT_EQ(names[1], "mike");
+	EXPECT_EQ(names[2], "zulu");
+}

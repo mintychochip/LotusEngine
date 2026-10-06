@@ -185,6 +185,34 @@ void from_json(const nlohmann::json& j, Camera3D& c)
 	}
 }
 
+void to_json(nlohmann::json& j, const Lod& lod)
+{
+	nlohmann::json levels = nlohmann::json::array();
+	for (const LodLevel& level : lod.levels) {
+		levels.push_back(nlohmann::json{{"source", level.source},
+		                                {"max_distance", tidy(level.max_distance)}});
+	}
+	j = nlohmann::json{{"levels", std::move(levels)}};
+}
+
+void from_json(const nlohmann::json& j, Lod& lod)
+{
+	lod.levels.clear();
+	if (!j.contains("levels") || !j.at("levels").is_array()) {
+		return;
+	}
+	for (const auto& entry : j.at("levels")) {
+		LodLevel level;
+		if (entry.contains("source") && entry.at("source").is_string()) {
+			level.source = entry.at("source").get<std::string>();
+		}
+		if (entry.contains("max_distance") && entry.at("max_distance").is_number()) {
+			level.max_distance = entry.at("max_distance").get<float>();
+		}
+		lod.levels.push_back(std::move(level));
+	}
+}
+
 // --- codec registry --------------------------------------------------------
 
 void ComponentCodecs::add(std::string name, WriteFn write, ReadFn read)
@@ -302,6 +330,19 @@ const ComponentCodecs& default_component_codecs()
 		        },
 		        [](Registry& r, Entity e, const nlohmann::json& j) {
 			        r.emplace_or_replace<Camera3D>(e, j.get<Camera3D>());
+		        });
+		c.add(
+		        "Lod",
+		        [](const Registry& r, Entity e, nlohmann::json& j) {
+			        const auto* value = r.try_get<Lod>(e);
+			        if (!value) {
+				        return false;
+			        }
+			        j = *value;
+			        return true;
+		        },
+		        [](Registry& r, Entity e, const nlohmann::json& j) {
+			        r.emplace_or_replace<Lod>(e, j.get<Lod>());
 		        });
 		return c;
 	}();
@@ -455,6 +496,28 @@ Entity entity_from_json(Scene& scene, const nlohmann::json& j,
 
 } // namespace
 
+bool migrate_scene_json(nlohmann::json& root, int from, int to)
+{
+	if (from == to) {
+		return true;
+	}
+	if (from < 1 || from > to) {
+		return false; // nothing below version 1, and no downgrade path
+	}
+	// One step at a time, so a future schema change has a home here instead of
+	// turning every version bump into a breaking change.
+	for (int version = from; version < to; ++version) {
+		switch (version) {
+		case 1:
+			break; // 1 -> 2 changed no fields
+		default:
+			return false;
+		}
+	}
+	root["version"] = to;
+	return true;
+}
+
 std::string to_json_string(const Scene& scene)
 {
 	const ComponentCodecs& codecs = default_component_codecs();
@@ -495,8 +558,15 @@ bool scene_from_json(Scene& scene, const std::string& text, std::string* error)
 	}
 
 	const int version = root.value("version", 0);
-	if (version <= 0 || version > kSceneFormatVersion) {
+	if (version <= 0) {
+		return fail("scene document has no version");
+	}
+	if (version > kSceneFormatVersion) {
 		return fail("unsupported scene version: " + std::to_string(version));
+	}
+	if (!migrate_scene_json(root, version, kSceneFormatVersion)) {
+		return fail("cannot migrate scene from version " +
+		            std::to_string(version));
 	}
 
 	// Build into a temporary so a failure cannot corrupt a live scene.

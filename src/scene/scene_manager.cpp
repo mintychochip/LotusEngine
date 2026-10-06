@@ -1,5 +1,7 @@
 #include "lotus/scene/scene_manager.hpp"
 
+#include <algorithm>
+
 namespace lotus {
 
 Scene& SceneManager::create(const std::string& name)
@@ -66,6 +68,9 @@ std::vector<std::string> SceneManager::names() const
 		(void)scene;
 		out.push_back(name);
 	}
+	// The header promises sorted order; unordered_map iteration is arbitrary,
+	// so without this the caller sees a different order every run.
+	std::sort(out.begin(), out.end());
 	return out;
 }
 

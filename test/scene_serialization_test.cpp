@@ -152,6 +152,54 @@ TEST(SceneSerialization, UnsupportedVersionIsRejected)
 	EXPECT_NE(find_by_name(scene, "survivor"), NullEntity);
 }
 
+TEST(SceneSerialization, Version1DocumentMigratesToCurrent)
+{
+	// A document written under format version 1 must load under the current
+	// version through the migration hook rather than being rejected.
+	const std::string text = R"({
+	  "version": 1,
+	  "name": "old",
+	  "entities": [
+	    {"name": "cube", "components": {"Transform": {"position": [1.0, 2.0, 3.0]}}}
+	  ]
+	})";
+
+	Scene scene{"s"};
+	std::string error;
+	ASSERT_TRUE(scene_from_json(scene, text, &error)) << error;
+	EXPECT_EQ(scene.name(), "old");
+	EXPECT_NE(find_by_name(scene, "cube"), NullEntity);
+}
+
+TEST(SceneSerialization, MigrationHookRewritesTheVersionInPlace)
+{
+	// The hook is what makes the version bump non-breaking. Calling it directly
+	// pins that behaviour: without it a version-1 document is only accepted
+	// because the guard loosened, which would stop being true at the next bump.
+	nlohmann::json document = nlohmann::json::parse(
+	        R"({"version":1,"name":"old","entities":[]})");
+
+	ASSERT_TRUE(migrate_scene_json(document, 1, kSceneFormatVersion));
+	EXPECT_EQ(document.at("version").get<int>(), kSceneFormatVersion);
+
+	// No downgrade path, and nothing below version 1.
+	EXPECT_FALSE(migrate_scene_json(document, kSceneFormatVersion, 1));
+	EXPECT_FALSE(migrate_scene_json(document, 0, kSceneFormatVersion));
+
+	// Future versions have no upgrade path either.
+	EXPECT_FALSE(migrate_scene_json(document, kSceneFormatVersion, 99));
+}
+
+TEST(SceneSerialization, MissingVersionIsRejected)
+{
+	Scene scene{"live"};
+	scene.create("survivor");
+	std::string error;
+	EXPECT_FALSE(scene_from_json(scene, R"({"entities":[]})", &error));
+	EXPECT_FALSE(error.empty());
+	EXPECT_NE(find_by_name(scene, "survivor"), NullEntity);
+}
+
 TEST(SceneSerialization, BadShapeLeavesSceneUntouched)
 {
 	Scene scene{"live"};
