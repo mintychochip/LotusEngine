@@ -39,4 +39,18 @@ Prefab prefab_from_scene(const Scene& scene, Entity root);
 Entity instantiate(const Prefab& prefab, Scene& scene,
                    Entity parent = NullEntity);
 
+/// Merges a scene document into \p target instead of replacing it. Entities
+/// already in \p target survive with their GUIDs unchanged; every merged entity
+/// gets a fresh GUID and internal references are rewritten to the merged copies.
+/// Atomic: a malformed document merges nothing and leaves \p target untouched.
+///
+/// This is instantiation of a whole document, so it shares the clone-and-remap
+/// path with instantiate() rather than growing a second merge implementation.
+bool load_scene_additive(Scene& target, const std::string& text,
+                         std::string* error = nullptr);
+
+/// Reads \p path and merges it into \p target. See load_scene_additive.
+bool load_scene_additive_from_file(Scene& target, const std::string& path,
+                                   std::string* error = nullptr);
+
 } // namespace lotus

@@ -43,6 +43,16 @@ public:
 	bool save_scene_now(std::string* error = nullptr);
 	bool reload_scene_now(std::string* error = nullptr);
 
+	/// Directory scenes are read from and written to.
+	void set_scene_dir(const std::string& dir) { scene_dir_ = dir; }
+
+	/// Makes \p name active, loading it from the scene directory when it is not
+	/// already open. A switch between open scenes never re-reads from disk.
+	bool switch_scene(const std::string& name, std::string* error = nullptr);
+	/// Loads <scene dir>/<name>.json as a new scene and activates it.
+	bool load_scene_by_name(const std::string& name,
+	                        std::string* error = nullptr);
+
 	const std::string& scene_path() const { return scene_path_; }
 	const std::string& scene_status() const { return scene_status_; }
 
@@ -75,6 +85,8 @@ private:
 	void register_commands();
 	void handle_action(const std::string& action);
 	void poll_hot_reload();
+	std::string scene_file_for(const std::string& name) const;
+	void adopt_scene_path(const std::string& path);
 
 	SceneManager scenes_;
 	Editor editor_;
@@ -86,6 +98,7 @@ private:
 	std::string scene_status_;
 	std::string keybinds_path_{"keybinds.json"};
 	std::string prefab_dir_{"prefabs"};
+	std::string scene_dir_{"scenes"};
 	bool quit_requested_{false};
 };
 

@@ -105,6 +105,51 @@ void Application::register_commands()
 		                     return out.empty() ? std::string{"(no scenes)"} : out;
 	                     });
 	console_.add_command(
+	        "scene.switch", "scene.switch <name> - activate a scene, loading it "
+	                        "from <scene dir>/<name>.json if not already open",
+	        [this](const std::vector<std::string>& args) {
+		        if (args.empty()) {
+			        return std::string{"usage: scene.switch <name>"};
+		        }
+		        std::string error;
+		        if (!switch_scene(args[0], &error)) {
+			        return error;
+		        }
+		        return std::string{"active scene: "} + scenes_.active_name();
+	        });
+	console_.add_command(
+	        "scene.load", "scene.load <name> - load <scene dir>/<name>.json as a "
+	                      "new scene and activate it",
+	        [this](const std::vector<std::string>& args) {
+		        if (args.empty()) {
+			        return std::string{"usage: scene.load <name>"};
+		        }
+		        std::string error;
+		        if (!load_scene_by_name(args[0], &error)) {
+			        return error;
+		        }
+		        return std::string{"active scene: "} + scenes_.active_name();
+	        });
+	console_.add_command(
+	        "scene.merge", "scene.merge <path> - merge a scene file into the "
+	                       "active scene without replacing it",
+	        [this](const std::vector<std::string>& args) {
+		        Scene* scene = scenes_.active();
+		        if (scene == nullptr) {
+			        return std::string{"no active scene"};
+		        }
+		        if (args.empty()) {
+			        return std::string{"usage: scene.merge <path>"};
+		        }
+		        std::string error;
+		        if (!load_scene_additive_from_file(*scene, args[0], &error)) {
+			        return error;
+		        }
+		        return std::string{"merged "} + args[0] + " (" +
+		               std::to_string(scene->registry().view<Name>().size()) +
+		               " entities)";
+	        });
+	console_.add_command(
 	        "entity.list", "list entities in the active scene",
 	        [this](const std::vector<std::string>&) {
 		        Scene* scene = scenes_.active();
@@ -289,6 +334,57 @@ void Application::watch_scene(const std::string& path)
 	scene_path_ = path;
 	watcher_.watch("scene", path);
 	scene_status_ = "watching " + path;
+}
+
+std::string Application::scene_file_for(const std::string& name) const
+{
+	return scene_dir_ + "/" + name + ".json";
+}
+
+bool Application::load_scene_by_name(const std::string& name, std::string* error)
+{
+	const std::string path = scene_file_for(name);
+
+	// Parse into a scratch scene first. If the file is missing or malformed,
+	// nothing is created or destroyed, so a failed load can never take out a
+	// scene that was already open under this name.
+	Scene scratch{name};
+	std::string failure;
+	if (!load_scene(scratch, path, &failure)) {
+		if (error) {
+			*error = "cannot load " + path + ": " + failure;
+		}
+		return false;
+	}
+
+	// Committed: replacing an existing scene under this name is intended here.
+	Scene& scene = scenes_.create(name);
+	scene = std::move(scratch);
+	scene.resolve_refs();
+	scenes_.activate(name);
+	adopt_scene_path(path);
+	return true;
+}
+
+bool Application::switch_scene(const std::string& name, std::string* error)
+{
+	if (scenes_.get(name) != nullptr) {
+		// Already open: a switch is a pointer move, never a reload, so unsaved
+		// changes in the scene being left stay in memory.
+		scenes_.activate(name);
+		adopt_scene_path(scene_file_for(name));
+		return true;
+	}
+	return load_scene_by_name(name, error);
+}
+
+void Application::adopt_scene_path(const std::string& path)
+{
+	scene_path_ = path;
+	// Re-key the watcher, or hot reload keeps reloading the scene we left.
+	watcher_.watch("scene", path);
+	scene_status_ = "watching " + path;
+	editor_.reset_history();
 }
 
 bool Application::save_scene_now(std::string* error)

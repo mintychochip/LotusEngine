@@ -129,35 +129,29 @@ Prefab prefab_from_scene(const Scene& scene, Entity root)
 	return prefab;
 }
 
-Entity instantiate(const Prefab& prefab, Scene& scene, Entity parent)
+namespace {
+
+/// Clones every entity of \p staging into \p scene, assigning fresh GUIDs and
+/// rewriting internal references to the clones. Returns the first clone in
+/// staging's root order, or NullEntity when staging is empty.
+///
+/// This is the one seam `instantiate` and `load_scene_additive` share. A second
+/// copy of this logic would be the bug: identity and reference remapping are
+/// exactly the parts that are easy to get subtly wrong.
+Entity clone_all_into(const Scene& staging, Scene& scene)
 {
-	if (!prefab.document.contains("entities") ||
-	    !prefab.document.at("entities").is_array() ||
-	    prefab.document.at("entities").empty()) {
-		return NullEntity;
-	}
-
-	// Build the fragment in isolation first. scene_from_json is atomic and
-	// validates the whole document, so a malformed prefab returns here with the
-	// target scene untouched.
-	Scene staging{"prefab"};
-	std::string error;
-	if (!scene_from_json(staging, prefab.document.dump(), &error)) {
-		return NullEntity;
-	}
-
 	const ComponentCodecs& codecs = default_component_codecs();
 
 	// Pass 1: clone every entity, copying components generically through the
-	// codec so a prefab carrying any registered component survives. SceneGuid is
-	// deliberately skipped: the clone's identity must be new, or two instances
-	// of one prefab would share GUIDs. EntityRef targets are rewritten in pass 2.
+	// codec so anything registered survives. SceneGuid is deliberately skipped:
+	// the clone's identity must be new, or two instances would share GUIDs.
+	// EntityRef targets are rewritten in pass 2b.
 	std::unordered_map<Entity, Entity> clones;
 	std::unordered_map<uint64_t, SceneGuid> guid_map;
 	for (const Entity source : staging.registry().view<Name>()) {
 		const Entity clone =
 		        scene.create(staging.registry().get<Name>(source).value);
-		clones[source]                                   = clone;
+		clones[source] = clone;
 		guid_map[staging.guid_of(source).value] = scene.guid_of(clone);
 
 		for (const std::string& name : codecs.names()) {
@@ -178,13 +172,14 @@ Entity instantiate(const Prefab& prefab, Scene& scene, Entity parent)
 
 	// Pass 2a: hierarchy, so children are not left as siblings.
 	for (const Entity source : staging.registry().view<Hierarchy>()) {
-		const Entity source_parent = staging.registry().get<Hierarchy>(source).parent;
+		const Entity source_parent =
+		        staging.registry().get<Hierarchy>(source).parent;
 		if (source_parent != NullEntity) {
 			scene.set_parent(clones.at(source), clones.at(source_parent));
 		}
 	}
 
-	// Pass 2b: references, rewritten to this instance's GUIDs. A target that
+	// Pass 2b: references, rewritten to the clones' GUIDs. A target that
 	// pointed outside the fragment is left alone; resolve_refs reports it.
 	for (const Entity source : staging.registry().view<EntityRef>()) {
 		const auto* source_ref = staging.registry().try_get<EntityRef>(source);
@@ -193,15 +188,12 @@ Entity instantiate(const Prefab& prefab, Scene& scene, Entity parent)
 		}
 		EntityRef clone_ref{};
 		const auto mapped = guid_map.find(source_ref->target.value);
-		if (mapped != guid_map.end()) {
-			clone_ref.target = mapped->second;
-		} else {
-			clone_ref.target = source_ref->target;
-		}
-		scene.registry().emplace_or_replace<EntityRef>(clones.at(source), clone_ref);
+		clone_ref.target = mapped != guid_map.end() ? mapped->second
+		                                            : source_ref->target;
+		scene.registry().emplace_or_replace<EntityRef>(clones.at(source),
+		                                              clone_ref);
 	}
 
-	// The fragment's first root, in the same order roots() reports.
 	Entity first = NullEntity;
 	for (const Entity source : staging.roots()) {
 		const auto it = clones.find(source);
@@ -210,12 +202,64 @@ Entity instantiate(const Prefab& prefab, Scene& scene, Entity parent)
 			break;
 		}
 	}
+	return first;
+}
+
+} // namespace
+
+Entity instantiate(const Prefab& prefab, Scene& scene, Entity parent)
+{
+	if (!prefab.document.contains("entities") ||
+	    !prefab.document.at("entities").is_array() ||
+	    prefab.document.at("entities").empty()) {
+		return NullEntity;
+	}
+
+	// Build the fragment in isolation first. scene_from_json is atomic and
+	// validates the whole document, so a malformed prefab returns here with the
+	// target scene untouched.
+	Scene staging{"prefab"};
+	std::string error;
+	if (!scene_from_json(staging, prefab.document.dump(), &error)) {
+		return NullEntity;
+	}
+
+	const Entity first = clone_all_into(staging, scene);
 	if (parent != NullEntity && first != NullEntity) {
 		scene.set_parent(first, parent);
 	}
-
 	scene.resolve_refs();
 	return first;
+}
+
+bool load_scene_additive(Scene& target, const std::string& text,
+                         std::string* error)
+{
+	// Parse and validate the whole document before touching the target, so a
+	// malformed file merges nothing. Same atomicity contract as scene_from_json,
+	// with merge instead of replace.
+	Scene staging{"merge"};
+	if (!scene_from_json(staging, text, error)) {
+		return false;
+	}
+	clone_all_into(staging, target);
+	target.resolve_refs();
+	return true;
+}
+
+bool load_scene_additive_from_file(Scene& target, const std::string& path,
+                                   std::string* error)
+{
+	std::ifstream in(path, std::ios::binary);
+	if (!in) {
+		if (error) {
+			*error = "cannot open scene: " + path;
+		}
+		return false;
+	}
+	std::ostringstream buffer;
+	buffer << in.rdbuf();
+	return load_scene_additive(target, buffer.str(), error);
 }
 
 } // namespace lotus
