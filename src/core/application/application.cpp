@@ -585,6 +585,17 @@ void Application::run(int width, int height, const std::string& title)
 			const float aspect =
 			        pixel_h > 0 ? static_cast<float>(pixel_w) / pixel_h : 1.0f;
 
+			// A scene that carries a settings block drives the renderer's
+			// lighting; one that does not leaves whatever was set globally.
+			// Applied every frame so a scene switch takes effect immediately.
+			if (Scene* active = scenes_.active();
+			    active != nullptr && active->has_settings()) {
+				const SceneSettings& s = active->settings();
+				gpu.lighting().direction = s.light_direction;
+				gpu.lighting().color     = s.light_color;
+				gpu.lighting().intensity = s.light_intensity;
+				gpu.lighting().ambient   = s.ambient;
+			}
 			gpu.begin_frame(window.handle(), 0.05f, 0.05f, 0.08f);
 			if (gpu.has_frame()) {
 				if (Scene* scene = scenes_.active()) {

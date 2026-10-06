@@ -242,6 +242,9 @@ bool load_scene_additive(Scene& target, const std::string& text,
 	if (!scene_from_json(staging, text, error)) {
 		return false;
 	}
+	// Tag before cloning so the merged entities carry the origin from the
+	// start, and a later destroy_by_origin can drop exactly this set.
+	staging.tag_origin(staging.name());
 	clone_all_into(staging, target);
 	target.resolve_refs();
 	return true;

@@ -151,24 +151,44 @@ void from_json(const nlohmann::json& j, Camera2D& c)
 void to_json(nlohmann::json& j, const Script& s)
 {
 	j = nlohmann::json{{"path", s.path}};
+	if (!s.id.empty()) {
+		j["id"] = s.id;
+	}
 }
 
 void from_json(const nlohmann::json& j, Script& s)
 {
-	if (j.is_object() && j.contains("path") && j.at("path").is_string()) {
+	if (!j.is_object()) {
+		return;
+	}
+	if (j.contains("path") && j.at("path").is_string()) {
 		s.path = j.at("path").get<std::string>();
+	}
+	// v3: optional stable asset key. Absent in a migrated v2 document, which
+	// means "resolve by path" -- exactly the pre-v3 behaviour.
+	if (j.contains("id") && j.at("id").is_string()) {
+		s.id = j.at("id").get<std::string>();
 	}
 }
 
 void to_json(nlohmann::json& j, const MeshSource& m)
 {
 	j = nlohmann::json{{"path", m.path}};
+	if (!m.id.empty()) {
+		j["id"] = m.id;
+	}
 }
 
 void from_json(const nlohmann::json& j, MeshSource& m)
 {
-	if (j.is_object() && j.contains("path") && j.at("path").is_string()) {
+	if (!j.is_object()) {
+		return;
+	}
+	if (j.contains("path") && j.at("path").is_string()) {
 		m.path = j.at("path").get<std::string>();
+	}
+	if (j.contains("id") && j.at("id").is_string()) {
+		m.id = j.at("id").get<std::string>();
 	}
 }
 
@@ -383,6 +403,24 @@ ComponentCodecs& mutable_component_codecs()
 			        r.emplace_or_replace<EntityRef>(e, j.get<EntityRef>());
 		        });
 		c.add(
+		        "SceneOrigin",
+		        [](const Registry& r, Entity e, nlohmann::json& j) {
+			        const auto* value = r.try_get<SceneOrigin>(e);
+			        if (!value || value->scene.empty()) {
+				        return false; // unassigned: omit
+			        }
+			        j = nlohmann::json{{"scene", value->scene}};
+			        return true;
+		        },
+		        [](Registry& r, Entity e, const nlohmann::json& j) {
+			        SceneOrigin origin;
+			        if (j.is_object() && j.contains("scene") &&
+			            j.at("scene").is_string()) {
+				        origin.scene = j.at("scene").get<std::string>();
+			        }
+			        r.emplace_or_replace<SceneOrigin>(e, std::move(origin));
+		        });
+		c.add(
 		        "Camera3D",
 		        [](const Registry& r, Entity e, nlohmann::json& j) {
 			        const auto* value = r.try_get<Camera3D>(e);
@@ -540,9 +578,6 @@ Entity entity_from_json(Scene& scene, const nlohmann::json& j,
 
 	if (j.contains("components")) {
 		const auto& components = j.at("components");
-		if (!components.is_object()) {
-			throw std::runtime_error("'components' must be an object");
-		}
 		for (const auto& [key, value] : components.items()) {
 			const auto* read = codecs.reader(key);
 			if (!read) {
@@ -584,10 +619,15 @@ bool migrate_scene_json(nlohmann::json& root, int from, int to)
 	}
 	// One step at a time, so a future schema change has a home here instead of
 	// turning every version bump into a breaking change.
+	// 2 -> 3: MeshSource and Script gain an optional `id` (asset indirection),
+	// and a document may carry a top-level `settings` block. Both are additive:
+	// an absent `id` means "use the path", and an absent `settings` means "use
+	// the renderer's globals". So there is nothing to rewrite.
 	for (int version = from; version < to; ++version) {
 		switch (version) {
-		case 1:
-			break; // 1 -> 2 changed no fields
+		case 1: // 1 -> 2 changed no fields
+		case 2: // 2 -> 3 is additive
+			break;
 		default:
 			return false;
 		}
@@ -603,6 +643,22 @@ std::string to_json_string(const Scene& scene)
 	out << "{\n";
 	out << "  \"version\": " << kSceneFormatVersion << ",\n";
 	out << "  \"name\": " << nlohmann::json(scene.name()).dump() << ",\n";
+	// Written only when the scene actually carries one, so a document without
+	// settings leaves the renderer's globals in place on load.
+	if (scene.has_settings()) {
+		const SceneSettings& s = scene.settings();
+		out << "  \"settings\": {"
+		    << "\"light_direction\": "
+		    << dump_compact(arr3(s.light_direction.x, s.light_direction.y,
+		                         s.light_direction.z))
+		    << ", \"light_color\": "
+		    << dump_compact(
+		               arr3(s.light_color.x, s.light_color.y, s.light_color.z))
+		    << ", \"light_intensity\": " << tidy(s.light_intensity)
+		    << ", \"ambient\": "
+		    << dump_compact(arr3(s.ambient.x, s.ambient.y, s.ambient.z))
+		    << "},\n";
+	}
 	out << "  \"entities\": [\n";
 	bool first = true;
 	for (const Entity root : scene.roots()) {
@@ -647,6 +703,30 @@ bool scene_from_json(Scene& scene, const std::string& text, std::string* error)
 		            std::to_string(version));
 	}
 
+	// A scene that carries a settings block replaces the renderer's globals;
+	// one that does not leaves them alone, which is what a pre-v3 document
+	// relies on.
+	SceneSettings settings;
+	bool has_settings = false;
+	if (root.contains("settings") && root.at("settings").is_object()) {
+		const auto& s = root.at("settings");
+		const auto read3 = [&s](const char* key, glm::vec3& out) {
+			if (!s.contains(key) || !s.at(key).is_array() ||
+			    s.at(key).size() != 3) {
+				return;
+			}
+			out = {s.at(key)[0].get<float>(), s.at(key)[1].get<float>(),
+			       s.at(key)[2].get<float>()};
+		};
+		read3("light_direction", settings.light_direction);
+		read3("light_color", settings.light_color);
+		read3("ambient", settings.ambient);
+		if (s.contains("light_intensity") && s.at("light_intensity").is_number()) {
+			settings.light_intensity = s.at("light_intensity").get<float>();
+		}
+		has_settings = true;
+	}
+
 	// Build into a temporary so a failure cannot corrupt a live scene.
 	Scene temp{root.value("name", scene.name())};
 	try {
@@ -669,6 +749,9 @@ bool scene_from_json(Scene& scene, const std::string& text, std::string* error)
 	}
 
 	scene = std::move(temp);
+	if (has_settings) {
+		scene.set_settings(settings);
+	}
 	// Rebuild derived identity state on the committed scene: GUIDs for any
 	// entity that predates identity, and every EntityRef's handle.
 	scene.resolve_refs();

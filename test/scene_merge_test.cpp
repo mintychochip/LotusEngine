@@ -195,3 +195,69 @@ TEST(SceneMergeTest, FileRoundTripsThroughAdditiveLoad)
 
 	std::remove(path.c_str());
 }
+
+TEST(SceneMergeTest, MergedEntitiesAreTaggedWithTheirOrigin)
+{
+	Scene target{"host"};
+	target.create("native");
+
+	ASSERT_TRUE(load_scene_additive(target, kTwoEntityScene, nullptr));
+
+	// Merged entities carry the document's name; the host's own entity is left
+	// untagged, so unloading the merge cannot take it out.
+	const Entity alpha = find_by_name(target, "alpha");
+	ASSERT_NE(alpha, NullEntity);
+	ASSERT_TRUE(target.registry().all_of<SceneOrigin>(alpha));
+	EXPECT_EQ(target.registry().get<SceneOrigin>(alpha).scene, "incoming");
+
+	const Entity native = find_by_name(target, "native");
+	ASSERT_NE(native, NullEntity);
+	EXPECT_FALSE(target.registry().all_of<SceneOrigin>(native));
+}
+
+TEST(SceneMergeTest, DestroyByOriginUnloadsOnlyThatSet)
+{
+	Scene target{"host"};
+	const Entity native = target.create("native");
+
+	ASSERT_TRUE(load_scene_additive(target, kTwoEntityScene, nullptr));
+	ASSERT_EQ(find_by_name(target, "alpha"), find_by_name(target, "alpha"));
+	ASSERT_NE(find_by_name(target, "alpha"), NullEntity);
+
+	const std::size_t removed = target.destroy_by_origin("incoming");
+	EXPECT_EQ(removed, 2u);
+
+	// The merged set is gone; the host's own entity survived.
+	EXPECT_EQ(find_by_name(target, "alpha"), NullEntity);
+	EXPECT_EQ(find_by_name(target, "beta"), NullEntity);
+	EXPECT_EQ(find_by_name(target, "native"), native);
+	EXPECT_EQ(target.registry().view<Name>().size(), 1u);
+}
+
+TEST(SceneMergeTest, DestroyByOriginReportsReferencesLeftDangling)
+{
+	// alpha <- beta is internal to the merged set, so unloading it leaves no
+	// dangling reference. A reference from the host INTO the merged set does
+	// dangle, and must be reported rather than left as a stale handle.
+	Scene target{"host"};
+	ASSERT_TRUE(load_scene_additive(target, kTwoEntityScene, nullptr));
+
+	const Entity watcher = target.create("watcher");
+	target.registry().emplace<EntityRef>(
+	        watcher, EntityRef{target.guid_of(find_by_name(target, "alpha"))});
+	target.resolve_refs();
+	ASSERT_TRUE(target.reference_errors().empty());
+
+	target.destroy_by_origin("incoming");
+
+	ASSERT_EQ(target.reference_errors().size(), 1u);
+	EXPECT_EQ(target.registry().get<EntityRef>(watcher).resolved, NullEntity);
+}
+
+TEST(SceneMergeTest, EmptyOriginNeverBulkDestroys)
+{
+	Scene target{"host"};
+	target.create("native");
+	EXPECT_EQ(target.destroy_by_origin(""), 0u);
+	EXPECT_NE(find_by_name(target, "native"), NullEntity);
+}

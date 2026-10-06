@@ -431,3 +431,75 @@ TEST(SceneSerialization, RegisteredComponentRoundTrips)
 	EXPECT_NE(default_component_codecs().reader("Transform"), nullptr);
 	EXPECT_NE(default_component_codecs().reader("SceneGuid"), nullptr);
 }
+
+TEST(SceneSerialization, Version2DocumentMigratesToCurrent)
+{
+	// A v2 document has no asset ids and no settings block. It must load under
+	// v3 with the pre-v3 meaning: resolve by path, keep the globals.
+	const std::string text = R"({
+	  "version": 2,
+	  "name": "old",
+	  "entities": [
+	    {"name": "mesh", "components": {
+	      "MeshSource": {"path": "builtin:cube"}}}
+	  ]
+	})";
+
+	Scene scene{"s"};
+	std::string error;
+	ASSERT_TRUE(scene_from_json(scene, text, &error)) << error;
+	const Entity e = find_by_name(scene, "mesh");
+	ASSERT_NE(e, NullEntity);
+	ASSERT_TRUE(scene.registry().all_of<MeshSource>(e));
+	EXPECT_EQ(scene.registry().get<MeshSource>(e).path, "builtin:cube");
+	EXPECT_TRUE(scene.registry().get<MeshSource>(e).id.empty());
+	EXPECT_FALSE(scene.has_settings());
+}
+
+TEST(SceneSerialization, AssetIdRoundTripsAndIsOptional)
+{
+	Scene source{"s"};
+	const Entity a = source.create("keyed");
+	source.registry().emplace<MeshSource>(a, MeshSource{"assets/moved.glb", "hero"});
+	const Entity b = source.create("bare");
+	source.registry().emplace<MeshSource>(b, MeshSource{"builtin:cube"});
+
+	const std::string text = to_json_string(source);
+	// The id is written when set and omitted when not, so a v2-shaped document
+	// stays v2-shaped apart from the version number.
+	EXPECT_NE(text.find("\"id\""), std::string::npos) << text;
+
+	Scene loaded{"s"};
+	ASSERT_TRUE(scene_from_json(loaded, text, nullptr));
+	EXPECT_EQ(loaded.registry().get<MeshSource>(find_by_name(loaded, "keyed")).id,
+	          "hero");
+	EXPECT_TRUE(loaded.registry().get<MeshSource>(find_by_name(loaded, "bare"))
+	                    .id.empty());
+}
+
+TEST(SceneSerialization, SceneSettingsRoundTripAndAreOptional)
+{
+	Scene with{"s"};
+	with.set_settings(SceneSettings{{0.0f, -1.0f, 0.0f},
+	                                {1.0f, 0.5f, 0.25f},
+	                                2.5f,
+	                                {0.4f, 0.3f, 0.2f}});
+
+	const std::string text = to_json_string(with);
+	EXPECT_NE(text.find("\"settings\""), std::string::npos) << text;
+
+	Scene loaded{"s"};
+	ASSERT_TRUE(scene_from_json(loaded, text, nullptr));
+	ASSERT_TRUE(loaded.has_settings());
+	EXPECT_FLOAT_EQ(loaded.settings().light_intensity, 2.5f);
+	EXPECT_FLOAT_EQ(loaded.settings().light_direction.y, -1.0f);
+	EXPECT_FLOAT_EQ(loaded.settings().ambient.z, 0.2f);
+
+	// A document without settings must not claim to have them, or loading it
+	// would silently override the renderer's globals.
+	Scene plain{"s"};
+	ASSERT_TRUE(scene_from_json(
+	        plain, R"({"version":3,"name":"p","entities":[]})", nullptr));
+	EXPECT_FALSE(plain.has_settings());
+	EXPECT_EQ(to_json_string(plain).find("\"settings\""), std::string::npos);
+}

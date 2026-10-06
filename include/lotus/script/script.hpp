@@ -19,6 +19,10 @@ namespace lotus {
 ///   lotus.get_name(e)               -> string
 struct Script {
 	std::string path;
+	/// Optional stable asset key, resolved through the AssetRegistry so a moved
+	/// script does not require editing every scene that referenced it. Empty
+	/// means "load path directly".
+	std::string id;
 };
 
 } // namespace lotus

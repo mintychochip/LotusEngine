@@ -67,6 +67,15 @@ public:
 	/// reference error list. Safe to call repeatedly.
 	void resolve_refs();
 
+	/// Destroys every entity whose SceneOrigin matches \p origin. Returns the
+	/// number destroyed. This is the unload half of streaming: merge a region,
+	/// then drop it by origin when it goes out of range.
+	std::size_t destroy_by_origin(const std::string& origin);
+
+	/// Tags every entity that has no origin yet with \p origin, so a loaded or
+	/// merged document can be unloaded together later.
+	void tag_origin(const std::string& origin);
+
 	/// References that failed to resolve on the last resolve_refs(), one line
 	/// each. Separate from last_mesh_error(): mesh and reference failures are
 	/// independent and both need reporting.
@@ -106,6 +115,22 @@ public:
 	/// Last mesh-resolution error (empty when the last resolve succeeded).
 	const std::string& last_mesh_error() const { return last_mesh_error_; }
 
+	/// Per-scene environment. has_settings() is false for a scene that never
+	/// specified one, which means "leave the renderer's globals alone".
+	const SceneSettings& settings() const { return settings_; }
+	SceneSettings& settings()
+	{
+		has_settings_ = true;
+		return settings_;
+	}
+	bool has_settings() const { return has_settings_; }
+	/// Replaces the settings block wholesale, e.g. when loading a document.
+	void set_settings(const SceneSettings& settings)
+	{
+		settings_     = settings;
+		has_settings_ = true;
+	}
+
 private:
 	void sync_meshes();
 	void sync_lod();
@@ -124,6 +149,8 @@ private:
 	// out must not be it.
 	uint64_t next_guid_{1};
 	std::vector<std::string> reference_errors_;
+	SceneSettings settings_;
+	bool has_settings_{false};
 };
 
 /// Recomputes Transform::world for every entity, depth-first from the roots.

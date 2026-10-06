@@ -101,8 +101,14 @@ struct Mesh {
 
 /// Serialized reference to mesh geometry: "builtin:cube", "builtin:sphere",
 /// "builtin:sphere:<segments>:<rings>", or a path to a .glb file.
+///
+/// \p id is an optional stable asset key. When set, an AssetRegistry can
+/// re-point it at a new path without editing any scene, so moving an asset does
+/// not require touching every document that referenced it. Empty means "use
+/// \p path directly", which is what a pre-v3 document migrates to.
 struct MeshSource {
 	std::string path;
+	std::string id;
 };
 
 /// One level of detail: geometry source plus the furthest distance at which it
@@ -152,6 +158,22 @@ struct Camera3D {
 		        near_plane, far_plane);
 		return projection * view();
 	}
+};
+
+/// Which scene file an entity came from. Assigned when a document is loaded or
+/// merged, so merged entity sets can be told apart and unloaded by origin.
+/// Empty for entities created directly.
+struct SceneOrigin {
+	std::string scene;
+};
+
+/// Per-scene environment. Replaces the renderer's global lighting when a scene
+/// specifies one; a scene without settings leaves the globals alone.
+struct SceneSettings {
+	glm::vec3 light_direction{0.5f, 0.9f, 0.4f};
+	glm::vec3 light_color{1.0f, 1.0f, 1.0f};
+	float light_intensity{1.0f};
+	glm::vec3 ambient{0.12f, 0.13f, 0.17f};
 };
 
 } // namespace lotus

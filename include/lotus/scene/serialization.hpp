@@ -14,7 +14,7 @@ namespace lotus {
 class Scene;
 
 /// Version of the on-disk scene format. Bump when the schema changes.
-inline constexpr int kSceneFormatVersion = 2;
+inline constexpr int kSceneFormatVersion = 3;
 
 /// Upgrades a parsed document from \p from to \p to in place. Returns false
 /// when no upgrade path exists. Called by scene_from_json before any component

@@ -197,3 +197,61 @@ TEST(PrefabTest, MalformedPrefabLeavesTheSceneUntouched)
 	EXPECT_EQ(scene.registry().view<Name>().size(), before);
 	EXPECT_EQ(find_by_name(scene, "survivor"), survivor);
 }
+
+TEST(PrefabTest, InternalReferenceToANonExistentGuidIsReported)
+{
+	// Pins the semantics: an EntityRef whose target is not in the fragment and
+	// not in the host scene is kept as-is and reported, never silently dropped.
+	Prefab prefab;
+	ASSERT_TRUE(prefab_from_json(
+	        prefab,
+	        R"({"version":2,"name":"dangling","entities":[
+	             {"name":"solo","components":{
+	               "SceneGuid":"1","EntityRef":{"target":"ffff"}}}]})",
+	        nullptr));
+
+	Scene scene{"level"};
+	const Entity solo = instantiate(prefab, scene);
+	ASSERT_NE(solo, NullEntity);
+	ASSERT_TRUE(scene.registry().all_of<EntityRef>(solo));
+	EXPECT_EQ(scene.registry().get<EntityRef>(solo).resolved, NullEntity);
+	ASSERT_EQ(scene.reference_errors().size(), 1u);
+}
+
+TEST(PrefabTest, NestedPrefabContentInstantiatesAsOneTree)
+{
+	// "Nesting" today means a prefab whose document contains a subtree that was
+	// itself captured from another prefab: it is flattened into one document at
+	// capture time, so instantiation is a single clone. Pinned so the shape
+	// cannot change silently.
+	Scene source{"level"};
+	const Entity inner = source.create("inner");
+	const Entity leaf  = source.create("leaf");
+	source.set_parent(leaf, inner);
+	source.registry().emplace<EntityRef>(leaf, EntityRef{source.guid_of(inner)});
+
+	// Capture the inner subtree, then wrap it under a new outer root.
+	const Prefab inner_prefab = prefab_from_scene(source, inner);
+	Scene host{"host"};
+	const Entity outer = host.create("outer");
+	ASSERT_NE(instantiate(inner_prefab, host, outer), NullEntity);
+
+	// Re-capture the whole thing: outer -> inner -> leaf, reference intact.
+	const Prefab outer_prefab = prefab_from_scene(host, outer);
+	Scene fresh{"fresh"};
+	const Entity clone = instantiate(outer_prefab, fresh);
+	ASSERT_NE(clone, NullEntity);
+
+	const Entity c_outer = find_by_name(fresh, "outer");
+	const Entity c_inner = find_by_name(fresh, "inner");
+	const Entity c_leaf  = find_by_name(fresh, "leaf");
+	ASSERT_NE(c_outer, NullEntity);
+	ASSERT_NE(c_inner, NullEntity);
+	ASSERT_NE(c_leaf, NullEntity);
+
+	// The whole chain survived two capture/instantiate round trips.
+	EXPECT_EQ(fresh.registry().get<Hierarchy>(c_inner).parent, c_outer);
+	EXPECT_EQ(fresh.registry().get<Hierarchy>(c_leaf).parent, c_inner);
+	EXPECT_EQ(fresh.registry().get<EntityRef>(c_leaf).resolved, c_inner);
+	EXPECT_TRUE(fresh.reference_errors().empty());
+}

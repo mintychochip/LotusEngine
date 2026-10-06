@@ -164,6 +164,40 @@ void Scene::resolve_refs()
 	}
 }
 
+void Scene::tag_origin(const std::string& origin)
+{
+	// Only untagged entities: a merge into a scene that already holds tagged
+	// entities must not relabel the ones that were already there.
+	for (const Entity entity : registry_.view<Name>()) {
+		if (!registry_.all_of<SceneOrigin>(entity) ||
+		    registry_.get<SceneOrigin>(entity).scene.empty()) {
+			registry_.emplace_or_replace<SceneOrigin>(entity,
+			                                         SceneOrigin{origin});
+		}
+	}
+}
+
+std::size_t Scene::destroy_by_origin(const std::string& origin)
+{
+	if (origin.empty()) {
+		return 0; // an empty origin means "untagged": never bulk-destroy those
+	}
+	// Collect first: destroying mutates the view.
+	std::vector<Entity> doomed;
+	for (const Entity entity : registry_.view<SceneOrigin>()) {
+		if (registry_.get<SceneOrigin>(entity).scene == origin) {
+			doomed.push_back(entity);
+		}
+	}
+	for (const Entity entity : doomed) {
+		destroy(entity);
+	}
+	// References that pointed into the unloaded set are now dangling; report
+	// them rather than leaving stale handles behind.
+	resolve_refs();
+	return doomed.size();
+}
+
 void Scene::detach(Entity child)
 {
 	if (child == NullEntity || !registry_.valid(child) ||
