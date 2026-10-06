@@ -255,3 +255,72 @@ TEST(PrefabTest, NestedPrefabContentInstantiatesAsOneTree)
 	EXPECT_EQ(fresh.registry().get<EntityRef>(c_leaf).resolved, c_inner);
 	EXPECT_TRUE(fresh.reference_errors().empty());
 }
+
+TEST(PrefabTest, TransformOverrideAppliesToTheRootOnly)
+{
+	Prefab prefab;
+	ASSERT_TRUE(prefab_from_json(prefab, kTwoEntityPrefab, nullptr));
+
+	PrefabOverrides overrides;
+	overrides.has_transform          = true;
+	overrides.transform.position     = {7.0f, 8.0f, 9.0f};
+	overrides.transform.scale        = {2.0f, 2.0f, 2.0f};
+
+	Scene scene{"level"};
+	const Entity root = instantiate(prefab, scene, overrides);
+	ASSERT_NE(root, NullEntity);
+
+	EXPECT_FLOAT_EQ(scene.registry().get<Transform>(root).position.x, 7.0f);
+	EXPECT_FLOAT_EQ(scene.registry().get<Transform>(root).scale.y, 2.0f);
+
+	// The child keeps the fragment's own transform: an override is not a
+	// whole-instance transform, it is the root's.
+	const Entity head = find_by_name(scene, "head");
+	ASSERT_NE(head, NullEntity);
+	EXPECT_FLOAT_EQ(scene.registry().get<Transform>(head).position.y, 1.0f);
+}
+
+TEST(PrefabTest, ComponentOverrideReplacesAndAdds)
+{
+	Prefab prefab;
+	ASSERT_TRUE(prefab_from_json(prefab, kTwoEntityPrefab, nullptr));
+
+	PrefabOverrides overrides;
+	// Replace a component the fragment already carries.
+	overrides.components["Material"] =
+	        nlohmann::json{{"base_color", {0.0, 1.0, 0.0}}};
+	// Add one it does not, which must work through the same codec path.
+	overrides.components["Sprite"] =
+	        nlohmann::json{{"color", {0.5, 0.5, 0.5}}, {"size", {1.0, 2.0}}};
+
+	Scene scene{"level"};
+	const Entity root = instantiate(prefab, scene, overrides);
+	ASSERT_NE(root, NullEntity);
+
+	ASSERT_TRUE(scene.registry().all_of<Material>(root));
+	EXPECT_FLOAT_EQ(scene.registry().get<Material>(root).base_color.y, 1.0f);
+	ASSERT_TRUE(scene.registry().all_of<Sprite>(root));
+	EXPECT_FLOAT_EQ(scene.registry().get<Sprite>(root).size.y, 2.0f);
+
+	// The child was not touched by a root-scoped override.
+	const Entity head = find_by_name(scene, "head");
+	ASSERT_NE(head, NullEntity);
+	EXPECT_FALSE(scene.registry().all_of<Sprite>(head));
+}
+
+TEST(PrefabTest, UnregisteredOverrideNameIsIgnoredNotFatal)
+{
+	Prefab prefab;
+	ASSERT_TRUE(prefab_from_json(prefab, kTwoEntityPrefab, nullptr));
+
+	PrefabOverrides overrides;
+	overrides.components["NoSuchComponent"] = nlohmann::json{{"x", 1}};
+
+	Scene scene{"level"};
+	const Entity root = instantiate(prefab, scene, overrides);
+	EXPECT_NE(root, NullEntity);
+	// An unknown name cannot be consumed by any reader, so it is skipped
+	// rather than fatal, and the rest of the instance is intact.
+	EXPECT_TRUE(scene.reference_errors().empty());
+	EXPECT_TRUE(scene.registry().all_of<Material>(root));
+}

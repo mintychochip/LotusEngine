@@ -207,6 +207,42 @@ Entity clone_all_into(const Scene& staging, Scene& scene)
 
 } // namespace
 
+namespace {
+
+/// Applies \p overrides to the root clone. Runs after the fragment is copied,
+/// so an override always wins over whatever the fragment specified.
+void apply_overrides(Scene& scene, Entity root, const PrefabOverrides& overrides)
+{
+	if (root == NullEntity) {
+		return;
+	}
+	if (overrides.has_transform) {
+		// Only the local TRS: world is derived by the propagation pass.
+		Transform& transform = scene.registry().get<Transform>(root);
+		const glm::mat4 world = transform.world;
+		transform             = overrides.transform;
+		transform.world       = world;
+	}
+	const ComponentCodecs& codecs = default_component_codecs();
+	for (const auto& [name, value] : overrides.components) {
+		const auto* read = codecs.reader(name);
+		if (read == nullptr) {
+			continue; // unregistered name: nothing can consume it
+		}
+		(*read)(scene.registry(), root, value);
+	}
+}
+
+} // namespace
+
+Entity instantiate(const Prefab& prefab, Scene& scene,
+                   const PrefabOverrides& overrides, Entity parent)
+{
+	const Entity root = instantiate(prefab, scene, parent);
+	apply_overrides(scene, root, overrides);
+	return root;
+}
+
 Entity instantiate(const Prefab& prefab, Scene& scene, Entity parent)
 {
 	if (!prefab.document.contains("entities") ||

@@ -1,10 +1,11 @@
 #pragma once
 
+#include <map>
 #include <string>
-
 #include <nlohmann/json.hpp>
 
 #include "lotus/ecs.hpp"
+#include "lotus/scene/components.hpp"
 
 namespace lotus {
 
@@ -37,6 +38,26 @@ Prefab prefab_from_scene(const Scene& scene, Entity root);
 /// Returns the clone of the fragment's first root, or NullEntity if the prefab
 /// is empty. Atomic: a malformed fragment leaves \p scene untouched.
 Entity instantiate(const Prefab& prefab, Scene& scene,
+                   Entity parent = NullEntity);
+
+/// What an instantiation may change about the fragment. Deliberately narrow:
+/// an override names a component and supplies a JSON document in the same
+/// codec format, so no per-component override type is needed and any registered
+/// component can be overridden.
+struct PrefabOverrides {
+	/// Replaces the root clone's local transform.
+	Transform transform{};
+	bool has_transform{false};
+
+	/// Component name -> replacement document, applied to the root clone after
+	/// the fragment is copied. A name the fragment does not carry is added, so
+	/// a prefab can be given a component it lacks.
+	std::map<std::string, nlohmann::json> components;
+};
+
+/// Instantiates \p prefab and applies \p overrides to the root clone.
+Entity instantiate(const Prefab& prefab, Scene& scene,
+                   const PrefabOverrides& overrides,
                    Entity parent = NullEntity);
 
 /// Merges a scene document into \p target instead of replacing it. Entities
