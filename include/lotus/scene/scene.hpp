@@ -96,7 +96,8 @@ public:
 
 	/// Entities submitted last frame.
 	uint32_t drawn_entities() const { return drawn_entities_; }
-	/// Entities rejected last frame by frustum or LOD distance.
+	/// Entities rejected last frame by frustum, LOD distance, or occlusion.
+	/// Superset of occluded_entities(): every occlusion rejection is also a cull.
 	uint32_t culled_entities() const { return culled_entities_; }
 
 	/// Entities rejected last frame by occlusion, after passing frustum and LOD.

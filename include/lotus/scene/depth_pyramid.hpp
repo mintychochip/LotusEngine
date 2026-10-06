@@ -65,6 +65,14 @@ public:
 	/// kDepthPyramidMinLevel may be empty: the renderer never transfers them and
 	/// occluded never reads them. This is the path that keeps depth.comp
 	/// load-bearing, rather than re-reducing on the CPU.
+	///
+	/// Precondition, enforced rather than assumed: every level from
+	/// kDepthPyramidMinLevel up must hold exactly level_width(level) *
+	/// level_height(level) texels. One mismatch discards the WHOLE chain and
+	/// leaves the pyramid empty, which reads as "every entity visible". That is
+	/// deliberate — a chain with one bad level has unknown provenance — but it
+	/// means a caller cannot tell a rejected upload from an empty one by looking
+	/// at the result alone.
 	void adopt(uint32_t width, uint32_t height, uint32_t total_levels,
 	           const std::vector<std::vector<float>>& mips);
 

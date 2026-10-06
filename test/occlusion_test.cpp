@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <iostream>
 #include <limits>
 #include <vector>
@@ -1003,20 +1004,53 @@ TEST(SceneOcclusionTest, VisibleEntitySurvivesTheSamePyramid)
 
 TEST(SceneOcclusionTest, NullPyramidMatchesTodayExactly)
 {
+	// The contract is "no pyramid behaves exactly as before the branch". That
+	// is only meaningful on a scene where occlusion WOULD fire, and only if
+	// the comparison is against something other than another nullptr. Comparing
+	// two nullptr calls proves nothing: the default argument IS nullptr, so
+	// both runs take the same path by construction.
+	//
+	// So: a cube behind a wall, where a real pyramid culls it. The null call
+	// must draw it, and must match an empty pyramid (occlusion present but with
+	// no data) byte for byte.
 	Scene scene{"s"};
 	const Entity camera = scene.create("camera");
-	scene.registry().emplace<Camera3D>(camera);
-
+	scene.registry().emplace<Camera3D>(camera, Camera3D{{0.0f, 0.0f, 10.0f},
+	                                                    {0.0f, 0.0f, 0.0f},
+	                                                    {0.0f, 1.0f, 0.0f},
+	                                                    60.0f, 0.1f, 100.0f});
 	const Entity cube = scene.create("cube");
 	scene.registry().emplace<MeshSource>(cube, MeshSource{"builtin:cube"});
 	scene.update(0.0f);
 
+	// Control: a wall at depth 5 does cull this cube, so this is a scene where
+	// the null path's "assume visible" behaviour is observable.
+	const DepthPyramid wall = solid_wall(64, 5.0f);
+	EXPECT_TRUE(scene.build_vertices(1.0f, &wall).empty());
+	EXPECT_EQ(scene.occluded_entities(), 1u);
+
+	const DepthPyramid empty_pyramid;
 	const std::vector<GpuVertex> with_null = scene.build_vertices(1.0f, nullptr);
 	const std::vector<GpuVertex> defaulted = scene.build_vertices(1.0f);
+	const std::vector<GpuVertex> with_empty =
+	        scene.build_vertices(1.0f, &empty_pyramid);
 
-	ASSERT_EQ(with_null.size(), defaulted.size());
+	// Null draws everything, as before the branch.
+	ASSERT_EQ(with_null.size(), 36u);
 	EXPECT_EQ(scene.occluded_entities(), 0u);
-	EXPECT_FALSE(with_null.empty());
+	EXPECT_EQ(scene.drawn_entities(), 1u);
+
+	// Identical to an empty pyramid: no occlusion and no side effects. An
+	// empty pyramid is the meaningful control, because it exercises the
+	// occlusion-enabled path with no data rather than re-running the null path.
+	ASSERT_EQ(with_empty.size(), with_null.size());
+	EXPECT_EQ(std::memcmp(with_null.data(), with_empty.data(),
+	                      with_null.size() * sizeof(GpuVertex)),
+	          0);
+	ASSERT_EQ(defaulted.size(), with_null.size());
+	EXPECT_EQ(std::memcmp(with_null.data(), defaulted.data(),
+	                      with_null.size() * sizeof(GpuVertex)),
+	          0);
 }
 
 TEST(SceneOcclusionTest, EmptyPyramidCullsNothing)
