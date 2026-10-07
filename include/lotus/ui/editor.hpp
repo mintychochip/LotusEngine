@@ -90,6 +90,15 @@ public:
 
 	/// Drops the undo history (e.g. after a hot reload replaced the scene).
 	void reset_history() { history_scene_ = nullptr; }
+	/// Size of the viewport panel in pixels. The application queries this
+	/// to size the offscreen render target.
+	struct ViewportSize {
+		uint32_t width{0};
+		uint32_t height{0};
+	};
+	ViewportSize viewport_size() const { return viewport_size_; }
+
+
 
 	bool can_undo() const { return history_.can_undo(); }
 	bool can_redo() const { return history_.can_redo(); }
@@ -98,6 +107,7 @@ public:
 	void request_redo() { redo_requested_ = true; }
 
 private:
+	void draw_viewport(Scene& scene);
 	void draw_hierarchy(Scene& scene);
 	void draw_entity_node(Scene& scene, Entity entity);
 	void draw_inspector(Scene& scene);
@@ -106,6 +116,8 @@ private:
 	void draw_console();
 	void draw_keybinds();
 	void draw_prefabs(Scene& scene);
+	void draw_viewport();
+
 
 	bool initialized_{false};
 	bool visible_{true};
@@ -132,6 +144,16 @@ private:
 	char console_input_[256]{};
 	std::vector<std::string> console_history_;
 	int console_history_pos_{-1};
+	ViewportSize viewport_size_;
+	GpuRenderer* gpu_{nullptr};
+
+	// Viewport interaction. gizmo_axis_ is 0/1/2 for X/Y/Z while a handle is
+	// hovered or dragged, -1 when idle. The drag is incremental: each frame
+	// applies the mouse movement since the previous frame along the axis.
+	int gizmo_axis_{-1};
+	bool gizmo_dragging_{false};
+	float gizmo_last_mouse_x_{0.0f};
+	float gizmo_last_mouse_y_{0.0f};
 };
 
 } // namespace lotus

@@ -621,6 +621,27 @@ void Application::run(int width, int height, const std::string& title)
 			gpu.begin_frame(window.handle(), 0.05f, 0.05f, 0.08f);
 			if (gpu.has_frame()) {
 				if (Scene* scene = scenes_.active()) {
+					// Viewport pass: render scene to offscreen texture for the editor
+					const auto vs = editor_.viewport_size();
+					if (vs.width > 0 && vs.height > 0 &&
+					    (vs.width != gpu.viewport_width() ||
+					     vs.height != gpu.viewport_height())) {
+						if (gpu.resize_viewport(vs.width, vs.height)) {
+							console_.info("viewport: " + std::to_string(vs.width) +
+							              "x" + std::to_string(vs.height));
+						}
+					}
+					if (gpu.viewport_ready()) {
+						const float viewport_aspect =
+						        static_cast<float>(vs.width) /
+						        static_cast<float>(vs.height);
+						scene->upload(gpu, viewport_aspect);
+						if (gpu.begin_viewport_pass()) {
+							scene->draw(gpu);
+							gpu.end_viewport_pass();
+						}
+					}
+
 					scene->upload(gpu, aspect);
 					gpu.begin_scene_pass();
 					scene->draw(gpu);

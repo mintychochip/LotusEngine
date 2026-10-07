@@ -52,6 +52,13 @@ public:
 	/// First entity whose Name matches, or NullEntity.
 	Entity find(const std::string& name) const;
 
+	/// Nearest entity whose world bounds the ray through \p ndc_x, \p ndc_y
+	/// hits, or NullEntity. Coordinates are normalised device space: x and y
+	/// in [-1, 1] with y up, matching the zero-to-one depth range the renderer
+	/// uses. \p aspect is the viewport aspect ratio the frame was drawn with,
+	/// which is what the editor knows and the scene does not.
+	Entity pick(float ndc_x, float ndc_y, float aspect) const;
+
 	/// Persistent identity of \p entity, or a zero GUID when it has none.
 	SceneGuid guid_of(Entity entity) const;
 

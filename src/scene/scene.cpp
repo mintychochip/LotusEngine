@@ -1,7 +1,9 @@
 #include "lotus/scene/scene.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
+#include <limits>
 
 #include <glm/gtc/type_ptr.hpp>
 
@@ -38,6 +40,26 @@ BoundingSphere world_bounds(const Transform& transform,
 	const float scale_z = glm::length(glm::vec3{transform.world[2]});
 	world.radius = local.radius * std::max({scale_x, scale_y, scale_z});
 	return world;
+}
+
+/// Ray/sphere overlap for picking. \p t receives the distance along the ray
+/// when it hits. Hits behind the origin count only when the origin is inside
+/// the sphere, which keeps a camera parked inside a mesh pickable.
+bool ray_hits_sphere(const glm::vec3& origin, const glm::vec3& direction,
+                     const BoundingSphere& sphere, float& t)
+{
+	const glm::vec3 offset = origin - sphere.center;
+	const float along      = glm::dot(offset, direction);
+	const float gap        = glm::dot(offset, offset) - sphere.radius * sphere.radius;
+	if (gap > 0.0f && along > 0.0f) {
+		return false;
+	}
+	const float discriminant = along * along - gap;
+	if (discriminant < 0.0f) {
+		return false;
+	}
+	t = std::max(-along - std::sqrt(discriminant), 0.0f);
+	return true;
 }
 
 /// Emits world-space lit vertices for an indexed mesh.
@@ -350,6 +372,78 @@ Entity Scene::find(const std::string& name) const
 		}
 	}
 	return NullEntity;
+}
+
+Entity Scene::pick(float ndc_x, float ndc_y, float aspect) const
+{
+	// The camera is rebuilt here rather than reusing view_projection_: the
+	// stored one belongs to whichever pass ran last, and the viewport pass and
+	// the window pass disagree on aspect whenever the panel is not the window.
+	glm::mat4 view_projection{1.0f};
+	if (const Camera3D* camera = active_camera3d()) {
+		view_projection = camera->view_projection(aspect);
+	} else {
+		static const Camera2D fallback{};
+		const Camera2D* camera2d = active_camera();
+		const Camera2D& chosen   = camera2d ? *camera2d : fallback;
+		view_projection          = chosen.view_projection(aspect);
+	}
+
+	const glm::mat4 inverse = glm::inverse(view_projection);
+	glm::vec4 near_point    = inverse * glm::vec4{ndc_x, ndc_y, 0.0f, 1.0f};
+	glm::vec4 far_point     = inverse * glm::vec4{ndc_x, ndc_y, 1.0f, 1.0f};
+	if (near_point.w == 0.0f || far_point.w == 0.0f) {
+		return NullEntity;
+	}
+	near_point /= near_point.w;
+	far_point /= far_point.w;
+
+	const glm::vec3 origin    = glm::vec3{near_point};
+	const glm::vec3 to_far    = glm::vec3{far_point - near_point};
+	if (glm::length(to_far) <= 0.0f) {
+		return NullEntity;
+	}
+	const glm::vec3 direction = glm::normalize(to_far);
+
+	Entity best        = NullEntity;
+	float best_distance = std::numeric_limits<float>::max();
+
+	const auto consider = [&](Entity entity, const BoundingSphere& world) {
+		float distance = 0.0f;
+		if (!ray_hits_sphere(origin, direction, world, distance)) {
+			return;
+		}
+		if (distance < best_distance) {
+			best_distance = distance;
+			best          = entity;
+		}
+	};
+
+	for (const Entity entity : registry_.view<Transform, Sprite>()) {
+		const Sprite& sprite = registry_.get<Sprite>(entity);
+		const BoundingSphere local{glm::vec3{0.0f},
+		                           glm::length(sprite.size) * 0.5f};
+		consider(entity, world_bounds(registry_.get<Transform>(entity), local));
+	}
+	for (const Entity entity : registry_.view<Transform, Mesh>()) {
+		const Mesh& mesh = registry_.get<Mesh>(entity);
+		if (mesh.empty() || registry_.all_of<Lod>(entity)) {
+			continue;
+		}
+		consider(entity, world_bounds(registry_.get<Transform>(entity), mesh.bounds));
+	}
+	// Lod entities are picked by their most detailed level's bounds: the level
+	// actually drawn depends on the camera distance, and for selection the
+	// finest bounds are the honest answer.
+	for (const Entity entity : registry_.view<Transform, Lod>()) {
+		const LodGeometry* geometry = registry_.try_get<LodGeometry>(entity);
+		if (geometry == nullptr || geometry->levels.empty()) {
+			continue;
+		}
+		consider(entity, world_bounds(registry_.get<Transform>(entity),
+		                              geometry->levels.front().bounds));
+	}
+	return best;
 }
 
 void Scene::sync_meshes()

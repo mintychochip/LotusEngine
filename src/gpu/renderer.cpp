@@ -753,6 +753,124 @@ bool GpuRenderer::resize_offscreen(uint32_t width, uint32_t height)
 	return true;
 }
 
+bool GpuRenderer::resize_viewport(uint32_t width, uint32_t height)
+{
+	if (!device_ || width == 0 || height == 0 ||
+	    swapchain_format_ == SDL_GPU_TEXTUREFORMAT_INVALID) {
+		return false;
+	}
+	if (width == viewport_width_ && height == viewport_height_ &&
+	    viewport_texture_) {
+		return true;
+	}
+
+	// Create new textures before releasing old ones, so a failure leaves the
+	// renderer on its old viewport rather than on none.
+	SDL_GPUTextureCreateInfo color{};
+	color.type                 = SDL_GPU_TEXTURETYPE_2D;
+	color.format               = swapchain_format_;
+	color.usage                = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET |
+	                             SDL_GPU_TEXTUREUSAGE_SAMPLER;
+	color.width                = width;
+	color.height               = height;
+	color.layer_count_or_depth = 1;
+	color.num_levels           = 1;
+	color.sample_count         = SDL_GPU_SAMPLECOUNT_1;
+
+	SDL_GPUTextureCreateInfo depth{};
+	depth.type                 = SDL_GPU_TEXTURETYPE_2D;
+	depth.format               = SDL_GPU_TEXTUREFORMAT_D32_FLOAT;
+	depth.usage                = SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET;
+	depth.width                = width;
+	depth.height               = height;
+	depth.layer_count_or_depth = 1;
+	depth.num_levels           = 1;
+	depth.sample_count         = SDL_GPU_SAMPLECOUNT_1;
+
+	// R32F stand-in for colour target 1 (lit.frag writes linear depth there).
+	// Sized to the panel, not the swapchain, so the viewport pass never
+	// distorts the pyramid's aspect ratio.
+	SDL_GPUTextureCreateInfo pyramid{};
+	pyramid.type                 = SDL_GPU_TEXTURETYPE_2D;
+	pyramid.format               = SDL_GPU_TEXTUREFORMAT_R32_FLOAT;
+	pyramid.usage                = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET;
+	pyramid.width                = width;
+	pyramid.height               = height;
+	pyramid.layer_count_or_depth = 1;
+	pyramid.num_levels           = 1;
+	pyramid.sample_count         = SDL_GPU_SAMPLECOUNT_1;
+
+	SDL_GPUTexture* new_color   = SDL_CreateGPUTexture(device_, &color);
+	SDL_GPUTexture* new_depth   = SDL_CreateGPUTexture(device_, &depth);
+	SDL_GPUTexture* new_pyramid = SDL_CreateGPUTexture(device_, &pyramid);
+	if (!new_color || !new_depth || !new_pyramid) {
+		if (new_color) {
+			SDL_ReleaseGPUTexture(device_, new_color);
+		}
+		if (new_depth) {
+			SDL_ReleaseGPUTexture(device_, new_depth);
+		}
+		if (new_pyramid) {
+			SDL_ReleaseGPUTexture(device_, new_pyramid);
+		}
+		return false;
+	}
+
+	if (viewport_texture_) {
+		SDL_ReleaseGPUTexture(device_, viewport_texture_);
+	}
+	if (viewport_depth_) {
+		SDL_ReleaseGPUTexture(device_, viewport_depth_);
+	}
+	if (viewport_pyramid_) {
+		SDL_ReleaseGPUTexture(device_, viewport_pyramid_);
+	}
+	viewport_texture_  = new_color;
+	viewport_depth_    = new_depth;
+	viewport_pyramid_  = new_pyramid;
+	viewport_width_    = width;
+	viewport_height_   = height;
+	return true;
+}
+
+bool GpuRenderer::begin_viewport_pass()
+{
+	if (!cmd_ || !viewport_texture_ || !viewport_pyramid_ || !viewport_depth_) {
+		return false;
+	}
+	SDL_GPUColorTargetInfo targets[2]{};
+	targets[0].texture     = viewport_texture_;
+	targets[0].clear_color = SDL_FColor{clear_r_, clear_g_, clear_b_, 1.0f};
+	targets[0].load_op     = SDL_GPU_LOADOP_CLEAR;
+	targets[0].store_op    = SDL_GPU_STOREOP_STORE;
+	targets[1].texture     = viewport_pyramid_;
+	targets[1].mip_level   = 0;
+	targets[1].clear_color = SDL_FColor{kDepthFar, kDepthFar, kDepthFar, kDepthFar};
+	targets[1].load_op     = SDL_GPU_LOADOP_CLEAR;
+	targets[1].store_op    = SDL_GPU_STOREOP_STORE;
+
+	SDL_GPUDepthStencilTargetInfo depth{};
+	depth.texture          = viewport_depth_;
+	depth.clear_depth      = 1.0f;
+	depth.load_op          = SDL_GPU_LOADOP_CLEAR;
+	depth.store_op         = SDL_GPU_STOREOP_DONT_CARE;
+	depth.stencil_load_op  = SDL_GPU_LOADOP_DONT_CARE;
+	depth.stencil_store_op = SDL_GPU_STOREOP_DONT_CARE;
+
+	pass_ = SDL_BeginGPURenderPass(cmd_, targets, 2, &depth);
+	return pass_ != nullptr;
+}
+
+void GpuRenderer::end_viewport_pass()
+{
+	if (pass_) {
+		SDL_EndGPURenderPass(pass_);
+		pass_ = nullptr;
+		// The viewport pass does NOT record the Hi-Z pyramid. The main pass
+		// (begin_scene_pass / end_scene_pass) stays authoritative for occlusion.
+	}
+}
+
 bool GpuRenderer::write_ppm(const std::string& path, std::string* error)
 {
 	uint32_t width  = 0;
@@ -812,6 +930,18 @@ void GpuRenderer::shutdown()
 	if (offscreen_color_) {
 		SDL_ReleaseGPUTexture(device_, offscreen_color_);
 		offscreen_color_ = nullptr;
+	}
+	if (viewport_texture_) {
+		SDL_ReleaseGPUTexture(device_, viewport_texture_);
+		viewport_texture_ = nullptr;
+	}
+	if (viewport_depth_) {
+		SDL_ReleaseGPUTexture(device_, viewport_depth_);
+		viewport_depth_ = nullptr;
+	}
+	if (viewport_pyramid_) {
+		SDL_ReleaseGPUTexture(device_, viewport_pyramid_);
+		viewport_pyramid_ = nullptr;
 	}
 	if (pipeline_) {
 		SDL_ReleaseGPUGraphicsPipeline(device_, pipeline_);

@@ -110,6 +110,29 @@ public:
 	bool occlusion_ready() const { return occlusion_ready_; }
 
 	uint32_t vertex_capacity() const { return capacity_; }
+	/// True when the viewport texture is ready to be sampled by ImGui.
+	bool viewport_ready() const { return viewport_texture_ != nullptr; }
+
+	/// The offscreen texture the scene renders into for the editor viewport.
+	/// Valid only when viewport_ready() is true.
+	SDL_GPUTexture* viewport_texture() const { return viewport_texture_; }
+
+	/// Width of the viewport texture in pixels.
+	uint32_t viewport_width() const { return viewport_width_; }
+
+	/// Height of the viewport texture in pixels.
+	uint32_t viewport_height() const { return viewport_height_; }
+
+	/// Starts a render pass into the viewport texture. Call resize_viewport
+	/// first if the size changed. Returns false when the texture is not ready.
+	bool begin_viewport_pass();
+
+	/// Ends the viewport render pass.
+	void end_viewport_pass();
+
+	/// Resizes the viewport texture and its depth buffer. Returns false on
+	/// failure, leaving the old texture intact.
+	bool resize_viewport(uint32_t width, uint32_t height);
 
 	/// Frames actually submitted (excludes skipped/stalled frames).
 	uint64_t frames_rendered() const { return frames_rendered_; }
@@ -188,6 +211,15 @@ private:
 	/// True when record_pyramid actually recorded a download this frame, so
 	/// end_frame knows the submit needs a fence.
 	bool pyramid_recorded_{false};
+	// --- viewport (offscreen render target for the editor) ---
+	SDL_GPUTexture* viewport_texture_{nullptr};
+	SDL_GPUTexture* viewport_depth_{nullptr};
+	uint32_t viewport_width_{0};
+	uint32_t viewport_height_{0};
+	// R32F stand-in for colour target 1, sized to the panel (not the swapchain).
+	// The viewport pass binds it so lit.frag's linear-depth output has a home.
+	// The Hi-Z pyramid is NOT recorded from this pass; the main pass is authoritative.
+	SDL_GPUTexture* viewport_pyramid_{nullptr};
 	SDL_GPUComputePipeline* hiz_pipeline_{nullptr};
 	bool occlusion_enabled_{false};
 	bool occlusion_ready_{false};
