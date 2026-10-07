@@ -9,6 +9,8 @@ namespace lotus {
  */
 template <size_t MaxAllocations>
 class StackAllocator : public RegionAllocator {
+	static_assert(MaxAllocations > 0, "StackAllocator needs room for at least one marker");
+
 public:
 	using Allocator::alloc;
 	explicit StackAllocator(size_t size, size_t alignment)
@@ -18,18 +20,29 @@ public:
 
 	/**
 	 * @brief Allocates memory with alignment and stores a marker.
+	 *
+	 * A marker is stored only when the cursor moves. alloc(0) on an
+	 * already-aligned cursor does not consume a marker.
 	 */
 	void* alloc(size_t bytes, size_t alignment) override
 	{
-		if (alignment == 0 || (alignment & (alignment - 1)) != 0 ||
-		    marker_index_ >= MaxAllocations) {
+		if (!is_pow2(alignment)) {
 			return nullptr;
 		}
 
-		uptr aligned   = (top_ + alignment - 1) & ~(alignment - 1);
-		size_t padding = aligned - top_;
-
-		if (remaining() < padding + bytes) {
+		const uptr mask    = static_cast<uptr>(alignment) - 1;
+		const uptr aligned = (top_ + mask) & ~mask;
+		if (aligned < top_) {
+			return nullptr;
+		}
+		const size_t padding = static_cast<size_t>(aligned - top_);
+		if (padding > remaining() || bytes > remaining() - padding) {
+			return nullptr;
+		}
+		if (bytes == 0 && padding == 0) {
+			return reinterpret_cast<void*>(aligned);
+		}
+		if (marker_index_ >= MaxAllocations) {
 			return nullptr;
 		}
 
@@ -40,18 +53,29 @@ public:
 	}
 
 	/**
-	 * @brief Pops the last allocation, reverting to previous marker.
+	 * @brief Pops the last allocation, reverting to the previous marker.
+	 * Does nothing when the stack is empty. Does not run destructors.
 	 */
 	void pop()
 	{
-		if (marker_index_ == 0) { // empty
+		if (marker_index_ == 0) {
 			return;
 		}
-		top_ = base_ + markers[marker_index_--];
+		--marker_index_;
+		top_ = base_ + markers[marker_index_];
+	}
+
+	/**
+	 * @brief Rewinds the region and drops every marker.
+	 */
+	void reset() override
+	{
+		RegionAllocator::reset();
+		marker_index_ = 0;
 	}
 
 private:
-	size_t markers[MaxAllocations]; // Stack of marker offsets
-	size_t marker_index_;           // Current marker count
+	size_t markers[MaxAllocations]{}; // Offsets of the cursor before each allocation
+	size_t marker_index_;             // Number of stored markers
 };
 } // namespace lotus

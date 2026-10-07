@@ -1,5 +1,6 @@
 #pragma once
 
+#include "align.hpp"
 #include "allocator.hpp"
 #include "types.hpp"
 #include <cstdint>
@@ -15,6 +16,12 @@ namespace lotus {
 class RegionAllocator : public Allocator {
 public:
 	using Allocator::alloc;
+
+	RegionAllocator(const RegionAllocator&)            = delete;
+	RegionAllocator& operator=(const RegionAllocator&) = delete;
+	RegionAllocator(RegionAllocator&&)                 = delete;
+	RegionAllocator& operator=(RegionAllocator&&)      = delete;
+
 	size_t remaining() const override
 	{
 		return size_ - allocated();
@@ -45,7 +52,7 @@ public:
 	 * @brief Resets the allocator to its base pointer.
 	 * All previous allocations become invalid.
 	 */
-	void reset()
+	virtual void reset()
 	{
 		top_ = base_;
 	}
@@ -70,6 +77,13 @@ public:
 protected:
 	RegionAllocator(size_t size, size_t alignment) : size_{size}
 	{
+		if (!is_pow2(alignment)) {
+			throw std::invalid_argument("RegionAllocator alignment must be a power of two");
+		}
+		if (size > static_cast<size_t>(-1) - alignment) {
+			throw std::bad_alloc();
+		}
+
 		size_t total_space = size + alignment;
 		raw_               = std::malloc(total_space);
 		if (!raw_) {

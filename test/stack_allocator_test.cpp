@@ -1,3 +1,4 @@
+#include "lotus/region_allocator.hpp"
 #include "lotus/stack_allocator.hpp"
 #include <cstdint>
 #include <gtest/gtest.h>
@@ -134,4 +135,64 @@ TEST_F(StackAllocatorTest, MaxMarkersLimit)
 	// 129th allocation might fail due to marker limit
 	void* ptr = allocator->alloc(4, 4);
 	EXPECT_EQ(ptr, nullptr); // depending on internal implementation
+}
+
+TEST_F(StackAllocatorTest, PopTwiceRestoresBothAllocations)
+{
+	ASSERT_NE(allocator->alloc(128, 8), nullptr);
+	ASSERT_NE(allocator->alloc(128, 8), nullptr);
+
+	allocator->pop();
+	EXPECT_EQ(allocator->allocated(), 128u);
+
+	allocator->pop();
+	EXPECT_EQ(allocator->allocated(), 0u);
+	EXPECT_EQ(allocator->remaining(), kSize);
+}
+
+TEST_F(StackAllocatorTest, PopAccountsForAlignmentPadding)
+{
+	ASSERT_NE(allocator->alloc(1, 1), nullptr);
+	EXPECT_EQ(allocator->allocated(), 1u);
+	ASSERT_NE(allocator->alloc(8, 8), nullptr);
+
+	allocator->pop();
+	EXPECT_EQ(allocator->allocated(), 1u);
+
+	allocator->pop();
+	EXPECT_EQ(allocator->allocated(), 0u);
+}
+
+TEST_F(StackAllocatorTest, ResetRestoresMarkerCapacity)
+{
+	for (int i = 0; i < 128; ++i) {
+		ASSERT_NE(allocator->alloc(4, 4), nullptr);
+	}
+	allocator->reset();
+	EXPECT_EQ(allocator->allocated(), 0u);
+
+	for (int i = 0; i < 128; ++i) {
+		ASSERT_NE(allocator->alloc(4, 4), nullptr);
+	}
+}
+
+TEST_F(StackAllocatorTest, ResetThroughBaseClearsMarkers)
+{
+	RegionAllocator* region = allocator;
+	for (int i = 0; i < 128; ++i) {
+		ASSERT_NE(allocator->alloc(4, 4), nullptr);
+	}
+	region->reset();
+
+	ASSERT_NE(allocator->alloc(4, 4), nullptr);
+	EXPECT_EQ(allocator->allocated(), 4u);
+}
+
+TEST_F(StackAllocatorTest, ZeroByteAllocDoesNotConsumeMarker)
+{
+	for (int i = 0; i < 128; ++i) {
+		ASSERT_NE(allocator->alloc(0, 8), nullptr);
+	}
+	EXPECT_EQ(allocator->allocated(), 0u);
+	ASSERT_NE(allocator->alloc(16, 8), nullptr);
 }

@@ -2,6 +2,7 @@
 
 #include "types.hpp"
 #include <iostream>
+#include <new>
 #include <utility>
 
 namespace lotus {
@@ -29,6 +30,9 @@ public:
 	T* construct(Args&&... args)
 	{
 		void* memory = alloc(sizeof(T), alignof(T));
+		if (!memory) {
+			return nullptr;
+		}
 		return new (memory) T(std::forward<Args>(args)...);
 	}
 

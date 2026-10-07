@@ -101,6 +101,25 @@ Mesh sphere(float radius, int segments, int rings)
 	return result;
 }
 
+BoundingSphere compute_mesh_bounds(const Mesh& mesh)
+{
+	if (mesh.positions.empty()) {
+		return BoundingSphere{};
+	}
+	glm::vec3 minimum = mesh.positions.front();
+	glm::vec3 maximum = mesh.positions.front();
+	for (const glm::vec3& position : mesh.positions) {
+		minimum = glm::min(minimum, position);
+		maximum = glm::max(maximum, position);
+	}
+	BoundingSphere bounds;
+	bounds.center = (minimum + maximum) * 0.5f;
+	for (const glm::vec3& position : mesh.positions) {
+		bounds.radius = std::max(bounds.radius, glm::length(position - bounds.center));
+	}
+	return bounds;
+}
+
 bool resolve_mesh(const std::string& source, Mesh& out, std::string* error)
 {
 	if (source == "builtin:cube") {
@@ -110,6 +129,35 @@ bool resolve_mesh(const std::string& source, Mesh& out, std::string* error)
 	if (source == "builtin:sphere") {
 		out = sphere();
 		return true;
+	}
+	// "builtin:sphere:<segments>:<rings>" lets LOD levels differ in tessellation.
+	constexpr const char* kSpherePrefix = "builtin:sphere:";
+	if (source.rfind(kSpherePrefix, 0) == 0) {
+		const std::string rest  = source.substr(std::char_traits<char>::length(kSpherePrefix));
+		const std::size_t colon = rest.find(':');
+		if (colon == std::string::npos) {
+			if (error) {
+				*error = "expected builtin:sphere:<segments>:<rings>, got " + source;
+			}
+			return false;
+		}
+		try {
+			const int segments = std::stoi(rest.substr(0, colon));
+			const int rings    = std::stoi(rest.substr(colon + 1));
+			if (segments < 3 || rings < 2) {
+				if (error) {
+					*error = "sphere segments must be >= 3 and rings >= 2: " + source;
+				}
+				return false;
+			}
+			out = sphere(0.75f, segments, rings);
+			return true;
+		} catch (const std::exception&) {
+			if (error) {
+				*error = "bad builtin:sphere parameters: " + source;
+			}
+			return false;
+		}
 	}
 	if (source.rfind("builtin:", 0) == 0) {
 		if (error) {

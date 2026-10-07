@@ -35,6 +35,18 @@ protected:
 		        ball, lotus::Material{{0.28f, 0.52f, 0.90f}});
 		scene.registry().get<lotus::Transform>(ball).position = {1.1f, 0.0f, 0.0f};
 
+		// Level of detail: three tessellations of the same sphere, chosen by
+		// distance from the camera (and culled past the last one).
+		const lotus::Entity detailed = scene.create("lod_sphere");
+		lotus::Lod lod;
+		lod.levels.push_back(lotus::LodLevel{"builtin:sphere:32:24", 4.0f});
+		lod.levels.push_back(lotus::LodLevel{"builtin:sphere:16:12", 9.0f});
+		lod.levels.push_back(lotus::LodLevel{"builtin:sphere:8:6", 16.0f});
+		scene.registry().emplace<lotus::Lod>(detailed, std::move(lod));
+		scene.registry().emplace<lotus::Material>(
+		        detailed, lotus::Material{{0.35f, 0.80f, 0.45f}});
+		scene.registry().get<lotus::Transform>(detailed).position = {0.0f, 0.0f, -1.2f};
+
 		// Occlusion: a panel between the camera and the LOD sphere. Its centre
 		// sits on the camera->sphere ray at z = 2.2 (the sphere is at z = -1.2,
 		// the default camera at {3, 2.5, 4}), and it is sized to cover the
@@ -48,6 +60,14 @@ protected:
 		        wall, lotus::Material{{0.55f, 0.55f, 0.58f}});
 		scene.registry().get<lotus::Transform>(wall).scale = {1.5f, 1.7f, 0.25f};
 		scene.registry().get<lotus::Transform>(wall).position = {1.96f, 1.63f, 2.2f};
+
+		// Behind the camera: frustum-culled every frame.
+		const lotus::Entity hidden = scene.create("behind_camera");
+		scene.registry().emplace<lotus::MeshSource>(
+		        hidden, lotus::MeshSource{"builtin:cube"});
+		scene.registry().emplace<lotus::Material>(
+		        hidden, lotus::Material{{1.0f, 0.0f, 1.0f}});
+		scene.registry().get<lotus::Transform>(hidden).position = {0.0f, 0.0f, 40.0f};
 
 		const lotus::Entity camera = scene.create("camera");
 		scene.registry().emplace<lotus::Camera3D>(camera);
