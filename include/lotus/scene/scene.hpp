@@ -60,10 +60,19 @@ public:
 	/// in [-1, 1] with y up, matching the zero-to-one depth range the renderer
 	/// uses. \p aspect is the viewport aspect ratio the frame was drawn with,
 	/// which is what the editor knows and the scene does not.
-	/// When \p physics is set, rigid colliders are tested with a physics raycast
-	/// and the closest hit along the ray wins against mesh/sprite bounds.
+	enum class PickMode {
+		/// Mesh/sprite bounds and optional physics raycast; closest hit wins.
+		Combined,
+		/// Bounding spheres only (ignores \p physics).
+		BoundsOnly,
+		/// Physics raycast only (requires \p physics).
+		PhysicsOnly,
+	};
+
+	/// Picks an entity along the camera ray through \p ndc_x, \p ndc_y.
 	Entity pick(float ndc_x, float ndc_y, float aspect,
-	            const PhysicsWorld* physics = nullptr) const;
+	            const PhysicsWorld* physics = nullptr,
+	            PickMode mode = PickMode::Combined) const;
 
 	/// Persistent identity of \p entity, or a zero GUID when it has none.
 	SceneGuid guid_of(Entity entity) const;

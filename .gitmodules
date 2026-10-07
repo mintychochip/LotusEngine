@@ -1,12 +1,6 @@
-[submodule "dependencies/glfw"]
-	path = dependencies/glfw
-	url = https://github.com/glfw/glfw.git
 [submodule "dependencies/googletest"]
 	path = dependencies/googletest
 	url = https://github.com/google/googletest.git
-[submodule "dependencies/glad"]
-	path = dependencies/glad
-	url = https://github.com/Dav1dde/glad.git
 [submodule "dependencies/entt"]
 	path = dependencies/entt
 	url = https://github.com/skypjack/entt.git

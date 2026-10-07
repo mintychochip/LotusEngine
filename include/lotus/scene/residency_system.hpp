@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -24,6 +25,11 @@ public:
 
 	void set_load_margin(float margin) { load_margin_ = margin; }
 	void set_unload_margin(float margin) { unload_margin_ = margin; }
+	/// Caps how many additive region loads run per \c update (0 = unlimited).
+	void set_max_loads_per_frame(uint32_t max_loads)
+	{
+		max_loads_per_frame_ = max_loads;
+	}
 
 private:
 	std::string resolve_path(const std::string& path) const;
@@ -34,6 +40,7 @@ private:
 	std::string scene_dir_;
 	float load_margin_{0.0f};
 	float unload_margin_{5.0f};
+	uint32_t max_loads_per_frame_{1};
 };
 
 } // namespace lotus

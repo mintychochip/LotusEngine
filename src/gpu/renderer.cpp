@@ -406,7 +406,7 @@ void GpuRenderer::create_pipeline()
 	vb_desc[1].input_rate         = SDL_GPU_VERTEXINPUTRATE_VERTEX;
 	vb_desc[1].instance_step_rate = 0;
 
-	SDL_GPUVertexAttribute attrs[4]{};
+	SDL_GPUVertexAttribute attrs[5]{};
 	attrs[0].location    = 0;
 	attrs[0].buffer_slot = 0;
 	attrs[0].format      = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3;
@@ -423,6 +423,10 @@ void GpuRenderer::create_pipeline()
 	attrs[3].buffer_slot = 1;
 	attrs[3].format      = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2;
 	attrs[3].offset      = 0;
+	attrs[4].location    = 6;
+	attrs[4].buffer_slot = 0;
+	attrs[4].format      = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT;
+	attrs[4].offset      = offsetof(GpuVertex, roughness);
 
 	SDL_GPUGraphicsPipelineCreateInfo pipe{};
 	pipe.vertex_shader   = vert;
@@ -434,7 +438,7 @@ void GpuRenderer::create_pipeline()
 	pipe.target_info.depth_stencil_format      = kDepthFormat;
 	pipe.vertex_input_state.num_vertex_buffers = 2;
 	pipe.vertex_input_state.vertex_buffer_descriptions = vb_desc;
-	pipe.vertex_input_state.num_vertex_attributes      = 4;
+	pipe.vertex_input_state.num_vertex_attributes      = 5;
 	pipe.vertex_input_state.vertex_attributes          = attrs;
 	pipe.rasterizer_state.cull_mode   = SDL_GPU_CULLMODE_NONE;
 	pipe.multisample_state.sample_count = SDL_GPU_SAMPLECOUNT_1;

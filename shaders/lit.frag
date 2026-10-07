@@ -5,6 +5,7 @@ layout(location = 1) in vec3 v_normal;
 layout(location = 2) in vec3 v_color;
 layout(location = 3) in vec3 v_view_position;
 layout(location = 5) in vec2 v_uv;
+layout(location = 6) in float v_roughness;
 
 layout(set = 2, binding = 0) uniform sampler2D albedo;
 
@@ -26,7 +27,9 @@ void main()
     vec3 h = normalize(l + v);
 
     float diffuse  = max(dot(n, l), 0.0);
-    float specular = pow(max(dot(n, h), 0.0), 32.0) * 0.25;
+    float rough    = clamp(v_roughness, 0.0, 1.0);
+    float shininess = mix(8.0, 128.0, 1.0 - rough);
+    float specular = pow(max(dot(n, h), 0.0), shininess) * mix(0.35, 0.05, rough);
 
     vec3 radiance = u.light_color.rgb * u.light_color.a;
     vec3 albedo_rgb = texture(albedo, v_uv).rgb;

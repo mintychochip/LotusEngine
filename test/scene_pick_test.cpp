@@ -28,6 +28,10 @@ TEST(ScenePickTest, PhysicsRaycastSelectsColliderWithoutMesh)
 	world.step(scene, 0.0f);
 
 	const float aspect = 1.0f;
-	EXPECT_EQ(scene.pick(0.0f, 0.0f, aspect, nullptr), NullEntity);
-	EXPECT_EQ(scene.pick(0.0f, 0.0f, aspect, &world), floor);
+	EXPECT_EQ(scene.pick(0.0f, 0.0f, aspect, nullptr, Scene::PickMode::BoundsOnly),
+	          NullEntity);
+	EXPECT_EQ(scene.pick(0.0f, 0.0f, aspect, &world, Scene::PickMode::PhysicsOnly),
+	          floor);
+	EXPECT_EQ(scene.pick(0.0f, 0.0f, aspect, &world, Scene::PickMode::Combined),
+	          floor);
 }

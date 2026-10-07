@@ -83,7 +83,12 @@ void ResidencySystem::update(Scene& scene, const glm::vec3& viewer)
 {
 	const std::vector<std::string> to_load =
 	        policy_.to_load(regions_, viewer, resident_, load_margin_);
+	uint32_t loads_this_frame = 0;
 	for (const std::string& name : to_load) {
+		if (max_loads_per_frame_ > 0 &&
+		    loads_this_frame >= max_loads_per_frame_) {
+			break;
+		}
 		const StreamRegion* region = nullptr;
 		for (const StreamRegion& candidate : regions_) {
 			if (candidate.name == name) {
@@ -100,6 +105,7 @@ void ResidencySystem::update(Scene& scene, const glm::vec3& viewer)
 			continue;
 		}
 		resident_.push_back(name);
+		++loads_this_frame;
 	}
 
 	const std::vector<std::string> to_unload =

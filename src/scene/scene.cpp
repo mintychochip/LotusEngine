@@ -70,7 +70,7 @@ bool ray_hits_sphere(const glm::vec3& origin, const glm::vec3& direction,
 /// Emits world-space lit vertices for an indexed mesh.
 void emit_mesh(std::vector<GpuVertex>& out, std::vector<glm::vec2>& uvs_out,
                const Transform& transform, const Mesh& mesh,
-               const glm::vec3& color)
+               const glm::vec3& color, float roughness)
 {
 	// Correct for rotation and uniform scale; non-uniform scale would need the
 	// inverse transpose.
@@ -95,6 +95,7 @@ void emit_mesh(std::vector<GpuVertex>& out, std::vector<glm::vec2>& uvs_out,
 		vertex.position  = position;
 		vertex.normal    = normal;
 		vertex.color     = color;
+		vertex.roughness = roughness;
 		out.push_back(vertex);
 		uvs_out.push_back(uv);
 	}
@@ -114,6 +115,14 @@ std::string material_albedo_id(const Registry& registry, Entity entity)
 		return material->albedo_id;
 	}
 	return {};
+}
+
+float material_roughness(const Registry& registry, Entity entity)
+{
+	if (const Material* material = registry.try_get<Material>(entity)) {
+		return material->roughness;
+	}
+	return 0.5f;
 }
 
 struct VertexChunk {
@@ -438,7 +447,7 @@ Entity Scene::find(const std::string& name) const
 }
 
 Entity Scene::pick(float ndc_x, float ndc_y, float aspect,
-                   const PhysicsWorld* physics) const
+                   const PhysicsWorld* physics, PickMode mode) const
 {
 	// The camera is rebuilt here rather than reusing view_projection_: the
 	// stored one belongs to whichever pass ran last, and the viewport pass and
@@ -483,32 +492,42 @@ Entity Scene::pick(float ndc_x, float ndc_y, float aspect,
 		}
 	};
 
-	for (const Entity entity : registry_.view<Transform, Sprite>()) {
-		const Sprite& sprite = registry_.get<Sprite>(entity);
-		const BoundingSphere local{glm::vec3{0.0f},
-		                           glm::length(sprite.size) * 0.5f};
-		consider(entity, world_bounds(registry_.get<Transform>(entity), local));
-	}
-	for (const Entity entity : registry_.view<Transform, Mesh>()) {
-		const Mesh& mesh = registry_.get<Mesh>(entity);
-		if (mesh.empty() || registry_.all_of<Lod>(entity)) {
-			continue;
+	const bool use_bounds =
+	        mode == PickMode::Combined || mode == PickMode::BoundsOnly;
+	const bool use_physics =
+	        physics != nullptr &&
+	        (mode == PickMode::Combined || mode == PickMode::PhysicsOnly);
+
+	if (use_bounds) {
+		for (const Entity entity : registry_.view<Transform, Sprite>()) {
+			const Sprite& sprite = registry_.get<Sprite>(entity);
+			const BoundingSphere local{glm::vec3{0.0f},
+			                           glm::length(sprite.size) * 0.5f};
+			consider(entity,
+			         world_bounds(registry_.get<Transform>(entity), local));
 		}
-		consider(entity, world_bounds(registry_.get<Transform>(entity), mesh.bounds));
-	}
-	// Lod entities are picked by their most detailed level's bounds: the level
-	// actually drawn depends on the camera distance, and for selection the
-	// finest bounds are the honest answer.
-	for (const Entity entity : registry_.view<Transform, Lod>()) {
-		const LodGeometry* geometry = registry_.try_get<LodGeometry>(entity);
-		if (geometry == nullptr || geometry->levels.empty()) {
-			continue;
+		for (const Entity entity : registry_.view<Transform, Mesh>()) {
+			const Mesh& mesh = registry_.get<Mesh>(entity);
+			if (mesh.empty() || registry_.all_of<Lod>(entity)) {
+				continue;
+			}
+			consider(entity, world_bounds(registry_.get<Transform>(entity),
+			                              mesh.bounds));
 		}
-		consider(entity, world_bounds(registry_.get<Transform>(entity),
-		                              geometry->levels.front().bounds));
+		// Lod entities are picked by their most detailed level's bounds: the level
+		// actually drawn depends on the camera distance, and for selection the
+		// finest bounds are the honest answer.
+		for (const Entity entity : registry_.view<Transform, Lod>()) {
+			const LodGeometry* geometry = registry_.try_get<LodGeometry>(entity);
+			if (geometry == nullptr || geometry->levels.empty()) {
+				continue;
+			}
+			consider(entity, world_bounds(registry_.get<Transform>(entity),
+			                              geometry->levels.front().bounds));
+		}
 	}
 
-	if (physics != nullptr) {
+	if (use_physics) {
 		PhysicsRaycastHit hit;
 		const float max_distance = 10000.0f;
 		if (physics->raycast(origin, direction, max_distance, hit) &&
@@ -720,7 +739,8 @@ std::vector<GpuVertex> Scene::build_vertices(float aspect,
 		VertexChunk chunk;
 		chunk.albedo_id = material_albedo_id(registry_, entity);
 		emit_mesh(chunk.vertices, chunk.uvs, transform, mesh,
-		          material_color(registry_, entity));
+		          material_color(registry_, entity),
+		          material_roughness(registry_, entity));
 		chunks.push_back(std::move(chunk));
 	});
 
@@ -760,7 +780,8 @@ std::vector<GpuVertex> Scene::build_vertices(float aspect,
 		VertexChunk chunk;
 		chunk.albedo_id = material_albedo_id(registry_, entity);
 		emit_mesh(chunk.vertices, chunk.uvs, transform, mesh,
-		          material_color(registry_, entity));
+		          material_color(registry_, entity),
+		          material_roughness(registry_, entity));
 		chunks.push_back(std::move(chunk));
 	});
 

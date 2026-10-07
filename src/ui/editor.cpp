@@ -447,7 +447,17 @@ void Editor::draw_viewport(Scene& scene)
 	// A click that did not land on a handle selects the entity under it, or
 	// clears the selection when it hit nothing.
 	if (viewport_clicked && !gizmo_dragging_) {
-		selected_ = scene.pick(ndc_x, ndc_y, aspect, physics_);
+		if (physics_ != nullptr) {
+			selected_ = scene.pick(ndc_x, ndc_y, aspect, physics_,
+			                       Scene::PickMode::PhysicsOnly);
+			if (selected_ == NullEntity) {
+				selected_ = scene.pick(ndc_x, ndc_y, aspect, nullptr,
+				                       Scene::PickMode::BoundsOnly);
+			}
+		} else {
+			selected_ = scene.pick(ndc_x, ndc_y, aspect, nullptr,
+			                       Scene::PickMode::BoundsOnly);
+		}
 	}
 
 	// Drag the handle. The movement is applied per frame along the axis, then
@@ -915,6 +925,54 @@ void Editor::draw_inspector(Scene& scene)
 	if (registry.all_of<Camera2D>(selected_)) {
 		if (ImGui::Button("Remove Camera2D")) {
 			registry.remove<Camera2D>(selected_);
+			edited_ = true;
+		}
+	}
+	if (registry.all_of<Camera3D>(selected_)) {
+		if (ImGui::Button("Remove Camera3D")) {
+			registry.remove<Camera3D>(selected_);
+			edited_ = true;
+		}
+	}
+	if (registry.all_of<MeshSource>(selected_)) {
+		if (ImGui::Button("Remove MeshSource")) {
+			registry.remove<MeshSource>(selected_);
+			edited_ = true;
+		}
+	}
+	if (registry.all_of<Material>(selected_)) {
+		if (ImGui::Button("Remove Material")) {
+			registry.remove<Material>(selected_);
+			edited_ = true;
+		}
+	}
+	if (registry.all_of<CharacterController>(selected_)) {
+		if (ImGui::Button("Remove CharacterController")) {
+			registry.remove<CharacterController>(selected_);
+			edited_ = true;
+		}
+	}
+	if (registry.all_of<RigidBody>(selected_)) {
+		if (ImGui::Button("Remove RigidBody")) {
+			registry.remove<RigidBody>(selected_);
+			edited_ = true;
+		}
+	}
+	if (registry.all_of<BoxCollider>(selected_)) {
+		if (ImGui::Button("Remove BoxCollider")) {
+			registry.remove<BoxCollider>(selected_);
+			edited_ = true;
+		}
+	}
+	if (registry.all_of<SphereCollider>(selected_)) {
+		if (ImGui::Button("Remove SphereCollider")) {
+			registry.remove<SphereCollider>(selected_);
+			edited_ = true;
+		}
+	}
+	if (registry.all_of<Animator>(selected_)) {
+		if (ImGui::Button("Remove Animator")) {
+			registry.remove<Animator>(selected_);
 			edited_ = true;
 		}
 	}
