@@ -49,10 +49,7 @@ target_link_libraries(imgui PUBLIC SDL3::SDL3)
 file(GLOB_RECURSE LOTUS_SOURCES CONFIGURE_DEPENDS src/*.cpp)
 list(REMOVE_ITEM LOTUS_SOURCES
     "${CMAKE_SOURCE_DIR}/src/main.cpp"
-    "${CMAKE_SOURCE_DIR}/src/main.cc"
-    # Legacy OpenGL stack: not built.
-    "${CMAKE_SOURCE_DIR}/src/gl/shader.cpp"
-    "${CMAKE_SOURCE_DIR}/src/gl/shader_program.cpp")
+    "${CMAKE_SOURCE_DIR}/src/main.cc")
 
 add_library(lotus_engine STATIC ${LOTUS_SOURCES})
 
