@@ -9,6 +9,7 @@
 
 namespace lotus {
 
+class AssetRegistry;
 class GpuRenderer;
 class DepthPyramid;
 
@@ -138,7 +139,14 @@ public:
 		has_settings_ = true;
 	}
 
+	/// Optional asset key to path table. Null means resolve MeshSource and
+	/// Script paths directly (the default for unit tests).
+	void set_assets(const AssetRegistry* assets) { assets_ = assets; }
+	const AssetRegistry* assets() const { return assets_; }
+
 private:
+	std::string resolve_mesh_path(const MeshSource& source) const;
+
 	void sync_meshes();
 	void sync_lod();
 
@@ -158,6 +166,7 @@ private:
 	std::vector<std::string> reference_errors_;
 	SceneSettings settings_;
 	bool has_settings_{false};
+	const AssetRegistry* assets_{nullptr};
 };
 
 /// Recomputes Transform::world for every entity, depth-first from the roots.

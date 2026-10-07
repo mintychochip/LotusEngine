@@ -7,6 +7,7 @@
 #include "lotus/console/console.hpp"
 #include "lotus/input/keybinds.hpp"
 #include "lotus/io/file_watcher.hpp"
+#include "lotus/scene/assets.hpp"
 #include "lotus/scene/scene_manager.hpp"
 #include "lotus/script/script_engine.hpp"
 #include "lotus/ui/editor.hpp"
@@ -59,6 +60,16 @@ public:
 	/// Directory prefabs are read from and written to.
 	void set_prefab_dir(const std::string& dir) { prefab_dir_ = dir; }
 
+	/// Directory holding assets.json and mesh/texture files.
+	void set_assets_dir(const std::string& dir) { assets_dir_ = dir; }
+	const std::string& assets_dir() const { return assets_dir_; }
+	AssetRegistry& assets() { return assets_; }
+	const AssetRegistry& assets() const { return assets_; }
+	const std::string& assets_status() const { return assets_status_; }
+
+	bool load_assets_now(std::string* error = nullptr);
+	bool save_assets_now(std::string* error = nullptr);
+
 	/// Saves \p root and its descendants as prefabs/<name>.json. Returns false
 	/// and fills \p error on failure.
 	bool save_prefab_now(Entity root, const std::string& name,
@@ -87,6 +98,7 @@ private:
 	void poll_hot_reload();
 	std::string scene_file_for(const std::string& name) const;
 	void adopt_scene_path(const std::string& path);
+	void wire_assets();
 
 	SceneManager scenes_;
 	Editor editor_;
@@ -99,6 +111,10 @@ private:
 	std::string keybinds_path_{"keybinds.json"};
 	std::string prefab_dir_{"prefabs"};
 	std::string scene_dir_{"scenes"};
+	std::string assets_dir_{"assets"};
+	AssetRegistry assets_;
+	std::string assets_path_;
+	std::string assets_status_;
 	bool quit_requested_{false};
 };
 

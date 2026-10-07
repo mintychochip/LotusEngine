@@ -2,8 +2,10 @@
 #include "lotus/global.hpp"
 #include "lotus/gpu/renderer.hpp"
 #include "lotus/scene/scene.hpp"
-#include "lotus/scene/serialization.hpp"
+#include "lotus/scene/components.hpp"
 #include "lotus/scene/prefab.hpp"
+#include "lotus/scene/serialization.hpp"
+#include "lotus/script/script.hpp"
 
 #include <algorithm>
 #include <cstdlib>
@@ -219,6 +221,52 @@ void Application::register_commands()
 		                     }
 		                     return std::string{"saved "} + keybinds_path_;
 	                     });
+	console_.add_command("asset.list", "list registered asset keys",
+	                     [this](const std::vector<std::string>&) {
+		                     std::string out;
+		                     for (const std::string& id : assets_.names()) {
+			                     const std::string* path = assets_.find(id);
+			                     if (!out.empty()) {
+				                     out += '\n';
+			                     }
+			                     out += id + " -> " + (path ? *path : std::string{});
+		                     }
+		                     return out.empty() ? std::string{"(no assets)"} : out;
+	                     });
+	console_.add_command(
+	        "asset.set", "asset.set <id> <path> - register or update a key",
+	        [this](const std::vector<std::string>& args) {
+		        if (args.size() < 2) {
+			        return std::string{"usage: asset.set <id> <path>"};
+		        }
+		        assets_.set(args[0], join_from(args, 1));
+		        wire_assets();
+		        return std::string{"set "} + args[0];
+	        });
+	console_.add_command("asset.save", "write assets.json",
+	                     [this](const std::vector<std::string>&) {
+		                     std::string error;
+		                     if (!save_assets_now(&error)) {
+			                     return std::string{"save failed: "} + error;
+		                     }
+		                     return assets_status_;
+	                     });
+	console_.add_command("asset.reload", "reload assets.json from disk",
+	                     [this](const std::vector<std::string>&) {
+		                     std::string error;
+		                     if (!load_assets_now(&error)) {
+			                     return std::string{"reload failed: "} + error;
+		                     }
+		                     if (Scene* scene = scenes_.active()) {
+			                     scene->update(0.0f);
+			                     std::string script_error;
+			                     if (!scripts_.sync(*scene, &script_error)) {
+				                     return assets_status_ + "\nscript: " +
+				                            script_error;
+			                     }
+		                     }
+		                     return assets_status_;
+	                     });
 	console_.add_command(
 	        "prefab.list", "list prefabs on disk",
 	        [this](const std::vector<std::string>&) {
@@ -310,6 +358,55 @@ Entity Application::instantiate_prefab(const std::string& name, Entity parent)
 	return instantiate(prefab, *scene, parent);
 }
 
+bool Application::load_assets_now(std::string* error)
+{
+	assets_path_ = assets_dir_ + "/assets.json";
+	std::error_code code;
+	if (!std::filesystem::exists(assets_path_, code)) {
+		assets_status_ = "no " + assets_path_;
+		wire_assets();
+		return true;
+	}
+	std::string failure;
+	if (!assets_.load(assets_path_, &failure)) {
+		assets_status_ = "load failed: " + failure;
+		if (error) {
+			*error = failure;
+		}
+		return false;
+	}
+	assets_status_ = "loaded " + assets_path_;
+	wire_assets();
+	return true;
+}
+
+bool Application::save_assets_now(std::string* error)
+{
+	std::error_code code;
+	std::filesystem::create_directories(assets_dir_, code);
+	assets_path_ = assets_dir_ + "/assets.json";
+	std::string failure;
+	if (!assets_.save(assets_path_, &failure)) {
+		assets_status_ = "save failed: " + failure;
+		if (error) {
+			*error = failure;
+		}
+		return false;
+	}
+	assets_status_ = "saved " + assets_path_;
+	return true;
+}
+
+void Application::wire_assets()
+{
+	scripts_.set_assets(&assets_);
+	for (const std::string& name : scenes_.names()) {
+		if (Scene* scene = scenes_.get(name)) {
+			scene->set_assets(&assets_);
+		}
+	}
+}
+
 std::vector<std::string> Application::prefab_names() const
 {
 	std::vector<std::string> out;
@@ -383,6 +480,7 @@ bool Application::load_scene_by_name(const std::string& name, std::string* error
 	Scene& scene = scenes_.create(name);
 	scene = std::move(scratch);
 	scene.resolve_refs();
+	scene.set_assets(&assets_);
 	scenes_.activate(name);
 	adopt_scene_path(path);
 	return true;
@@ -492,6 +590,15 @@ void Application::run(int width, int height, const std::string& title)
 		}
 
 		register_commands();
+		std::error_code assets_dir_error;
+		std::filesystem::create_directories(assets_dir_, assets_dir_error);
+		{
+			std::string assets_error;
+			if (!load_assets_now(&assets_error)) {
+				console_.warn("assets: " + assets_error);
+			}
+		}
+
 		console_.set_sink([](const ConsoleEntry& entry) {
 			std::cout << entry.text << '\n';
 		});
@@ -520,6 +627,7 @@ void Application::run(int width, int height, const std::string& title)
 		});
 
 		on_ready(window, gpu);
+		wire_assets();
 
 		scripts_.set_log([this](const std::string& message) {
 			console_.info(message);
@@ -544,6 +652,38 @@ void Application::run(int width, int height, const std::string& title)
 		        },
 		        [this](const std::string& name, Entity parent) {
 			        return instantiate_prefab(name, parent);
+		        }});
+
+		editor_.set_asset_controls(Editor::AssetControls{
+		        [this] { return &assets_; },
+		        [this] { return assets_status_; },
+		        [this] {
+			        std::string error;
+			        load_assets_now(&error);
+		        },
+		        [this](Scene* scene) {
+			        std::vector<std::string> out;
+			        if (scene == nullptr) {
+				        return out;
+			        }
+			        for (const Entity entity :
+			             scene->registry().view<MeshSource>()) {
+				        const MeshSource& source =
+				                scene->registry().get<MeshSource>(entity);
+				        if (assets_.dangling(source.id)) {
+					        out.push_back(source.id);
+				        }
+			        }
+			        for (const Entity entity : scene->registry().view<Script>()) {
+				        const Script& script =
+				                scene->registry().get<Script>(entity);
+				        if (assets_.dangling(script.id)) {
+					        out.push_back(script.id);
+				        }
+			        }
+			        std::sort(out.begin(), out.end());
+			        out.erase(std::unique(out.begin(), out.end()), out.end());
+			        return out;
 		        }});
 
 		// Scriptable console: LOTUS_CONSOLE="cmd; cmd; ..." runs at startup,

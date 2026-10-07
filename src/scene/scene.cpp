@@ -11,6 +11,7 @@
 #include "lotus/scene/culling.hpp"
 #include "lotus/scene/lod.hpp"
 #include "lotus/scene/depth_pyramid.hpp"
+#include "lotus/scene/assets.hpp"
 #include "lotus/scene/mesh.hpp"
 
 namespace lotus {
@@ -446,6 +447,14 @@ Entity Scene::pick(float ndc_x, float ndc_y, float aspect) const
 	return best;
 }
 
+std::string Scene::resolve_mesh_path(const MeshSource& source) const
+{
+	if (assets_ == nullptr) {
+		return source.path;
+	}
+	return assets_->resolve(source.id, source.path);
+}
+
 void Scene::sync_meshes()
 {
 	for (const Entity entity : registry_.view<MeshSource>()) {
@@ -453,7 +462,8 @@ void Scene::sync_meshes()
 		if (registry_.all_of<Lod>(entity)) {
 			continue;
 		}
-		const std::string& path = registry_.get<MeshSource>(entity).path;
+		const MeshSource& mesh_source = registry_.get<MeshSource>(entity);
+		const std::string path        = resolve_mesh_path(mesh_source);
 		Mesh* existing          = registry_.try_get<Mesh>(entity);
 		if (existing && existing->source == path) {
 			continue;

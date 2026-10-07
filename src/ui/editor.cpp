@@ -13,6 +13,7 @@
 #include "lotus/console/console.hpp"
 #include "lotus/gpu/renderer.hpp"
 #include "lotus/input/keybinds.hpp"
+#include "lotus/scene/assets.hpp"
 #include "lotus/scene/scene.hpp"
 #include "lotus/scene/scene_manager.hpp"
 
@@ -235,7 +236,7 @@ void Editor::draw(SceneManager& scenes, float dt)
 	// Bottom row
 	ImGui::BeginChild("BottomChild", ImVec2(0, bottom_height), true);
 	const float bottom_avail = ImGui::GetContentRegionAvail().x;
-	const float col_width    = bottom_avail / 4.0f;
+	const float col_width    = bottom_avail / 5.0f;
 
 	ImGui::BeginChild("StatsChild", ImVec2(col_width, 0), true);
 	ImGui::TextUnformatted("Stats");
@@ -249,6 +250,14 @@ void Editor::draw(SceneManager& scenes, float dt)
 	ImGui::TextUnformatted("Scene File");
 	ImGui::Separator();
 	draw_scene_panel();
+	ImGui::EndChild();
+
+	ImGui::SameLine();
+
+	ImGui::BeginChild("AssetsChild", ImVec2(col_width, 0), true);
+	ImGui::TextUnformatted("Assets");
+	ImGui::Separator();
+	draw_assets(scene);
 	ImGui::EndChild();
 
 	ImGui::SameLine();
@@ -794,6 +803,41 @@ void Editor::draw_scene_panel()
 	if (auto_save_ && dirty_) {
 		scene_controls_.on_save();
 	}
+}
+
+void Editor::draw_assets(Scene* scene)
+{
+	if (!asset_controls_.registry || !asset_controls_.on_reload) {
+		return;
+	}
+	if (ImGui::Button("Reload")) {
+		asset_controls_.on_reload();
+	}
+	if (asset_controls_.status) {
+		ImGui::TextWrapped("%s", asset_controls_.status().c_str());
+	}
+	if (asset_controls_.dangling_refs && scene != nullptr) {
+		const std::vector<std::string> dangling =
+		        asset_controls_.dangling_refs(scene);
+		for (const std::string& id : dangling) {
+			ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1.0f),
+			                   "dangling: %s", id.c_str());
+		}
+	}
+	const AssetRegistry* registry = asset_controls_.registry();
+	if (registry == nullptr) {
+		return;
+	}
+	ImGui::BeginChild("AssetList", ImVec2(0, 0), false);
+	for (const std::string& id : registry->names()) {
+		const std::string* path = registry->find(id);
+		ImGui::TextUnformatted(id.c_str());
+		ImGui::SameLine();
+		ImGui::TextDisabled("->");
+		ImGui::SameLine();
+		ImGui::TextWrapped("%s", path != nullptr ? path->c_str() : "");
+	}
+	ImGui::EndChild();
 }
 
 void Editor::draw_prefabs(Scene& scene)

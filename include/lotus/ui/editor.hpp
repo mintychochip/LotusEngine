@@ -11,6 +11,7 @@
 
 namespace lotus {
 
+class AssetRegistry;
 class Console;
 class Keybinds;
 class GpuRenderer;
@@ -42,6 +43,14 @@ public:
 	/// Pull-based controls for the prefab panel. The Application owns the
 	/// prefab directory and the active scene, so the editor asks rather than
 	/// reaching for either.
+	struct AssetControls {
+		std::function<const AssetRegistry*()> registry;
+		std::function<std::string()> status;
+		std::function<void()> on_reload;
+		/// Unknown asset keys referenced by the active scene (sorted, unique).
+		std::function<std::vector<std::string>(Scene* scene)> dangling_refs;
+	};
+
 	struct PrefabControls {
 		std::function<std::vector<std::string>()> names;
 		/// Saves \p root and its descendants as a named prefab. Returns false
@@ -60,6 +69,10 @@ public:
 	void set_prefab_controls(PrefabControls controls)
 	{
 		prefab_controls_ = std::move(controls);
+	}
+	void set_asset_controls(AssetControls controls)
+	{
+		asset_controls_ = std::move(controls);
 	}
 	void set_console(Console* console) { console_ = console; }
 	void set_keybinds(Keybinds* keybinds, std::function<void()> on_save);
@@ -116,6 +129,7 @@ private:
 	void draw_console();
 	void draw_keybinds();
 	void draw_prefabs(Scene& scene);
+	void draw_assets(Scene* scene);
 	void draw_viewport();
 
 
@@ -128,6 +142,7 @@ private:
 	bool redo_requested_{false};
 	Entity selected_{NullEntity};
 	SceneControls scene_controls_;
+	AssetControls asset_controls_;
 	PrefabControls prefab_controls_;
 	char prefab_name_[64]{"prefab"};
 	std::string prefab_error_;

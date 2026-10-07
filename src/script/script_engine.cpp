@@ -1,5 +1,8 @@
 #include "lotus/script/script_engine.hpp"
 
+#include "lotus/scene/assets.hpp"
+#include "lotus/script/script.hpp"
+
 // Lua's headers have no extern "C" guards of their own.
 extern "C" {
 #include <lauxlib.h>
@@ -13,7 +16,6 @@ extern "C" {
 #include <unordered_set>
 
 #include "lotus/scene/scene.hpp"
-#include "lotus/script/script.hpp"
 
 namespace lotus {
 namespace {
@@ -186,6 +188,14 @@ ScriptEngine::~ScriptEngine()
 	}
 }
 
+std::string ScriptEngine::script_path_for(const Script& script) const
+{
+	if (assets_ == nullptr) {
+		return script.path;
+	}
+	return assets_->resolve(script.id, script.path);
+}
+
 std::string ScriptEngine::resolve(const std::string& path) const
 {
 	if (root_.empty() || path.empty()) {
@@ -286,7 +296,7 @@ void ScriptEngine::call_hook(Scene& scene, Entity entity, const char* hook,
 	if (!script) {
 		return;
 	}
-	const auto it = scripts_.find(script->path);
+	const auto it = scripts_.find(script_path_for(*script));
 	if (it == scripts_.end()) {
 		return;
 	}
@@ -319,7 +329,7 @@ void ScriptEngine::start_entities(Scene& scene, const std::string& path)
 {
 	auto view = scene.registry().view<Script>();
 	for (const Entity entity : view) {
-		if (view.get<Script>(entity).path == path) {
+		if (script_path_for(view.get<Script>(entity)) == path) {
 			call_hook(scene, entity, "on_start", false, 0.0f);
 		}
 	}
@@ -330,7 +340,7 @@ bool ScriptEngine::sync(Scene& scene, std::string* error)
 	set_current_scene(&scene);
 	std::unordered_set<std::string> paths;
 	for (const Entity entity : scene.registry().view<Script>()) {
-		paths.insert(scene.registry().get<Script>(entity).path);
+		paths.insert(script_path_for(scene.registry().get<Script>(entity)));
 	}
 
 	bool ok = true;

@@ -7,11 +7,13 @@
 
 #include "lotus/ecs.hpp"
 #include "lotus/io/file_watcher.hpp"
+#include "lotus/script/script.hpp"
 
 struct lua_State;
 
 namespace lotus {
 
+class AssetRegistry;
 class Scene;
 
 /// Runs Lua scripts attached to entities through the Script component, and
@@ -30,6 +32,8 @@ public:
 	/// Directory prepended to relative script paths.
 	void set_root(std::string root) { root_ = std::move(root); }
 	const std::string& root() const { return root_; }
+
+	void set_assets(const AssetRegistry* assets) { assets_ = assets; }
 
 	/// Loads (or reloads) a single script file. Returns false and fills
 	/// \p error on failure, leaving any previously loaded version in place.
@@ -59,6 +63,7 @@ public:
 
 private:
 	std::string resolve(const std::string& path) const;
+	std::string script_path_for(const Script& script) const;
 	void set_current_scene(Scene* scene);
 	void call_hook(Scene& scene, Entity entity, const char* hook, bool with_dt,
 	               float dt);
@@ -68,6 +73,7 @@ private:
 		int ref{0};
 	};
 	std::string root_;
+	const AssetRegistry* assets_{nullptr};
 	std::string last_error_;
 	lua_State* state_{nullptr};
 	std::map<std::string, ScriptRef> scripts_;
