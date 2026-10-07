@@ -3,6 +3,7 @@
 #include "lotus/gpu/renderer.hpp"
 #include "lotus/scene/scene.hpp"
 #include "lotus/scene/components.hpp"
+#include "lotus/scene/player_controller.hpp"
 #include "lotus/scene/prefab.hpp"
 #include "lotus/scene/serialization.hpp"
 #include "lotus/script/script.hpp"
@@ -768,14 +769,16 @@ void Application::run(int width, int height, const std::string& title)
 			max_frames = std::atoi(env);
 		}
 		int frame = 0;
+		bool game_input_enabled = true;
 
 		Uint64 last_counter = SDL_GetPerformanceCounter();
 		const double freq   = static_cast<double>(SDL_GetPerformanceFrequency());
 
 		while (!window.should_close() && !quit_requested_) {
-			window.poll_events([this](const SDL_Event& event) {
+			window.poll_events([this, &game_input_enabled](const SDL_Event& event) {
 				const bool captured = editor_.captures_keyboard();
 				editor_.process_event(event);
+				game_input_enabled = !editor_.captures_keyboard();
 				if (!captured) {
 					const std::string action = keybinds_.action_for(event);
 					if (!action.empty()) {
@@ -794,9 +797,12 @@ void Application::run(int width, int height, const std::string& title)
 			poll_hot_reload();
 			poll_async_scene_load();
 			if (Scene* scene = scenes_.active()) {
+				apply_character_movement_input(*scene, physics_,
+				                               game_input_enabled);
 				animation_system_update(*scene, animations_, &assets_, dt);
 				scene->update(dt);
 				physics_.step(*scene, dt);
+				update_follow_camera(*scene);
 				scripts_.update(*scene, dt);
 				scripts_.poll(*scene);
 
