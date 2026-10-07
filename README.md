@@ -22,6 +22,9 @@ resolve correctly.
 - **F1** — editor (viewport pick uses physics when possible).
 - **F2** — console (`help`, `scene.switch`, `scene.load_async`, …).
 - **Ctrl+Q** — quit.
+- **F2** `game.save` / `game.load` — player pose + active scene name (`saves/game.json`).
+
+Movement is **camera-relative** on the XZ plane (WASD strafe relative to the view).
 
 The gold **bob_prop** sphere plays the `sample_bob` animation clip from
 `assets/`. Walk east (~40 m) toward the sign; when the camera enters another

@@ -273,6 +273,13 @@ void from_json(const nlohmann::json& j, SphereCollider& sphere)
 	}
 }
 
+void to_json(nlohmann::json& j, const MeshCollider&)
+{
+	j = nlohmann::json::object();
+}
+
+void from_json(const nlohmann::json&, MeshCollider&) {}
+
 void to_json(nlohmann::json& j, const CharacterController& controller)
 {
 	j = nlohmann::json{{"radius", tidy(controller.radius)},
@@ -612,6 +619,19 @@ ComponentCodecs& mutable_component_codecs()
 		        [](Registry& r, Entity e, const nlohmann::json& j) {
 			        r.emplace_or_replace<SphereCollider>(e,
 			                                             j.get<SphereCollider>());
+		        });
+		c.add(
+		        "MeshCollider",
+		        [](const Registry& r, Entity e, nlohmann::json& j) {
+			        if (!r.all_of<MeshCollider>(e)) {
+				        return false;
+			        }
+			        j = nlohmann::json::object();
+			        return true;
+		        },
+		        [](Registry& r, Entity e, const nlohmann::json& j) {
+			        (void)j;
+			        r.emplace_or_replace<MeshCollider>(e);
 		        });
 		c.add(
 		        "CharacterController",

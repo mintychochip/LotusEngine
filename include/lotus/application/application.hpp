@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "lotus/application/window.hpp"
+#include "lotus/audio/audio_system.hpp"
 #include "lotus/console/console.hpp"
 #include "lotus/input/keybinds.hpp"
 #include "lotus/io/file_watcher.hpp"
@@ -74,6 +75,9 @@ public:
 	bool load_assets_now(std::string* error = nullptr);
 	bool save_assets_now(std::string* error = nullptr);
 
+	bool save_game_now(const std::string& path, std::string* error = nullptr);
+	bool load_game_now(const std::string& path, std::string* error = nullptr);
+
 	/// Saves \p root and its descendants as prefabs/<name>.json. Returns false
 	/// and fills \p error on failure.
 	bool save_prefab_now(Entity root, const std::string& name,
@@ -113,6 +117,7 @@ private:
 	std::string pending_async_scene_;
 	Editor editor_;
 	ScriptEngine scripts_;
+	AudioSystem audio_;
 	Console console_;
 	Keybinds keybinds_;
 	FileWatcher watcher_;

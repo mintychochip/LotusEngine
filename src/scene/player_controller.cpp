@@ -32,7 +32,30 @@ Camera3D* find_follow_camera(Scene& scene)
 	return nullptr;
 }
 
+glm::vec3 movement_direction_on_xz(glm::vec3 horizontal)
+{
+	horizontal.y = 0.0f;
+	const float len = glm::length(horizontal);
+	if (len <= 0.0001f) {
+		return glm::vec3{0.0f};
+	}
+	return horizontal / len;
+}
+
 } // namespace
+
+glm::vec3 movement_direction_from_camera(const Camera3D& camera,
+                                         float forward_input, float right_input)
+{
+	glm::vec3 forward = movement_direction_on_xz(camera.target - camera.position);
+	if (glm::length(forward) <= 0.0001f) {
+		forward = glm::vec3{0.0f, 0.0f, -1.0f};
+	}
+	const glm::vec3 right =
+	        movement_direction_on_xz(glm::cross(forward, glm::vec3{0.0f, 1.0f, 0.0f}));
+	glm::vec3 move = forward * forward_input + right * right_input;
+	return movement_direction_on_xz(move);
+}
 
 void apply_character_movement_input(Scene& scene, PhysicsWorld& physics,
                                     bool enable_input, float move_speed,
@@ -69,9 +92,11 @@ void apply_character_movement_input(Scene& scene, PhysicsWorld& physics,
 		--right;
 	}
 
-	glm::vec3 direction{right, 0.0f, -forward};
-	if (glm::length(direction) > 0.0f) {
-		direction = glm::normalize(direction);
+	glm::vec3 direction{0.0f};
+	if (Camera3D* camera = find_follow_camera(scene)) {
+		direction = movement_direction_from_camera(*camera, forward, right);
+	} else {
+		direction = movement_direction_on_xz(glm::vec3{right, 0.0f, -forward});
 	}
 
 	float speed = move_speed;

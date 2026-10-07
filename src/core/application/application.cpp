@@ -3,6 +3,7 @@
 #include "lotus/gpu/renderer.hpp"
 #include "lotus/scene/scene.hpp"
 #include "lotus/scene/components.hpp"
+#include "lotus/scene/game_save.hpp"
 #include "lotus/scene/player_controller.hpp"
 #include "lotus/scene/prefab.hpp"
 #include "lotus/scene/serialization.hpp"
@@ -171,6 +172,31 @@ void Application::register_commands()
 		        return std::string{"merged "} + args[0] + " (" +
 		               std::to_string(scene->registry().view<Name>().size()) +
 		               " entities)";
+	        });
+	console_.add_command(
+	        "game.save",
+	        "game.save [path] - write player pose and scene name (default "
+	        "saves/game.json)",
+	        [this](const std::vector<std::string>& args) {
+		        const std::string path =
+		                args.empty() ? std::string{"saves/game.json"} : args[0];
+		        std::string error;
+		        if (!save_game_now(path, &error)) {
+			        return std::string{"game.save failed: "} + error;
+		        }
+		        return std::string{"saved "} + path;
+	        });
+	console_.add_command(
+	        "game.load",
+	        "game.load [path] - load scene from save then apply player pose",
+	        [this](const std::vector<std::string>& args) {
+		        const std::string path =
+		                args.empty() ? std::string{"saves/game.json"} : args[0];
+		        std::string error;
+		        if (!load_game_now(path, &error)) {
+			        return std::string{"game.load failed: "} + error;
+		        }
+		        return std::string{"loaded "} + path;
 	        });
 	console_.add_command(
 	        "scene.unload", "scene.unload <origin> - destroy every entity merged "
@@ -519,6 +545,55 @@ bool Application::switch_scene(const std::string& name, std::string* error)
 	return load_scene_by_name(name, error);
 }
 
+bool Application::save_game_now(const std::string& path, std::string* error)
+{
+	Scene* scene = scenes_.active();
+	if (scene == nullptr) {
+		if (error) {
+			*error = "no active scene";
+		}
+		return false;
+	}
+	std::error_code ec;
+	std::filesystem::create_directories(
+	        std::filesystem::path(path).parent_path(), ec);
+	const GameSaveData data =
+	        capture_game_state(*scene, scenes_.active_name(),
+	                           residency_.resident());
+	return save_game_to_file(data, path, error);
+}
+
+bool Application::load_game_now(const std::string& path, std::string* error)
+{
+	GameSaveData data;
+	if (!load_game_from_file(path, data, error)) {
+		return false;
+	}
+	if (data.scene_name.empty()) {
+		if (error) {
+			*error = "save missing scene_name";
+		}
+		return false;
+	}
+	std::string scene_error;
+	if (!switch_scene(data.scene_name, &scene_error)) {
+		if (error) {
+			*error = scene_error;
+		}
+		return false;
+	}
+	Scene* scene = scenes_.active();
+	if (scene == nullptr) {
+		if (error) {
+			*error = "no active scene after switch";
+		}
+		return false;
+	}
+	apply_game_state(*scene, data);
+	update_world_transforms(*scene);
+	return true;
+}
+
 void Application::adopt_scene_path(const std::string& path)
 {
 	scene_path_ = path;
@@ -622,8 +697,12 @@ void Application::poll_hot_reload()
 
 void Application::run(int width, int height, const std::string& title)
 {
-	on_start();
+		on_start();
 	{
+		std::string audio_error;
+		if (!audio_.init(&audio_error)) {
+			console_.warn("audio: " + audio_error);
+		}
 		Window window{width, height, title};
 		GpuRenderer gpu;
 		gpu.init(window.handle(), settings_.debug_device);
@@ -881,6 +960,7 @@ void Application::run(int width, int height, const std::string& title)
 
 		editor_.shutdown();
 		on_shutdown();
+		audio_.shutdown();
 		std::cout << "frames rendered: " << gpu.frames_rendered() << '\n';
 	} // GPU + window must be destroyed before SDL_Quit()
 

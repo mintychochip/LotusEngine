@@ -11,6 +11,7 @@
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Character/CharacterVirtual.h>
 #include <Jolt/Physics/PhysicsSystem.h>
@@ -174,11 +175,17 @@ glm::quat to_glm_quat(const JPH::Quat& q)
 	return glm::quat{q.GetW(), q.GetX(), q.GetY(), q.GetZ()};
 }
 
+bool has_collider(const Registry& registry, Entity entity)
+{
+	return registry.all_of<BoxCollider>(entity) ||
+	       registry.all_of<SphereCollider>(entity) ||
+	       registry.all_of<MeshCollider>(entity);
+}
+
 bool scene_has_rigid_physics(const Registry& registry)
 {
 	for (const Entity entity : registry.view<RigidBody>()) {
-		if (registry.all_of<BoxCollider>(entity) ||
-		    registry.all_of<SphereCollider>(entity)) {
+		if (has_collider(registry, entity)) {
 			return true;
 		}
 	}
@@ -217,25 +224,54 @@ JPH::RefConst<JPH::Shape> make_shape(const Registry& registry, Entity entity)
 	if (const auto* sphere = registry.try_get<SphereCollider>(entity)) {
 		return new JPH::SphereShape{sphere->radius};
 	}
+	if (registry.all_of<MeshCollider>(entity)) {
+		const Mesh* mesh = registry.try_get<Mesh>(entity);
+		const Transform* transform = registry.try_get<Transform>(entity);
+		if (mesh == nullptr || mesh->positions.empty() || transform == nullptr) {
+			return nullptr;
+		}
+		constexpr std::size_t kMaxPoints = 256;
+		JPH::Array<JPH::Vec3> points;
+		const std::size_t step =
+		        std::max<std::size_t>(1, mesh->positions.size() / kMaxPoints);
+		for (std::size_t i = 0; i < mesh->positions.size(); i += step) {
+			const glm::vec3 scaled = mesh->positions[i] * transform->scale;
+			points.push_back(JPH::Vec3{scaled.x, scaled.y, scaled.z});
+		}
+		if (points.empty()) {
+			return nullptr;
+		}
+		JPH::ConvexHullShapeSettings settings(points.data(),
+		                                      static_cast<int>(points.size()));
+		const JPH::Shape::ShapeResult result = settings.Create();
+		if (!result.IsValid()) {
+			return nullptr;
+		}
+		return result.Get();
+	}
 	return nullptr;
 }
 
 } // namespace
 
 struct PhysicsWorld::Impl {
-	enum class ColliderKind : std::uint8_t { None, Box, Sphere };
+	enum class ColliderKind : std::uint8_t { None, Box, Sphere, Mesh };
 
 	struct BodySyncKey {
 		PhysicsMotionType motion{PhysicsMotionType::Dynamic};
 		ColliderKind kind{ColliderKind::None};
 		glm::vec3 box_extents{0.0f};
 		float sphere_radius{0.0f};
+		std::size_t mesh_vertices{0};
+		glm::vec3 mesh_scale{1.0f};
 
 		bool operator==(const BodySyncKey& other) const
 		{
 			return motion == other.motion && kind == other.kind &&
 			       box_extents == other.box_extents &&
-			       sphere_radius == other.sphere_radius;
+			       sphere_radius == other.sphere_radius &&
+			       mesh_vertices == other.mesh_vertices &&
+			       mesh_scale == other.mesh_scale;
 		}
 	};
 
@@ -308,6 +344,14 @@ PhysicsWorld::Impl::BodySyncKey PhysicsWorld::Impl::body_sync_key(
 	} else if (const auto* sphere = registry.try_get<SphereCollider>(entity)) {
 		key.kind          = ColliderKind::Sphere;
 		key.sphere_radius = sphere->radius;
+	} else if (registry.all_of<MeshCollider>(entity)) {
+		key.kind = ColliderKind::Mesh;
+		if (const Mesh* mesh = registry.try_get<Mesh>(entity)) {
+			key.mesh_vertices = mesh->positions.size();
+		}
+		if (const Transform* transform = registry.try_get<Transform>(entity)) {
+			key.mesh_scale = transform->scale;
+		}
 	}
 	return key;
 }
@@ -442,8 +486,7 @@ void PhysicsWorld::step(Scene& scene, float dt)
 		const Entity entity = it->first;
 		const bool keep     = registry.valid(entity) &&
 		                      registry.all_of<RigidBody>(entity) &&
-		                      (registry.all_of<BoxCollider>(entity) ||
-		                       registry.all_of<SphereCollider>(entity));
+		                      has_collider(registry, entity);
 		if (!keep) {
 			if (!it->second.IsInvalid()) {
 				body_interface.RemoveBody(it->second);
@@ -459,8 +502,7 @@ void PhysicsWorld::step(Scene& scene, float dt)
 	if (simulate_rigid) {
 	const auto view = registry.view<Transform, RigidBody>();
 	for (const Entity entity : view) {
-		if (!registry.all_of<BoxCollider>(entity) &&
-		    !registry.all_of<SphereCollider>(entity)) {
+		if (!has_collider(registry, entity)) {
 			continue;
 		}
 		const Transform& transform = view.get<Transform>(entity);

@@ -193,6 +193,10 @@ struct SphereCollider {
 	float radius{0.5f};
 };
 
+/// Convex hull collider built from the entity's \c Mesh positions (local
+/// space, scaled by \c Transform::scale). Requires \c Mesh + \c RigidBody.
+struct MeshCollider {};
+
 /// Capsule character driven by Jolt CharacterVirtual. \p Transform::position
 /// is the feet; \p desired_velocity is in world space (m/s). Gravity is applied
 /// when not grounded. Updated during \c PhysicsWorld::step after rigid bodies.
