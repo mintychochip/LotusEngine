@@ -89,6 +89,7 @@ struct Camera2D {
 struct Mesh {
 	std::vector<glm::vec3> positions;
 	std::vector<glm::vec3> normals;
+	std::vector<glm::vec2> uvs;
 	std::vector<std::uint32_t> indices;
 	/// Source this geometry was resolved from, used to detect changes.
 	std::string source;
@@ -129,9 +130,11 @@ struct LodGeometry {
 	std::vector<Mesh> levels;
 };
 
-/// Surface colour, multiplied into the lighting result.
+/// Surface colour and optional albedo texture (asset registry key).
 struct Material {
 	glm::vec3 base_color{0.82f, 0.82f, 0.86f};
+	std::string albedo_id;
+	float roughness{0.5f};
 };
 
 /// Perspective camera.

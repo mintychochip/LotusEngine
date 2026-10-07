@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "lotus/ecs.hpp"
+#include "lotus/gpu/draw_batch.hpp"
 #include "lotus/gpu/vertex.hpp"
 #include "lotus/scene/components.hpp"
 
@@ -109,7 +110,7 @@ public:
 	void draw(GpuRenderer& gpu);
 
 	uint32_t vertex_count() const { return vertex_count_; }
-	uint32_t draw_calls() const { return vertex_count_ ? 1u : 0u; }
+	uint32_t draw_calls() const { return draw_call_count_; }
 
 	/// Entities submitted last frame.
 	uint32_t drawn_entities() const { return drawn_entities_; }
@@ -153,6 +154,9 @@ private:
 	std::string name_;
 	Registry registry_;
 	uint32_t vertex_count_{0};
+	uint32_t draw_call_count_{0};
+	std::vector<GpuDrawBatch> draw_batches_;
+	std::vector<glm::vec2> frame_uvs_;
 	uint32_t drawn_entities_{0};
 	uint32_t culled_entities_{0};
 	uint32_t occluded_entities_{0};

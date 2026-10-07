@@ -195,7 +195,11 @@ void from_json(const nlohmann::json& j, MeshSource& m)
 void to_json(nlohmann::json& j, const Material& m)
 {
 	j = nlohmann::json{{"base_color", arr3(m.base_color.x, m.base_color.y,
-	                                       m.base_color.z)}};
+	                                       m.base_color.z)},
+	                   {"roughness", tidy(m.roughness)}};
+	if (!m.albedo_id.empty()) {
+		j["albedo_id"] = m.albedo_id;
+	}
 }
 
 void from_json(const nlohmann::json& j, Material& m)
@@ -204,6 +208,12 @@ void from_json(const nlohmann::json& j, Material& m)
 	    j.at("base_color").size() == 3) {
 		const auto& c = j.at("base_color");
 		m.base_color  = {c[0].get<float>(), c[1].get<float>(), c[2].get<float>()};
+	}
+	if (j.contains("albedo_id") && j.at("albedo_id").is_string()) {
+		m.albedo_id = j.at("albedo_id").get<std::string>();
+	}
+	if (j.contains("roughness") && j.at("roughness").is_number()) {
+		m.roughness = j.at("roughness").get<float>();
 	}
 }
 

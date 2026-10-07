@@ -4,16 +4,20 @@
 
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <glm/glm.hpp>
 
+#include "lotus/gpu/draw_batch.hpp"
 #include "lotus/gpu/vertex.hpp"
 #include "lotus/scene/depth_pyramid.hpp"
 
 struct SDL_Window;
 
 namespace lotus {
+
+class AssetRegistry;
 
 /// A directional light plus an ambient term (Blinn-Phong).
 struct LightingSettings {
@@ -74,8 +78,9 @@ public:
 	void begin_frame(SDL_Window* window, float clear_r, float clear_g,
 	                 float clear_b);
 
-	/// Uploads this frame's vertices (world-space, lit).
-	void upload_vertices(const GpuVertex* vertices, uint32_t count);
+	/// Uploads this frame's vertices (world-space, lit) and parallel UVs.
+	void upload_vertices(const GpuVertex* vertices, const glm::vec2* uvs,
+	                     uint32_t count);
 
 	void begin_scene_pass();
 
@@ -83,7 +88,12 @@ public:
 	/// alongside \p view_projection because the vertex stage also writes
 	/// view-space depth for the occlusion pyramid.
 	void draw(const glm::mat4& view, const glm::mat4& view_projection,
-	          const glm::vec3& camera_position, uint32_t count);
+	          const glm::vec3& camera_position, const GpuDrawBatch* batches,
+	          uint32_t batch_count, const AssetRegistry* assets);
+	/// Single-range draw (tests and untextured paths).
+	void draw(const glm::mat4& view, const glm::mat4& view_projection,
+	          const glm::vec3& camera_position, uint32_t first_vertex,
+	          uint32_t vertex_count);
 
 	void end_scene_pass();
 	void end_frame();
@@ -142,7 +152,7 @@ public:
 
 private:
 	void create_pipeline();
-	void ensure_vertex_capacity(uint32_t bytes);
+	void ensure_vertex_capacity(uint32_t vertex_bytes, uint32_t uv_bytes);
 	void ensure_depth_target(uint32_t width, uint32_t height);
 	void destroy_buffers();
 
@@ -164,6 +174,13 @@ private:
 	/// fence that is still in use. Each is therefore released only once
 	/// SDL_QueryGPUFence reports it signalled.
 	void release_retired_fences();
+	void ensure_default_sampler();
+	void ensure_white_texture();
+	void destroy_textures();
+	SDL_GPUTexture* texture_for_albedo(const std::string& albedo_id,
+	                                   const AssetRegistry* assets);
+	bool load_texture_from_file(const std::string& path,
+	                            const std::string& cache_key);
 
 	SDL_GPUDevice* device_{nullptr};
 	SDL_Window* window_{nullptr};
@@ -176,7 +193,10 @@ private:
 
 	SDL_GPUBuffer* vertex_buffer_{nullptr};
 	SDL_GPUTransferBuffer* transfer_buffer_{nullptr};
+	SDL_GPUBuffer* uv_buffer_{nullptr};
+	SDL_GPUTransferBuffer* uv_transfer_buffer_{nullptr};
 	uint32_t capacity_{0};
+	uint32_t uv_capacity_{0};
 
 	SDL_GPUTexture* depth_texture_{nullptr};
 	uint32_t depth_width_{0};
@@ -228,6 +248,13 @@ private:
 
 	LightingSettings lighting_;
 	float clear_r_{0.0f}, clear_g_{0.0f}, clear_b_{0.0f};
+
+	SDL_GPUSampler* default_sampler_{nullptr};
+	SDL_GPUTexture* white_texture_{nullptr};
+	struct CachedAlbedo {
+		SDL_GPUTexture* texture{nullptr};
+	};
+	std::unordered_map<std::string, CachedAlbedo> albedo_textures_;
 };
 
 } // namespace lotus

@@ -203,6 +203,28 @@ bool resolve_accessor(const Glb& glb, int index, AccessorView& out,
 	return true;
 }
 
+bool read_vec2(const Glb& glb, int accessor_index, std::vector<glm::vec2>& out,
+               std::string* error)
+{
+	AccessorView view;
+	if (!resolve_accessor(glb, accessor_index, view, error)) {
+		return false;
+	}
+	if (view.component_type != kComponentFloat || view.components != 2) {
+		if (error) {
+			*error = "TEXCOORD must be a FLOAT VEC2 accessor";
+		}
+		return false;
+	}
+	out.reserve(out.size() + view.count);
+	for (std::size_t i = 0; i < view.count; ++i) {
+		glm::vec2 value{0.0f};
+		std::memcpy(&value, view.data + i * view.stride, sizeof(glm::vec2));
+		out.push_back(value);
+	}
+	return true;
+}
+
 bool read_vec3(const Glb& glb, int accessor_index, std::vector<glm::vec3>& out,
                std::string* error)
 {
@@ -328,6 +350,12 @@ bool load_glb(const std::string& path, Mesh& out, std::string* error)
 			if (attributes.contains("NORMAL")) {
 				if (!read_vec3(glb, attributes.at("NORMAL").get<int>(),
 				               result.normals, error)) {
+					return false;
+				}
+			}
+			if (attributes.contains("TEXCOORD_0")) {
+				if (!read_vec2(glb, attributes.at("TEXCOORD_0").get<int>(),
+				               result.uvs, error)) {
 					return false;
 				}
 			}

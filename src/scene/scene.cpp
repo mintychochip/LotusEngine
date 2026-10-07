@@ -64,12 +64,14 @@ bool ray_hits_sphere(const glm::vec3& origin, const glm::vec3& direction,
 }
 
 /// Emits world-space lit vertices for an indexed mesh.
-void emit_mesh(std::vector<GpuVertex>& out, const Transform& transform,
-               const Mesh& mesh, const glm::vec3& color)
+void emit_mesh(std::vector<GpuVertex>& out, std::vector<glm::vec2>& uvs_out,
+               const Transform& transform, const Mesh& mesh,
+               const glm::vec3& color)
 {
 	// Correct for rotation and uniform scale; non-uniform scale would need the
 	// inverse transpose.
 	const glm::mat3 normal_matrix{transform.world};
+	const bool has_uvs = mesh.uvs.size() == mesh.positions.size();
 	for (const std::uint32_t index : mesh.indices) {
 		if (index >= mesh.positions.size()) {
 			continue;
@@ -83,7 +85,14 @@ void emit_mesh(std::vector<GpuVertex>& out, const Transform& transform,
 				normal = glm::normalize(transformed);
 			}
 		}
-		out.push_back(GpuVertex{position, normal, color});
+		const glm::vec2 uv =
+		        has_uvs ? mesh.uvs[index] : glm::vec2{0.0f, 0.0f};
+		GpuVertex vertex{};
+		vertex.position  = position;
+		vertex.normal    = normal;
+		vertex.color     = color;
+		out.push_back(vertex);
+		uvs_out.push_back(uv);
 	}
 }
 
@@ -93,6 +102,55 @@ glm::vec3 material_color(const Registry& registry, Entity entity)
 		return material->base_color;
 	}
 	return glm::vec3{1.0f};
+}
+
+std::string material_albedo_id(const Registry& registry, Entity entity)
+{
+	if (const Material* material = registry.try_get<Material>(entity)) {
+		return material->albedo_id;
+	}
+	return {};
+}
+
+struct VertexChunk {
+	std::string albedo_id;
+	std::vector<GpuVertex> vertices;
+	std::vector<glm::vec2> uvs;
+};
+
+void append_chunk(std::vector<GpuVertex>& out, std::vector<glm::vec2>& uvs_out,
+                  std::vector<GpuDrawBatch>& batches, VertexChunk&& chunk)
+{
+	if (chunk.vertices.empty()) {
+		return;
+	}
+	if (!batches.empty() && batches.back().albedo_id == chunk.albedo_id) {
+		batches.back().vertex_count +=
+		        static_cast<std::uint32_t>(chunk.vertices.size());
+	} else {
+		batches.push_back(GpuDrawBatch{chunk.albedo_id,
+		                               static_cast<std::uint32_t>(out.size()),
+		                               static_cast<std::uint32_t>(
+		                                       chunk.vertices.size())});
+	}
+	out.insert(out.end(), chunk.vertices.begin(), chunk.vertices.end());
+	uvs_out.insert(uvs_out.end(), chunk.uvs.begin(), chunk.uvs.end());
+}
+
+void finalize_vertices(std::vector<GpuVertex>& out, std::vector<glm::vec2>& uvs_out,
+                       std::vector<GpuDrawBatch>& batches,
+                       std::vector<VertexChunk>&& chunks)
+{
+	std::sort(chunks.begin(), chunks.end(),
+	          [](const VertexChunk& a, const VertexChunk& b) {
+		          return a.albedo_id < b.albedo_id;
+	          });
+	out.clear();
+	uvs_out.clear();
+	batches.clear();
+	for (VertexChunk& chunk : chunks) {
+		append_chunk(out, uvs_out, batches, std::move(chunk));
+	}
 }
 
 /// True when \p pyramid reports this sphere as hidden. A null pyramid means
@@ -534,7 +592,7 @@ std::vector<GpuVertex> Scene::build_vertices(float aspect,
 	}
 	const Frustum frustum = Frustum::from_view_projection(view_projection_);
 
-	std::vector<GpuVertex> vertices;
+	std::vector<VertexChunk> chunks;
 	drawn_entities_    = 0;
 	culled_entities_   = 0;
 	occluded_entities_ = 0;
@@ -569,10 +627,17 @@ std::vector<GpuVertex> Scene::build_vertices(float aspect,
 		}
 		const glm::vec3 color{sprite.color};
 		static constexpr int order[6] = {0, 1, 2, 0, 2, 3};
+		VertexChunk chunk;
+		chunk.albedo_id.clear();
 		for (const int index : order) {
-			vertices.push_back(GpuVertex{world_vertices[index],
-			                             glm::vec3{0.0f, 0.0f, 1.0f}, color});
+			GpuVertex vertex{};
+			vertex.position = world_vertices[index];
+			vertex.normal   = glm::vec3{0.0f, 0.0f, 1.0f};
+			vertex.color    = color;
+			chunk.vertices.push_back(vertex);
+			chunk.uvs.push_back(glm::vec2{0.0f});
 		}
+		chunks.push_back(std::move(chunk));
 	});
 
 	// 3D meshes (entities without Lod).
@@ -593,7 +658,11 @@ std::vector<GpuVertex> Scene::build_vertices(float aspect,
 			return;
 		}
 		++drawn_entities_;
-		emit_mesh(vertices, transform, mesh, material_color(registry_, entity));
+		VertexChunk chunk;
+		chunk.albedo_id = material_albedo_id(registry_, entity);
+		emit_mesh(chunk.vertices, chunk.uvs, transform, mesh,
+		          material_color(registry_, entity));
+		chunks.push_back(std::move(chunk));
 	});
 
 	// Lod entities: pick a level by distance, then cull that level's bounds.
@@ -629,9 +698,18 @@ std::vector<GpuVertex> Scene::build_vertices(float aspect,
 			return;
 		}
 		++drawn_entities_;
-		emit_mesh(vertices, transform, mesh, material_color(registry_, entity));
+		VertexChunk chunk;
+		chunk.albedo_id = material_albedo_id(registry_, entity);
+		emit_mesh(chunk.vertices, chunk.uvs, transform, mesh,
+		          material_color(registry_, entity));
+		chunks.push_back(std::move(chunk));
 	});
 
+	std::vector<GpuVertex> vertices;
+	finalize_vertices(vertices, frame_uvs_, draw_batches_, std::move(chunks));
+	draw_call_count_ = vertices.empty() ? 0u
+	                                    : static_cast<std::uint32_t>(
+	                                              draw_batches_.size());
 	return vertices;
 }
 
@@ -641,7 +719,7 @@ void Scene::upload(GpuRenderer& gpu, float aspect)
 	        build_vertices(aspect, &gpu.occlusion_pyramid());
 	vertex_count_ = static_cast<std::uint32_t>(vertices.size());
 	if (vertex_count_ != 0) {
-		gpu.upload_vertices(vertices.data(), vertex_count_);
+		gpu.upload_vertices(vertices.data(), frame_uvs_.data(), vertex_count_);
 	}
 }
 
@@ -650,7 +728,8 @@ void Scene::draw(GpuRenderer& gpu)
 	if (vertex_count_ == 0) {
 		return;
 	}
-	gpu.draw(view_, view_projection_, camera_position_, vertex_count_);
+	gpu.draw(view_, view_projection_, camera_position_, draw_batches_.data(),
+	         static_cast<std::uint32_t>(draw_batches_.size()), assets_);
 }
 
 void update_world_transforms(Scene& scene)

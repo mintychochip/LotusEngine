@@ -34,9 +34,13 @@ Mesh cube(float size)
 	        {{-h, -h, -h}, {h, -h, -h}, {h, -h, h}, {-h, -h, h}},
 	};
 
+	const glm::vec2 face_uvs[4] = {{0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f},
+	                               {0.0f, 1.0f}};
+
 	Mesh result;
 	result.positions.reserve(24);
 	result.normals.reserve(24);
+	result.uvs.reserve(24);
 	result.indices.reserve(36);
 
 	for (int face = 0; face < 6; ++face) {
@@ -44,6 +48,7 @@ Mesh cube(float size)
 		for (int corner = 0; corner < 4; ++corner) {
 			result.positions.push_back(face_corners[face][corner]);
 			result.normals.push_back(face_normals[face]);
+			result.uvs.push_back(face_uvs[corner]);
 		}
 		result.indices.push_back(base + 0);
 		result.indices.push_back(base + 1);
@@ -67,6 +72,7 @@ Mesh sphere(float radius, int segments, int rings)
 	Mesh result;
 	result.positions.reserve(static_cast<std::size_t>((segments + 1) * (rings + 1)));
 	result.normals.reserve(result.positions.capacity());
+	result.uvs.reserve(result.positions.capacity());
 
 	for (int ring = 0; ring <= rings; ++ring) {
 		const float v     = static_cast<float>(ring) / static_cast<float>(rings);
@@ -81,6 +87,7 @@ Mesh sphere(float radius, int segments, int rings)
 			                       ring_r * std::sin(theta)};
 			result.normals.push_back(normal);
 			result.positions.push_back(normal * radius);
+			result.uvs.push_back(glm::vec2{u, v});
 		}
 	}
 
