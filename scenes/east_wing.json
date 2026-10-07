@@ -1,0 +1,15 @@
+{
+  "version": 3,
+  "name": "east_wing",
+  "entities": [
+    {
+      "name": "east_marker",
+      "components": {
+        "Material": {"base_color": [0.85, 0.7, 0.5]},
+        "MeshSource": {"path": "builtin:sphere"},
+        "SceneGuid": "1",
+        "Transform": {"position": [120.0, 1.0, 0.0], "rotation": [0.0, 0.0, 0.0], "scale": [1.5, 1.5, 1.5]}
+      }
+    }
+  ]
+}

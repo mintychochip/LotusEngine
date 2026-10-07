@@ -1,0 +1,15 @@
+{
+  "version": 3,
+  "name": "hub",
+  "entities": [
+    {
+      "name": "hub_marker",
+      "components": {
+        "Material": {"base_color": [0.7, 0.75, 0.85]},
+        "MeshSource": {"path": "builtin:cube"},
+        "SceneGuid": "1",
+        "Transform": {"position": [0.0, 0.5, 0.0], "rotation": [0.0, 0.0, 0.0], "scale": [2.0, 1.0, 2.0]}
+      }
+    }
+  ]
+}

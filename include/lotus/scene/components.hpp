@@ -193,6 +193,16 @@ struct SphereCollider {
 	float radius{0.5f};
 };
 
+/// Capsule character driven by Jolt CharacterVirtual. \p Transform::position
+/// is the feet; \p desired_velocity is in world space (m/s). Gravity is applied
+/// when not grounded. Updated during \c PhysicsWorld::step after rigid bodies.
+struct CharacterController {
+	float radius{0.4f};
+	float half_height{0.9f};
+	glm::vec3 desired_velocity{0.0f};
+	bool grounded{false};
+};
+
 /// Plays a transform animation clip from the asset registry.
 struct Animator {
 	std::string clip_id;

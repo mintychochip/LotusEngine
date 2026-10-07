@@ -10,7 +10,9 @@
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
+#include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
+#include <Jolt/Physics/Character/CharacterVirtual.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/RegisterTypes.h>
 
@@ -18,6 +20,7 @@
 #include <glm/gtx/matrix_decompose.hpp>
 
 #include <memory>
+#include <unordered_map>
 
 #include "lotus/scene/components.hpp"
 #include "lotus/scene/scene.hpp"
@@ -171,7 +174,7 @@ glm::quat to_glm_quat(const JPH::Quat& q)
 	return glm::quat{q.GetW(), q.GetX(), q.GetY(), q.GetZ()};
 }
 
-bool scene_has_physics(const Registry& registry)
+bool scene_has_rigid_physics(const Registry& registry)
 {
 	for (const Entity entity : registry.view<RigidBody>()) {
 		if (registry.all_of<BoxCollider>(entity) ||
@@ -180,6 +183,94 @@ bool scene_has_physics(const Registry& registry)
 		}
 	}
 	return false;
+}
+
+bool scene_has_characters(const Registry& registry)
+{
+	return !registry.view<CharacterController>().empty();
+}
+
+float capsule_center_y(const CharacterController& controller)
+{
+	return controller.half_height + controller.radius;
+}
+
+glm::vec3 feet_from_capsule_center(const glm::vec3& center,
+                                   const CharacterController& controller)
+{
+	return center - glm::vec3{0.0f, capsule_center_y(controller), 0.0f};
+}
+
+glm::vec3 capsule_center_from_feet(const glm::vec3& feet,
+                                   const CharacterController& controller)
+{
+	return feet + glm::vec3{0.0f, capsule_center_y(controller), 0.0f};
+}
+
+void step_characters(Scene& scene, float dt, JPH::PhysicsSystem& physics,
+                     JPH::TempAllocatorImpl& temp_allocator,
+                     std::unordered_map<Entity,
+                                        std::unique_ptr<JPH::CharacterVirtual>>&
+                             characters)
+{
+	auto& registry = scene.registry();
+	const JPH::Vec3 gravity = physics.GetGravity();
+
+	for (auto it = characters.begin(); it != characters.end();) {
+		const Entity entity = it->first;
+		if (!registry.valid(entity) ||
+		    !registry.all_of<CharacterController, Transform>(entity)) {
+			it = characters.erase(it);
+			continue;
+		}
+		++it;
+	}
+
+	const auto view = registry.view<Transform, CharacterController>();
+	for (const Entity entity : view) {
+		Transform& transform = view.get<Transform>(entity);
+		CharacterController& controller = view.get<CharacterController>(entity);
+
+		auto existing = characters.find(entity);
+		if (existing == characters.end()) {
+			JPH::Ref<JPH::CharacterVirtualSettings> settings =
+			        new JPH::CharacterVirtualSettings();
+			settings->mShape = new JPH::CapsuleShape(controller.half_height,
+			                                         controller.radius);
+			settings->mSupportingVolume =
+			        JPH::Plane(JPH::Vec3::sAxisY(), -controller.radius);
+			const JPH::RVec3 center =
+			        to_jolt_vec3(capsule_center_from_feet(transform.position,
+			                                              controller));
+			auto character = std::make_unique<JPH::CharacterVirtual>(
+			        settings, center, JPH::Quat::sIdentity(),
+			        static_cast<JPH::uint64>(entt::to_integral(entity)),
+			        &physics);
+			characters.emplace(entity, std::move(character));
+			existing = characters.find(entity);
+		}
+
+		JPH::CharacterVirtual* character = existing->second.get();
+
+		JPH::Vec3 velocity = to_jolt_vec3f(controller.desired_velocity);
+		if (character->GetGroundState() !=
+		    JPH::CharacterVirtual::EGroundState::OnGround) {
+			velocity += gravity * dt;
+		}
+		character->SetLinearVelocity(velocity);
+		character->Update(
+		        dt, gravity,
+		        physics.GetDefaultBroadPhaseLayerFilter(Layers::kMoving),
+		        physics.GetDefaultLayerFilter(Layers::kMoving), {}, {},
+		        temp_allocator);
+
+		transform.position =
+		        feet_from_capsule_center(to_glm_vec3(character->GetPosition()),
+		                                 controller);
+		controller.grounded =
+		        character->GetGroundState() ==
+		        JPH::CharacterVirtual::EGroundState::OnGround;
+	}
 }
 
 JPH::RefConst<JPH::Shape> make_shape(const Registry& registry, Entity entity)
@@ -205,6 +296,8 @@ struct PhysicsWorld::Impl {
 	ObjectVsBroadPhaseLayerFilter object_vs_broadphase;
 	ObjectLayerPairFilter object_vs_object;
 	std::unordered_map<Entity, JPH::BodyID> bodies;
+	std::unordered_map<Entity, std::unique_ptr<JPH::CharacterVirtual>>
+	        characters;
 	float accumulator{0.0f};
 
 	Impl()
@@ -225,6 +318,7 @@ struct PhysicsWorld::Impl {
 		physics.Init(max_bodies, 0, max_body_pairs, max_contact_constraints,
 		             broad_phase_layers, object_vs_broadphase,
 		             object_vs_object);
+		physics.SetGravity(JPH::Vec3{0.0f, -9.81f, 0.0f});
 	}
 
 	~Impl()
@@ -238,6 +332,7 @@ struct PhysicsWorld::Impl {
 			(void)entity;
 		}
 		bodies.clear();
+		characters.clear();
 	}
 };
 
@@ -255,9 +350,11 @@ void PhysicsWorld::step(Scene& scene, float dt)
 		return;
 	}
 
-	auto& registry       = scene.registry();
-	const bool simulate  = scene_has_physics(registry);
-	if (!simulate && impl_->bodies.empty()) {
+	auto& registry = scene.registry();
+	const bool simulate_rigid = scene_has_rigid_physics(registry);
+	const bool simulate_char  = scene_has_characters(registry);
+	if (!simulate_rigid && !simulate_char && impl_->bodies.empty() &&
+	    impl_->characters.empty()) {
 		return;
 	}
 
@@ -281,10 +378,7 @@ void PhysicsWorld::step(Scene& scene, float dt)
 		}
 	}
 
-	if (!simulate) {
-		return;
-	}
-
+	if (simulate_rigid) {
 	const auto view = registry.view<Transform, RigidBody>();
 	for (const Entity entity : view) {
 		if (!registry.all_of<BoxCollider>(entity) &&
@@ -362,8 +456,23 @@ void PhysicsWorld::step(Scene& scene, float dt)
 		transform->position = to_glm_vec3(position);
 		transform->rotation = glm::eulerAngles(to_glm_quat(rotation));
 	}
+	}
+
+	if (simulate_char || !impl_->characters.empty()) {
+		step_characters(scene, dt, physics, *impl_->temp_allocator,
+		                impl_->characters);
+	}
 
 	update_world_transforms(scene);
+}
+
+void PhysicsWorld::set_character_velocity(Scene& scene, Entity entity,
+                                          const glm::vec3& velocity)
+{
+	if (CharacterController* controller =
+	            scene.registry().try_get<CharacterController>(entity)) {
+		controller->desired_velocity = velocity;
+	}
 }
 
 bool PhysicsWorld::raycast(const glm::vec3& origin, const glm::vec3& direction,

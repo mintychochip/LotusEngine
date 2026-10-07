@@ -34,6 +34,10 @@ public:
 	bool raycast(const glm::vec3& origin, const glm::vec3& direction,
 	             float max_distance, PhysicsRaycastHit& hit) const;
 
+	/// Sets horizontal/world velocity for a \c CharacterController entity.
+	void set_character_velocity(Scene& scene, Entity entity,
+	                            const glm::vec3& velocity);
+
 private:
 	struct Impl;
 	Impl* impl_{nullptr};

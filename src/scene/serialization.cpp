@@ -273,6 +273,22 @@ void from_json(const nlohmann::json& j, SphereCollider& sphere)
 	}
 }
 
+void to_json(nlohmann::json& j, const CharacterController& controller)
+{
+	j = nlohmann::json{{"radius", tidy(controller.radius)},
+	                   {"half_height", tidy(controller.half_height)}};
+}
+
+void from_json(const nlohmann::json& j, CharacterController& controller)
+{
+	if (j.contains("radius") && j.at("radius").is_number()) {
+		controller.radius = j.at("radius").get<float>();
+	}
+	if (j.contains("half_height") && j.at("half_height").is_number()) {
+		controller.half_height = j.at("half_height").get<float>();
+	}
+}
+
 void to_json(nlohmann::json& j, const Animator& animator)
 {
 	j = nlohmann::json{{"time", tidy(animator.time)},
@@ -596,6 +612,20 @@ ComponentCodecs& mutable_component_codecs()
 		        [](Registry& r, Entity e, const nlohmann::json& j) {
 			        r.emplace_or_replace<SphereCollider>(e,
 			                                             j.get<SphereCollider>());
+		        });
+		c.add(
+		        "CharacterController",
+		        [](const Registry& r, Entity e, nlohmann::json& j) {
+			        const auto* value = r.try_get<CharacterController>(e);
+			        if (!value) {
+				        return false;
+			        }
+			        j = *value;
+			        return true;
+		        },
+		        [](Registry& r, Entity e, const nlohmann::json& j) {
+			        r.emplace_or_replace<CharacterController>(
+			                e, j.get<CharacterController>());
 		        });
 		c.add(
 		        "Animator",

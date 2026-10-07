@@ -56,3 +56,31 @@ TEST(PhysicsTest, RaycastHitsFloor)
 	EXPECT_EQ(hit.entity, floor);
 	EXPECT_NEAR(hit.point.y, 0.0f, 0.15f);
 }
+
+TEST(PhysicsTest, CharacterControllerStaysOnFloor)
+{
+	Scene scene{"character"};
+	PhysicsWorld world;
+
+	const Entity floor = scene.create("floor");
+	scene.registry().emplace<RigidBody>(
+	        floor, RigidBody{PhysicsMotionType::Static});
+	scene.registry().emplace<BoxCollider>(
+	        floor, BoxCollider{{20.0f, 0.5f, 20.0f}});
+	scene.registry().get<Transform>(floor).position = {0.0f, -0.5f, 0.0f};
+
+	const Entity player = scene.create("player");
+	scene.registry().emplace<CharacterController>(player);
+	scene.registry().get<Transform>(player).position = {0.0f, 0.0f, 0.0f};
+
+	scene.update(0.0f);
+	for (int i = 0; i < 120; ++i) {
+		world.set_character_velocity(scene, player, {1.0f, 0.0f, 0.0f});
+		world.step(scene, 1.0f / 60.0f);
+	}
+
+	const float y = scene.registry().get<Transform>(player).position.y;
+	EXPECT_NEAR(y, 0.0f, 0.05f);
+	EXPECT_TRUE(scene.registry().get<CharacterController>(player).grounded);
+	EXPECT_GT(scene.registry().get<Transform>(player).position.x, 0.5f);
+}
