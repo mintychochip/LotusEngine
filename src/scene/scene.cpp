@@ -14,6 +14,7 @@
 #include <filesystem>
 
 #include "lotus/scene/assets.hpp"
+#include "lotus/physics/physics_world.hpp"
 #include "lotus/scene/glb.hpp"
 #include "lotus/scene/mesh.hpp"
 
@@ -436,7 +437,8 @@ Entity Scene::find(const std::string& name) const
 	return NullEntity;
 }
 
-Entity Scene::pick(float ndc_x, float ndc_y, float aspect) const
+Entity Scene::pick(float ndc_x, float ndc_y, float aspect,
+                   const PhysicsWorld* physics) const
 {
 	// The camera is rebuilt here rather than reusing view_projection_: the
 	// stored one belongs to whichever pass ran last, and the viewport pass and
@@ -504,6 +506,18 @@ Entity Scene::pick(float ndc_x, float ndc_y, float aspect) const
 		}
 		consider(entity, world_bounds(registry_.get<Transform>(entity),
 		                              geometry->levels.front().bounds));
+	}
+
+	if (physics != nullptr) {
+		PhysicsRaycastHit hit;
+		const float max_distance = 10000.0f;
+		if (physics->raycast(origin, direction, max_distance, hit) &&
+		    hit.entity != NullEntity) {
+			const float physics_distance = hit.fraction * max_distance;
+			if (physics_distance < best_distance) {
+				best = hit.entity;
+			}
+		}
 	}
 	return best;
 }

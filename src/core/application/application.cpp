@@ -709,6 +709,7 @@ void Application::run(int width, int height, const std::string& title)
 			        return instantiate_prefab(name, parent);
 		        }});
 
+		editor_.set_physics(&physics_);
 		editor_.set_asset_controls(Editor::AssetControls{
 		        [this] { return &assets_; },
 		        [this] { return assets_status_; },

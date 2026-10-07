@@ -84,3 +84,29 @@ TEST(PhysicsTest, CharacterControllerStaysOnFloor)
 	EXPECT_TRUE(scene.registry().get<CharacterController>(player).grounded);
 	EXPECT_GT(scene.registry().get<Transform>(player).position.x, 0.5f);
 }
+
+TEST(PhysicsTest, CharacterControllerLandsAfterDrop)
+{
+	Scene scene{"drop"};
+	PhysicsWorld world;
+
+	const Entity floor = scene.create("floor");
+	scene.registry().emplace<RigidBody>(
+	        floor, RigidBody{PhysicsMotionType::Static});
+	scene.registry().emplace<BoxCollider>(
+	        floor, BoxCollider{{20.0f, 0.5f, 20.0f}});
+	scene.registry().get<Transform>(floor).position = {0.0f, -0.5f, 0.0f};
+
+	const Entity player = scene.create("player");
+	scene.registry().emplace<CharacterController>(player);
+	scene.registry().get<Transform>(player).position = {0.0f, 4.0f, 0.0f};
+
+	scene.update(0.0f);
+	for (int i = 0; i < 180; ++i) {
+		world.step(scene, 1.0f / 60.0f);
+	}
+
+	const float y = scene.registry().get<Transform>(player).position.y;
+	EXPECT_NEAR(y, 0.0f, 0.08f);
+	EXPECT_TRUE(scene.registry().get<CharacterController>(player).grounded);
+}

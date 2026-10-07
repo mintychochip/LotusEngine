@@ -13,6 +13,7 @@ namespace lotus {
 class AssetRegistry;
 class GpuRenderer;
 class DepthPyramid;
+class PhysicsWorld;
 
 /// A world: owns a registry and the systems that run on it.
 class Scene {
@@ -59,7 +60,10 @@ public:
 	/// in [-1, 1] with y up, matching the zero-to-one depth range the renderer
 	/// uses. \p aspect is the viewport aspect ratio the frame was drawn with,
 	/// which is what the editor knows and the scene does not.
-	Entity pick(float ndc_x, float ndc_y, float aspect) const;
+	/// When \p physics is set, rigid colliders are tested with a physics raycast
+	/// and the closest hit along the ray wins against mesh/sprite bounds.
+	Entity pick(float ndc_x, float ndc_y, float aspect,
+	            const PhysicsWorld* physics = nullptr) const;
 
 	/// Persistent identity of \p entity, or a zero GUID when it has none.
 	SceneGuid guid_of(Entity entity) const;

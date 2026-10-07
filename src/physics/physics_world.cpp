@@ -252,14 +252,36 @@ void step_characters(Scene& scene, float dt, JPH::PhysicsSystem& physics,
 
 		JPH::CharacterVirtual* character = existing->second.get();
 
-		JPH::Vec3 velocity = to_jolt_vec3f(controller.desired_velocity);
-		if (character->GetGroundState() !=
+		const glm::vec3 expected_center =
+		        capsule_center_from_feet(transform.position, controller);
+		const glm::vec3 actual_center = to_glm_vec3(character->GetPosition());
+		if (glm::distance(expected_center, actual_center) > 0.1f) {
+			character->SetPosition(to_jolt_vec3(expected_center));
+			character->RefreshContacts(
+			        physics.GetDefaultBroadPhaseLayerFilter(Layers::kMoving),
+			        physics.GetDefaultLayerFilter(Layers::kMoving), {}, {},
+			        temp_allocator);
+		}
+
+		JPH::Vec3 velocity = character->GetLinearVelocity();
+		if (character->GetGroundState() ==
 		    JPH::CharacterVirtual::EGroundState::OnGround) {
+			const JPH::Vec3 ground = character->GetGroundVelocity();
+			velocity = ground + to_jolt_vec3f(
+			                           glm::vec3{controller.desired_velocity.x,
+			                                     0.0f,
+			                                     controller.desired_velocity.z});
+		} else {
 			velocity += gravity * dt;
+			const JPH::Vec3 desired = to_jolt_vec3f(controller.desired_velocity);
+			velocity.SetX(desired.GetX());
+			velocity.SetZ(desired.GetZ());
 		}
 		character->SetLinearVelocity(velocity);
-		character->Update(
-		        dt, gravity,
+
+		JPH::CharacterVirtual::ExtendedUpdateSettings update_settings;
+		character->ExtendedUpdate(
+		        dt, gravity, update_settings,
 		        physics.GetDefaultBroadPhaseLayerFilter(Layers::kMoving),
 		        physics.GetDefaultLayerFilter(Layers::kMoving), {}, {},
 		        temp_allocator);

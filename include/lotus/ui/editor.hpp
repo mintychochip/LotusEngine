@@ -15,6 +15,7 @@ class AssetRegistry;
 class Console;
 class Keybinds;
 class GpuRenderer;
+class PhysicsWorld;
 class SceneManager;
 class Scene;
 
@@ -74,6 +75,8 @@ public:
 	{
 		asset_controls_ = std::move(controls);
 	}
+	/// Optional physics backend for viewport picking (raycast vs colliders).
+	void set_physics(PhysicsWorld* physics) { physics_ = physics; }
 	void set_console(Console* console) { console_ = console; }
 	void set_keybinds(Keybinds* keybinds, std::function<void()> on_save);
 
@@ -150,6 +153,7 @@ private:
 	SceneHistory history_;
 	const Scene* history_scene_{nullptr};
 
+	PhysicsWorld* physics_{nullptr};
 	Console* console_{nullptr};
 	Keybinds* keybinds_{nullptr};
 	std::function<void()> save_keybinds_;

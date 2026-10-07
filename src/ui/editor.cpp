@@ -447,7 +447,7 @@ void Editor::draw_viewport(Scene& scene)
 	// A click that did not land on a handle selects the entity under it, or
 	// clears the selection when it hit nothing.
 	if (viewport_clicked && !gizmo_dragging_) {
-		selected_ = scene.pick(ndc_x, ndc_y, aspect);
+		selected_ = scene.pick(ndc_x, ndc_y, aspect, physics_);
 	}
 
 	// Drag the handle. The movement is applied per frame along the axis, then
@@ -737,6 +737,54 @@ void Editor::draw_inspector(Scene& scene)
 			edited_ = true;
 		}
 		ImGui::DragFloat("Roughness", &material->roughness, 0.01f, 0.0f, 1.0f);
+		if (ImGui::IsItemDeactivatedAfterEdit()) {
+			edited_ = true;
+		}
+	}
+	if (auto* controller = registry.try_get<CharacterController>(selected_)) {
+		ImGui::SeparatorText("CharacterController");
+		ImGui::DragFloat("Radius", &controller->radius, 0.01f, 0.1f, 2.0f);
+		if (ImGui::IsItemDeactivatedAfterEdit()) {
+			edited_ = true;
+		}
+		ImGui::DragFloat("Half height", &controller->half_height, 0.01f, 0.1f,
+		                 3.0f);
+		if (ImGui::IsItemDeactivatedAfterEdit()) {
+			edited_ = true;
+		}
+		ImGui::DragFloat3("Desired velocity", &controller->desired_velocity.x,
+		                  0.05f);
+		if (ImGui::IsItemDeactivatedAfterEdit()) {
+			edited_ = true;
+		}
+		ImGui::Text("Grounded: %s", controller->grounded ? "yes" : "no");
+	}
+	if (auto* body = registry.try_get<RigidBody>(selected_)) {
+		ImGui::SeparatorText("RigidBody");
+		int motion = static_cast<int>(body->motion_type);
+		const char* motion_labels[] = {"Static", "Kinematic", "Dynamic"};
+		if (ImGui::Combo("Motion", &motion, motion_labels, 3)) {
+			body->motion_type = static_cast<PhysicsMotionType>(motion);
+			edited_ = true;
+		}
+		ImGui::DragFloat("Mass", &body->mass, 0.1f, 0.001f, 1000.0f);
+		ImGui::DragFloat("Friction", &body->friction, 0.01f, 0.0f, 2.0f);
+		ImGui::DragFloat("Restitution", &body->restitution, 0.01f, 0.0f, 1.0f);
+		if (ImGui::IsItemDeactivatedAfterEdit()) {
+			edited_ = true;
+		}
+	}
+	if (auto* box = registry.try_get<BoxCollider>(selected_)) {
+		ImGui::SeparatorText("BoxCollider");
+		ImGui::DragFloat3("Half extents", &box->half_extents.x, 0.01f, 0.01f,
+		                  50.0f);
+		if (ImGui::IsItemDeactivatedAfterEdit()) {
+			edited_ = true;
+		}
+	}
+	if (auto* sphere = registry.try_get<SphereCollider>(selected_)) {
+		ImGui::SeparatorText("SphereCollider");
+		ImGui::DragFloat("Radius", &sphere->radius, 0.01f, 0.01f, 50.0f);
 		if (ImGui::IsItemDeactivatedAfterEdit()) {
 			edited_ = true;
 		}
