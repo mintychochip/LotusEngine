@@ -133,6 +133,26 @@ void Application::register_commands()
 		        return std::string{"active scene: "} + scenes_.active_name();
 	        });
 	console_.add_command(
+	        "scene.load_async",
+	        "scene.load_async <name> - load <scene dir>/<name>.json on a "
+	        "worker thread; poll until ready",
+	        [this](const std::vector<std::string>& args) {
+		        if (args.empty()) {
+			        return std::string{"usage: scene.load_async <name>"};
+		        }
+		        if (async_scene_load_.state() ==
+		            AsyncSceneLoad::State::Loading) {
+			        return std::string{"async load already in progress: "} +
+			               async_scene_load_.path();
+		        }
+		        const std::string path = scene_file_for(args[0]);
+		        if (!async_scene_load_.start(path)) {
+			        return std::string{"failed to start async load"};
+		        }
+		        pending_async_scene_ = args[0];
+		        return std::string{"loading "} + path + "...";
+	        });
+	console_.add_command(
 	        "scene.merge", "scene.merge <path> - merge a scene file into the "
 	                       "active scene without replacing it",
 	        [this](const std::vector<std::string>& args) {
@@ -556,6 +576,30 @@ bool Application::reload_scene_now(std::string* error)
 	return true;
 }
 
+void Application::poll_async_scene_load()
+{
+	if (async_scene_load_.state() == AsyncSceneLoad::State::Idle) {
+		return;
+	}
+	const AsyncSceneLoad::State state = async_scene_load_.poll();
+	if (state == AsyncSceneLoad::State::Ready && !pending_async_scene_.empty()) {
+		Scene loaded{pending_async_scene_};
+		if (async_scene_load_.take(loaded)) {
+			Scene& scene = scenes_.create(pending_async_scene_);
+			scene = std::move(loaded);
+			scene.set_assets(&assets_);
+			scenes_.activate(pending_async_scene_);
+			adopt_scene_path(scene_file_for(pending_async_scene_));
+			scripts_.sync(scene);
+			console_.info("async load ready: " + pending_async_scene_);
+		}
+		pending_async_scene_.clear();
+	} else if (state == AsyncSceneLoad::State::Failed) {
+		console_.warn("async load failed: " + async_scene_load_.error());
+		pending_async_scene_.clear();
+	}
+}
+
 void Application::poll_hot_reload()
 {
 	for (const std::string& key : watcher_.poll()) {
@@ -590,6 +634,17 @@ void Application::run(int width, int height, const std::string& title)
 		}
 
 		register_commands();
+		residency_.set_scene_directory(scene_dir_);
+		{
+			const std::string regions_path = scene_dir_ + "/regions.json";
+			std::error_code exists;
+			if (std::filesystem::exists(regions_path, exists)) {
+				std::string region_error;
+				if (!residency_.load_catalog(regions_path, &region_error)) {
+					console_.warn("regions: " + region_error);
+				}
+			}
+		}
 		std::error_code assets_dir_error;
 		std::filesystem::create_directories(assets_dir_, assets_dir_error);
 		{
@@ -736,11 +791,21 @@ void Application::run(int width, int height, const std::string& title)
 
 			on_update(dt);
 			poll_hot_reload();
+			poll_async_scene_load();
 			if (Scene* scene = scenes_.active()) {
+				animation_system_update(*scene, animations_, &assets_, dt);
 				scene->update(dt);
 				physics_.step(*scene, dt);
 				scripts_.update(*scene, dt);
 				scripts_.poll(*scene);
+
+				glm::vec3 viewer{0.0f};
+				if (const Camera3D* camera = scene->active_camera3d()) {
+					viewer = camera->position;
+				} else if (const Camera2D* camera = scene->active_camera()) {
+					viewer = glm::vec3{camera->position, 0.0f};
+				}
+				residency_.update(*scene, viewer);
 			}
 
 			int pixel_w = width, pixel_h = height;

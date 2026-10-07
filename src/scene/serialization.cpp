@@ -273,6 +273,36 @@ void from_json(const nlohmann::json& j, SphereCollider& sphere)
 	}
 }
 
+void to_json(nlohmann::json& j, const Animator& animator)
+{
+	j = nlohmann::json{{"time", tidy(animator.time)},
+	                   {"speed", tidy(animator.speed)},
+	                   {"loop", animator.loop},
+	                   {"playing", animator.playing}};
+	if (!animator.clip_id.empty()) {
+		j["clip_id"] = animator.clip_id;
+	}
+}
+
+void from_json(const nlohmann::json& j, Animator& animator)
+{
+	if (j.contains("clip_id") && j.at("clip_id").is_string()) {
+		animator.clip_id = j.at("clip_id").get<std::string>();
+	}
+	if (j.contains("time") && j.at("time").is_number()) {
+		animator.time = j.at("time").get<float>();
+	}
+	if (j.contains("speed") && j.at("speed").is_number()) {
+		animator.speed = j.at("speed").get<float>();
+	}
+	if (j.contains("loop") && j.at("loop").is_boolean()) {
+		animator.loop = j.at("loop").get<bool>();
+	}
+	if (j.contains("playing") && j.at("playing").is_boolean()) {
+		animator.playing = j.at("playing").get<bool>();
+	}
+}
+
 void from_json(const nlohmann::json& j, Material& m)
 {
 	if (j.contains("base_color") && j.at("base_color").is_array() &&
@@ -566,6 +596,19 @@ ComponentCodecs& mutable_component_codecs()
 		        [](Registry& r, Entity e, const nlohmann::json& j) {
 			        r.emplace_or_replace<SphereCollider>(e,
 			                                             j.get<SphereCollider>());
+		        });
+		c.add(
+		        "Animator",
+		        [](const Registry& r, Entity e, nlohmann::json& j) {
+			        const auto* value = r.try_get<Animator>(e);
+			        if (!value) {
+				        return false;
+			        }
+			        j = *value;
+			        return true;
+		        },
+		        [](Registry& r, Entity e, const nlohmann::json& j) {
+			        r.emplace_or_replace<Animator>(e, j.get<Animator>());
 		        });
 		return c;
 	}();

@@ -269,7 +269,7 @@ Entity instantiate(const Prefab& prefab, Scene& scene, Entity parent)
 }
 
 bool load_scene_additive(Scene& target, const std::string& text,
-                         std::string* error)
+                         std::string* error, const std::string& origin)
 {
 	// Parse and validate the whole document before touching the target, so a
 	// malformed file merges nothing. Same atomicity contract as scene_from_json,
@@ -280,14 +280,16 @@ bool load_scene_additive(Scene& target, const std::string& text,
 	}
 	// Tag before cloning so the merged entities carry the origin from the
 	// start, and a later destroy_by_origin can drop exactly this set.
-	staging.tag_origin(staging.name());
+	const std::string tag = origin.empty() ? staging.name() : origin;
+	staging.tag_origin(tag);
 	clone_all_into(staging, target);
 	target.resolve_refs();
 	return true;
 }
 
 bool load_scene_additive_from_file(Scene& target, const std::string& path,
-                                   std::string* error)
+                                   std::string* error,
+                                   const std::string& origin)
 {
 	std::ifstream in(path, std::ios::binary);
 	if (!in) {
@@ -298,7 +300,7 @@ bool load_scene_additive_from_file(Scene& target, const std::string& path,
 	}
 	std::ostringstream buffer;
 	buffer << in.rdbuf();
-	return load_scene_additive(target, buffer.str(), error);
+	return load_scene_additive(target, buffer.str(), error, origin);
 }
 
 } // namespace lotus

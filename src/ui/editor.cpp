@@ -13,6 +13,7 @@
 #include "lotus/console/console.hpp"
 #include "lotus/gpu/renderer.hpp"
 #include "lotus/input/keybinds.hpp"
+#include "lotus/scene/components.hpp"
 #include "lotus/scene/assets.hpp"
 #include "lotus/scene/scene.hpp"
 #include "lotus/scene/scene_manager.hpp"
@@ -717,6 +718,25 @@ void Editor::draw_inspector(Scene& scene)
 			edited_ = true;
 		}
 		ImGui::DragFloat2("Size", &sprite->size.x, 0.01f, 0.001f, 100.0f);
+		if (ImGui::IsItemDeactivatedAfterEdit()) {
+			edited_ = true;
+		}
+	}
+	if (auto* material = registry.try_get<Material>(selected_)) {
+		ImGui::SeparatorText("Material");
+		ImGui::ColorEdit3("Base color", &material->base_color.x);
+		if (ImGui::IsItemDeactivatedAfterEdit()) {
+			edited_ = true;
+		}
+		char albedo[128];
+		std::snprintf(albedo, sizeof(albedo), "%s", material->albedo_id.c_str());
+		if (ImGui::InputText("Albedo id", albedo, sizeof(albedo))) {
+			material->albedo_id = albedo;
+		}
+		if (ImGui::IsItemDeactivatedAfterEdit()) {
+			edited_ = true;
+		}
+		ImGui::DragFloat("Roughness", &material->roughness, 0.01f, 0.0f, 1.0f);
 		if (ImGui::IsItemDeactivatedAfterEdit()) {
 			edited_ = true;
 		}

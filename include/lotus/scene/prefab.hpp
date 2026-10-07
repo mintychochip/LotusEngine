@@ -68,10 +68,12 @@ Entity instantiate(const Prefab& prefab, Scene& scene,
 /// This is instantiation of a whole document, so it shares the clone-and-remap
 /// path with instantiate() rather than growing a second merge implementation.
 bool load_scene_additive(Scene& target, const std::string& text,
-                         std::string* error = nullptr);
+                         std::string* error = nullptr,
+                         const std::string& origin = {});
 
 /// Reads \p path and merges it into \p target. See load_scene_additive.
 bool load_scene_additive_from_file(Scene& target, const std::string& path,
-                                   std::string* error = nullptr);
+                                   std::string* error = nullptr,
+                                   const std::string& origin = {});
 
 } // namespace lotus

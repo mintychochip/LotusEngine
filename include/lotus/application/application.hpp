@@ -8,7 +8,10 @@
 #include "lotus/input/keybinds.hpp"
 #include "lotus/io/file_watcher.hpp"
 #include "lotus/physics/physics_world.hpp"
+#include "lotus/scene/animation.hpp"
 #include "lotus/scene/assets.hpp"
+#include "lotus/scene/async_load.hpp"
+#include "lotus/scene/residency_system.hpp"
 #include "lotus/scene/scene_manager.hpp"
 #include "lotus/script/script_engine.hpp"
 #include "lotus/ui/editor.hpp"
@@ -97,12 +100,17 @@ private:
 	void register_commands();
 	void handle_action(const std::string& action);
 	void poll_hot_reload();
+	void poll_async_scene_load();
 	std::string scene_file_for(const std::string& name) const;
 	void adopt_scene_path(const std::string& path);
 	void wire_assets();
 
 	SceneManager scenes_;
 	PhysicsWorld physics_;
+	AnimationLibrary animations_;
+	ResidencySystem residency_;
+	AsyncSceneLoad async_scene_load_;
+	std::string pending_async_scene_;
 	Editor editor_;
 	ScriptEngine scripts_;
 	Console console_;

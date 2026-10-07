@@ -193,6 +193,15 @@ struct SphereCollider {
 	float radius{0.5f};
 };
 
+/// Plays a transform animation clip from the asset registry.
+struct Animator {
+	std::string clip_id;
+	float time{0.0f};
+	float speed{1.0f};
+	bool loop{true};
+	bool playing{true};
+};
+
 /// Per-scene environment. Replaces the renderer's global lighting when a scene
 /// specifies one; a scene without settings leaves the globals alone.
 struct SceneSettings {
