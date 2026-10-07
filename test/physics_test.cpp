@@ -110,3 +110,61 @@ TEST(PhysicsTest, CharacterControllerLandsAfterDrop)
 	EXPECT_NEAR(y, 0.0f, 0.08f);
 	EXPECT_TRUE(scene.registry().get<CharacterController>(player).grounded);
 }
+
+TEST(PhysicsTest, RebuildsColliderWhenBoxExtentsChange)
+{
+	Scene scene{"resize"};
+	PhysicsWorld world;
+
+	const Entity floor = scene.create("floor");
+	scene.registry().emplace<RigidBody>(
+	        floor, RigidBody{PhysicsMotionType::Static});
+	auto& box = scene.registry().emplace<BoxCollider>(
+	        floor, BoxCollider{{5.0f, 0.5f, 5.0f}});
+	scene.registry().get<Transform>(floor).position = {0.0f, -0.5f, 0.0f};
+
+	scene.update(0.0f);
+	world.step(scene, 0.0f);
+
+	PhysicsRaycastHit hit;
+	EXPECT_TRUE(world.raycast({0.0f, 5.0f, 0.0f}, {0.0f, -1.0f, 0.0f}, 20.0f,
+	                          hit));
+	const float top_before = hit.point.y;
+
+	box.half_extents.y = 2.0f;
+	world.step(scene, 0.0f);
+
+	EXPECT_TRUE(world.raycast({0.0f, 5.0f, 0.0f}, {0.0f, -1.0f, 0.0f}, 20.0f,
+	                          hit));
+	EXPECT_GT(hit.point.y, top_before + 1.0f);
+}
+
+TEST(PhysicsTest, RebuildsCharacterCapsuleWhenResized)
+{
+	Scene scene{"capsule"};
+	PhysicsWorld world;
+
+	const Entity floor = scene.create("floor");
+	scene.registry().emplace<RigidBody>(
+	        floor, RigidBody{PhysicsMotionType::Static});
+	scene.registry().emplace<BoxCollider>(
+	        floor, BoxCollider{{20.0f, 0.5f, 20.0f}});
+	scene.registry().get<Transform>(floor).position = {0.0f, -0.5f, 0.0f};
+
+	const Entity player = scene.create("player");
+	auto& controller =
+	        scene.registry().emplace<CharacterController>(player);
+	scene.registry().get<Transform>(player).position = {0.0f, 0.0f, 0.0f};
+
+	scene.update(0.0f);
+	for (int i = 0; i < 30; ++i) {
+		world.step(scene, 1.0f / 60.0f);
+	}
+	EXPECT_TRUE(controller.grounded);
+
+	controller.half_height = 0.3f;
+	world.step(scene, 1.0f / 60.0f);
+	EXPECT_TRUE(controller.grounded);
+	EXPECT_NEAR(scene.registry().get<Transform>(player).position.y, 0.0f,
+	            0.1f);
+}

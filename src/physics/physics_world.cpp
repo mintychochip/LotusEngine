@@ -207,94 +207,6 @@ glm::vec3 capsule_center_from_feet(const glm::vec3& feet,
 	return feet + glm::vec3{0.0f, capsule_center_y(controller), 0.0f};
 }
 
-void step_characters(Scene& scene, float dt, JPH::PhysicsSystem& physics,
-                     JPH::TempAllocatorImpl& temp_allocator,
-                     std::unordered_map<Entity,
-                                        std::unique_ptr<JPH::CharacterVirtual>>&
-                             characters)
-{
-	auto& registry = scene.registry();
-	const JPH::Vec3 gravity = physics.GetGravity();
-
-	for (auto it = characters.begin(); it != characters.end();) {
-		const Entity entity = it->first;
-		if (!registry.valid(entity) ||
-		    !registry.all_of<CharacterController, Transform>(entity)) {
-			it = characters.erase(it);
-			continue;
-		}
-		++it;
-	}
-
-	const auto view = registry.view<Transform, CharacterController>();
-	for (const Entity entity : view) {
-		Transform& transform = view.get<Transform>(entity);
-		CharacterController& controller = view.get<CharacterController>(entity);
-
-		auto existing = characters.find(entity);
-		if (existing == characters.end()) {
-			JPH::Ref<JPH::CharacterVirtualSettings> settings =
-			        new JPH::CharacterVirtualSettings();
-			settings->mShape = new JPH::CapsuleShape(controller.half_height,
-			                                         controller.radius);
-			settings->mSupportingVolume =
-			        JPH::Plane(JPH::Vec3::sAxisY(), -controller.radius);
-			const JPH::RVec3 center =
-			        to_jolt_vec3(capsule_center_from_feet(transform.position,
-			                                              controller));
-			auto character = std::make_unique<JPH::CharacterVirtual>(
-			        settings, center, JPH::Quat::sIdentity(),
-			        static_cast<JPH::uint64>(entt::to_integral(entity)),
-			        &physics);
-			characters.emplace(entity, std::move(character));
-			existing = characters.find(entity);
-		}
-
-		JPH::CharacterVirtual* character = existing->second.get();
-
-		const glm::vec3 expected_center =
-		        capsule_center_from_feet(transform.position, controller);
-		const glm::vec3 actual_center = to_glm_vec3(character->GetPosition());
-		if (glm::distance(expected_center, actual_center) > 0.1f) {
-			character->SetPosition(to_jolt_vec3(expected_center));
-			character->RefreshContacts(
-			        physics.GetDefaultBroadPhaseLayerFilter(Layers::kMoving),
-			        physics.GetDefaultLayerFilter(Layers::kMoving), {}, {},
-			        temp_allocator);
-		}
-
-		JPH::Vec3 velocity = character->GetLinearVelocity();
-		if (character->GetGroundState() ==
-		    JPH::CharacterVirtual::EGroundState::OnGround) {
-			const JPH::Vec3 ground = character->GetGroundVelocity();
-			velocity = ground + to_jolt_vec3f(
-			                           glm::vec3{controller.desired_velocity.x,
-			                                     0.0f,
-			                                     controller.desired_velocity.z});
-		} else {
-			velocity += gravity * dt;
-			const JPH::Vec3 desired = to_jolt_vec3f(controller.desired_velocity);
-			velocity.SetX(desired.GetX());
-			velocity.SetZ(desired.GetZ());
-		}
-		character->SetLinearVelocity(velocity);
-
-		JPH::CharacterVirtual::ExtendedUpdateSettings update_settings;
-		character->ExtendedUpdate(
-		        dt, gravity, update_settings,
-		        physics.GetDefaultBroadPhaseLayerFilter(Layers::kMoving),
-		        physics.GetDefaultLayerFilter(Layers::kMoving), {}, {},
-		        temp_allocator);
-
-		transform.position =
-		        feet_from_capsule_center(to_glm_vec3(character->GetPosition()),
-		                                 controller);
-		controller.grounded =
-		        character->GetGroundState() ==
-		        JPH::CharacterVirtual::EGroundState::OnGround;
-	}
-}
-
 JPH::RefConst<JPH::Shape> make_shape(const Registry& registry, Entity entity)
 {
 	if (const auto* box = registry.try_get<BoxCollider>(entity)) {
@@ -311,6 +223,28 @@ JPH::RefConst<JPH::Shape> make_shape(const Registry& registry, Entity entity)
 } // namespace
 
 struct PhysicsWorld::Impl {
+	enum class ColliderKind : std::uint8_t { None, Box, Sphere };
+
+	struct BodySyncKey {
+		PhysicsMotionType motion{PhysicsMotionType::Dynamic};
+		ColliderKind kind{ColliderKind::None};
+		glm::vec3 box_extents{0.0f};
+		float sphere_radius{0.0f};
+
+		bool operator==(const BodySyncKey& other) const
+		{
+			return motion == other.motion && kind == other.kind &&
+			       box_extents == other.box_extents &&
+			       sphere_radius == other.sphere_radius;
+		}
+	};
+
+	struct CharacterSlot {
+		std::unique_ptr<JPH::CharacterVirtual> character;
+		float radius{0.0f};
+		float half_height{0.0f};
+	};
+
 	JPH::PhysicsSystem physics;
 	JPH::JobSystemSingleThreaded job_system;
 	std::unique_ptr<JPH::TempAllocatorImpl> temp_allocator;
@@ -318,8 +252,8 @@ struct PhysicsWorld::Impl {
 	ObjectVsBroadPhaseLayerFilter object_vs_broadphase;
 	ObjectLayerPairFilter object_vs_object;
 	std::unordered_map<Entity, JPH::BodyID> bodies;
-	std::unordered_map<Entity, std::unique_ptr<JPH::CharacterVirtual>>
-	        characters;
+	std::unordered_map<Entity, BodySyncKey> body_keys;
+	std::unordered_map<Entity, CharacterSlot> characters;
 	float accumulator{0.0f};
 
 	Impl()
@@ -354,9 +288,130 @@ struct PhysicsWorld::Impl {
 			(void)entity;
 		}
 		bodies.clear();
+		body_keys.clear();
 		characters.clear();
 	}
+
+	BodySyncKey body_sync_key(const Registry& registry, Entity entity,
+	                          const RigidBody& body) const;
+	void step_characters(Scene& scene, float dt);
 };
+
+PhysicsWorld::Impl::BodySyncKey PhysicsWorld::Impl::body_sync_key(
+        const Registry& registry, Entity entity, const RigidBody& body) const
+{
+	BodySyncKey key;
+	key.motion = body.motion_type;
+	if (const auto* box = registry.try_get<BoxCollider>(entity)) {
+		key.kind        = ColliderKind::Box;
+		key.box_extents = box->half_extents;
+	} else if (const auto* sphere = registry.try_get<SphereCollider>(entity)) {
+		key.kind          = ColliderKind::Sphere;
+		key.sphere_radius = sphere->radius;
+	}
+	return key;
+}
+
+void PhysicsWorld::Impl::step_characters(Scene& scene, float dt)
+{
+	auto& registry = scene.registry();
+	const JPH::Vec3 gravity = physics.GetGravity();
+
+	for (auto it = characters.begin(); it != characters.end();) {
+		const Entity entity = it->first;
+		if (!registry.valid(entity) ||
+		    !registry.all_of<CharacterController, Transform>(entity)) {
+			it = characters.erase(it);
+			continue;
+		}
+		++it;
+	}
+
+	const auto view = registry.view<Transform, CharacterController>();
+	for (const Entity entity : view) {
+		Transform& transform = view.get<Transform>(entity);
+		CharacterController& controller = view.get<CharacterController>(entity);
+
+		auto existing = characters.find(entity);
+		if (existing == characters.end()) {
+			JPH::Ref<JPH::CharacterVirtualSettings> settings =
+			        new JPH::CharacterVirtualSettings();
+			settings->mShape = new JPH::CapsuleShape(controller.half_height,
+			                                         controller.radius);
+			settings->mSupportingVolume =
+			        JPH::Plane(JPH::Vec3::sAxisY(), -controller.radius);
+			const JPH::RVec3 center =
+			        to_jolt_vec3(capsule_center_from_feet(transform.position,
+			                                              controller));
+			CharacterSlot slot;
+			slot.character = std::make_unique<JPH::CharacterVirtual>(
+			        settings, center, JPH::Quat::sIdentity(),
+			        static_cast<JPH::uint64>(entt::to_integral(entity)),
+			        &physics);
+			slot.radius      = controller.radius;
+			slot.half_height = controller.half_height;
+			characters.emplace(entity, std::move(slot));
+			existing = characters.find(entity);
+		}
+
+		CharacterSlot& slot = existing->second;
+		JPH::CharacterVirtual* character = slot.character.get();
+
+		if (slot.radius != controller.radius ||
+		    slot.half_height != controller.half_height) {
+			const JPH::RefConst<JPH::Shape> shape = new JPH::CapsuleShape(
+			        controller.half_height, controller.radius);
+			character->SetShape(
+			        shape, controller.radius * 0.5f,
+			        physics.GetDefaultBroadPhaseLayerFilter(Layers::kMoving),
+			        physics.GetDefaultLayerFilter(Layers::kMoving), {}, {},
+			        *temp_allocator);
+			slot.radius      = controller.radius;
+			slot.half_height = controller.half_height;
+		}
+
+		const glm::vec3 expected_center =
+		        capsule_center_from_feet(transform.position, controller);
+		const glm::vec3 actual_center = to_glm_vec3(character->GetPosition());
+		if (glm::distance(expected_center, actual_center) > 0.1f) {
+			character->SetPosition(to_jolt_vec3(expected_center));
+			character->RefreshContacts(
+			        physics.GetDefaultBroadPhaseLayerFilter(Layers::kMoving),
+			        physics.GetDefaultLayerFilter(Layers::kMoving), {}, {},
+			        *temp_allocator);
+		}
+
+		JPH::Vec3 velocity = character->GetLinearVelocity();
+		if (character->GetGroundState() ==
+		    JPH::CharacterVirtual::EGroundState::OnGround) {
+			const JPH::Vec3 ground = character->GetGroundVelocity();
+			velocity = ground + to_jolt_vec3f(
+			                           glm::vec3{controller.desired_velocity.x,
+			                                     0.0f,
+			                                     controller.desired_velocity.z});
+		} else {
+			velocity += gravity * dt;
+			const JPH::Vec3 desired = to_jolt_vec3f(controller.desired_velocity);
+			velocity.SetX(desired.GetX());
+			velocity.SetZ(desired.GetZ());
+		}
+		character->SetLinearVelocity(velocity);
+
+		JPH::CharacterVirtual::ExtendedUpdateSettings update_settings;
+		character->ExtendedUpdate(
+		        dt, gravity, update_settings,
+		        physics.GetDefaultBroadPhaseLayerFilter(Layers::kMoving),
+		        physics.GetDefaultLayerFilter(Layers::kMoving), {}, {},
+		        *temp_allocator);
+
+		transform.position =
+		        feet_from_capsule_center(to_glm_vec3(character->GetPosition()),
+		                                 controller);
+		controller.grounded =
+		        character->GetGroundState() ==
+		        JPH::CharacterVirtual::EGroundState::OnGround;
+	}
+}
 
 PhysicsWorld::PhysicsWorld() : impl_(new Impl()) {}
 
@@ -394,6 +449,7 @@ void PhysicsWorld::step(Scene& scene, float dt)
 				body_interface.RemoveBody(it->second);
 				body_interface.DestroyBody(it->second);
 			}
+			impl_->body_keys.erase(entity);
 			it = impl_->bodies.erase(it);
 		} else {
 			++it;
@@ -410,7 +466,21 @@ void PhysicsWorld::step(Scene& scene, float dt)
 		const Transform& transform = view.get<Transform>(entity);
 		const RigidBody& body      = view.get<RigidBody>(entity);
 
-		const auto existing = impl_->bodies.find(entity);
+		const Impl::BodySyncKey key =
+		        impl_->body_sync_key(registry, entity, body);
+		auto existing         = impl_->bodies.find(entity);
+		if (existing != impl_->bodies.end()) {
+			const auto key_it = impl_->body_keys.find(entity);
+			if (key_it == impl_->body_keys.end() || key_it->second != key) {
+				if (!existing->second.IsInvalid()) {
+					body_interface.RemoveBody(existing->second);
+					body_interface.DestroyBody(existing->second);
+				}
+				impl_->bodies.erase(existing);
+				impl_->body_keys.erase(entity);
+				existing = impl_->bodies.end();
+			}
+		}
 		if (existing == impl_->bodies.end()) {
 			const JPH::RefConst<JPH::Shape> shape =
 			        make_shape(registry, entity);
@@ -438,6 +508,7 @@ void PhysicsWorld::step(Scene& scene, float dt)
 			const JPH::BodyID id = created->GetID();
 			body_interface.AddBody(id, JPH::EActivation::Activate);
 			impl_->bodies.emplace(entity, id);
+			impl_->body_keys.emplace(entity, key);
 			continue;
 		}
 
@@ -481,8 +552,7 @@ void PhysicsWorld::step(Scene& scene, float dt)
 	}
 
 	if (simulate_char || !impl_->characters.empty()) {
-		step_characters(scene, dt, physics, *impl_->temp_allocator,
-		                impl_->characters);
+		impl_->step_characters(scene, dt);
 	}
 
 	update_world_transforms(scene);

@@ -789,6 +789,47 @@ void Editor::draw_inspector(Scene& scene)
 			edited_ = true;
 		}
 	}
+	if (auto* mesh_source = registry.try_get<MeshSource>(selected_)) {
+		ImGui::SeparatorText("MeshSource");
+		char path[256];
+		std::snprintf(path, sizeof(path), "%s", mesh_source->path.c_str());
+		if (ImGui::InputText("Path", path, sizeof(path))) {
+			mesh_source->path = path;
+		}
+		char mesh_id[128];
+		std::snprintf(mesh_id, sizeof(mesh_id), "%s", mesh_source->id.c_str());
+		if (ImGui::InputText("Asset id", mesh_id, sizeof(mesh_id))) {
+			mesh_source->id = mesh_id;
+		}
+		if (ImGui::IsItemDeactivatedAfterEdit()) {
+			edited_ = true;
+		}
+	}
+	if (auto* animator = registry.try_get<Animator>(selected_)) {
+		ImGui::SeparatorText("Animator");
+		char clip[128];
+		std::snprintf(clip, sizeof(clip), "%s", animator->clip_id.c_str());
+		if (ImGui::InputText("Clip id", clip, sizeof(clip))) {
+			animator->clip_id = clip;
+		}
+		ImGui::DragFloat("Speed", &animator->speed, 0.01f, 0.0f, 10.0f);
+		ImGui::Checkbox("Loop", &animator->loop);
+		ImGui::Checkbox("Playing", &animator->playing);
+		if (ImGui::IsItemDeactivatedAfterEdit()) {
+			edited_ = true;
+		}
+	}
+	if (auto* camera3d = registry.try_get<Camera3D>(selected_)) {
+		ImGui::SeparatorText("Camera3D");
+		ImGui::DragFloat3("Position", &camera3d->position.x, 0.05f);
+		ImGui::DragFloat3("Target", &camera3d->target.x, 0.05f);
+		ImGui::DragFloat("FOV", &camera3d->fov_degrees, 0.5f, 10.0f, 120.0f);
+		ImGui::DragFloat("Near", &camera3d->near_plane, 0.01f, 0.01f, 10.0f);
+		ImGui::DragFloat("Far", &camera3d->far_plane, 1.0f, 1.0f, 500.0f);
+		if (ImGui::IsItemDeactivatedAfterEdit()) {
+			edited_ = true;
+		}
+	}
 	if (auto* camera = registry.try_get<Camera2D>(selected_)) {
 		ImGui::SeparatorText("Camera2D");
 		ImGui::DragFloat2("Cam position", &camera->position.x, 0.01f);
@@ -802,16 +843,66 @@ void Editor::draw_inspector(Scene& scene)
 	}
 
 	ImGui::SeparatorText("Components");
-	static const char* kAddable[] = {"Sprite", "Camera2D"};
+	static const char* kAddable[] = {"Sprite",
+	                                 "Camera2D",
+	                                 "Camera3D",
+	                                 "MeshSource",
+	                                 "Material",
+	                                 "CharacterController",
+	                                 "RigidBody + Box",
+	                                 "Animator"};
 	static int choice             = 0;
-	ImGui::SetNextItemWidth(140);
-	ImGui::Combo("##add", &choice, kAddable, 2);
+	ImGui::SetNextItemWidth(160);
+	ImGui::Combo("##add", &choice, kAddable, 8);
 	ImGui::SameLine();
 	if (ImGui::Button("Add component")) {
-		if (choice == 0 && !registry.all_of<Sprite>(selected_)) {
-			registry.emplace<Sprite>(selected_);
-		} else if (choice == 1 && !registry.all_of<Camera2D>(selected_)) {
-			registry.emplace<Camera2D>(selected_);
+		switch (choice) {
+		case 0:
+			if (!registry.all_of<Sprite>(selected_)) {
+				registry.emplace<Sprite>(selected_);
+			}
+			break;
+		case 1:
+			if (!registry.all_of<Camera2D>(selected_)) {
+				registry.emplace<Camera2D>(selected_);
+			}
+			break;
+		case 2:
+			if (!registry.all_of<Camera3D>(selected_)) {
+				registry.emplace<Camera3D>(selected_);
+			}
+			break;
+		case 3:
+			if (!registry.all_of<MeshSource>(selected_)) {
+				registry.emplace<MeshSource>(
+				        selected_, MeshSource{"builtin:cube"});
+			}
+			break;
+		case 4:
+			if (!registry.all_of<Material>(selected_)) {
+				registry.emplace<Material>(selected_);
+			}
+			break;
+		case 5:
+			if (!registry.all_of<CharacterController>(selected_)) {
+				registry.emplace<CharacterController>(selected_);
+			}
+			break;
+		case 6:
+			if (!registry.all_of<RigidBody>(selected_)) {
+				registry.emplace<RigidBody>(selected_);
+			}
+			if (!registry.all_of<BoxCollider>(selected_)) {
+				registry.emplace<BoxCollider>(selected_);
+			}
+			break;
+		case 7:
+			if (!registry.all_of<Animator>(selected_)) {
+				registry.emplace<Animator>(selected_);
+			}
+			break;
+		default:
+			break;
 		}
 		edited_ = true;
 	}
