@@ -141,8 +141,15 @@ public:
 	}
 
 	/// Optional asset key to path table. Null means resolve MeshSource and
-	/// Script paths directly (the default for unit tests).
-	void set_assets(const AssetRegistry* assets) { assets_ = assets; }
+	/// Script paths directly (the default for unit tests). When
+	/// \p assets_directory is set, embedded glTF textures are written there as
+	/// PNG sidecars during mesh sync.
+	void set_assets(AssetRegistry* assets,
+	                const std::string& assets_directory = {})
+	{
+		assets_            = assets;
+		assets_directory_ = assets_directory;
+	}
 	const AssetRegistry* assets() const { return assets_; }
 
 private:
@@ -170,7 +177,8 @@ private:
 	std::vector<std::string> reference_errors_;
 	SceneSettings settings_;
 	bool has_settings_{false};
-	const AssetRegistry* assets_{nullptr};
+	AssetRegistry* assets_{nullptr};
+	std::string assets_directory_;
 };
 
 /// Recomputes Transform::world for every entity, depth-first from the roots.

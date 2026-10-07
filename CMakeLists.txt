@@ -95,6 +95,9 @@ set_target_properties(lotus PROPERTIES
 file(COPY ${CMAKE_SOURCE_DIR}/shaders DESTINATION ${CMAKE_BINARY_DIR})
 file(COPY ${CMAKE_SOURCE_DIR}/assets DESTINATION ${CMAKE_BINARY_DIR})
 file(COPY ${CMAKE_SOURCE_DIR}/scripts DESTINATION ${CMAKE_BINARY_DIR})
+if(EXISTS ${CMAKE_SOURCE_DIR}/scenes)
+    file(COPY ${CMAKE_SOURCE_DIR}/scenes DESTINATION ${CMAKE_BINARY_DIR})
+endif()
 
 # === Testing ===
 include(CTest)
@@ -130,4 +133,7 @@ if (LOTUS_TEST_SOURCES)
     # Optional: copy assets to test working directory
     file(COPY ${CMAKE_SOURCE_DIR}/shaders DESTINATION ${CMAKE_BINARY_DIR}/test)
     file(COPY ${CMAKE_SOURCE_DIR}/assets DESTINATION ${CMAKE_BINARY_DIR}/test)
+    if(EXISTS ${CMAKE_SOURCE_DIR}/scenes)
+        file(COPY ${CMAKE_SOURCE_DIR}/scenes DESTINATION ${CMAKE_BINARY_DIR}/test)
+    endif()
 endif()

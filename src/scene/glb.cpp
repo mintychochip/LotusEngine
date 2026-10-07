@@ -1,11 +1,17 @@
 #include "lotus/scene/glb.hpp"
 
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <vector>
 
 #include <nlohmann/json.hpp>
+
+#include "stb_image.h"
+#include "stb_image_write.h"
+
+#include "lotus/scene/assets.hpp"
 
 namespace lotus {
 namespace {
@@ -389,6 +395,202 @@ bool load_glb(const std::string& path, Mesh& out, std::string* error)
 	}
 
 	out = std::move(result);
+	return true;
+}
+
+int first_primitive_material_index(const nlohmann::json& json)
+{
+	if (!json.contains("meshes") || !json.at("meshes").is_array()) {
+		return -1;
+	}
+	for (const auto& mesh : json.at("meshes")) {
+		if (!mesh.contains("primitives") || !mesh.at("primitives").is_array()) {
+			continue;
+		}
+		for (const auto& primitive : mesh.at("primitives")) {
+			if (primitive.contains("material") &&
+			    primitive.at("material").is_number_integer()) {
+				return primitive.at("material").get<int>();
+			}
+		}
+	}
+	return -1;
+}
+
+bool read_embedded_image_bytes(const Glb& glb, int image_index,
+                               std::vector<std::uint8_t>& out,
+                               std::string* error)
+{
+	const auto fail = [error](const std::string& message) {
+		if (error) {
+			*error = message;
+		}
+		return false;
+	};
+	if (!glb.json.contains("images") || !glb.json.at("images").is_array()) {
+		return fail("glb has no images");
+	}
+	const auto& images = glb.json.at("images");
+	if (image_index < 0 ||
+	    static_cast<std::size_t>(image_index) >= images.size()) {
+		return fail("image index out of range");
+	}
+	const auto& image = images.at(static_cast<std::size_t>(image_index));
+	if (image.contains("uri")) {
+		return fail("external image uri is unsupported");
+	}
+	if (!image.contains("bufferView")) {
+		return fail("image has no bufferView");
+	}
+	const int buffer_view_index = image.at("bufferView").get<int>();
+	const auto& buffer_views     = glb.json.at("bufferViews");
+	if (buffer_view_index < 0 ||
+	    static_cast<std::size_t>(buffer_view_index) >= buffer_views.size()) {
+		return fail("bufferView index out of range");
+	}
+	const auto& buffer_view =
+	        buffer_views.at(static_cast<std::size_t>(buffer_view_index));
+	if (buffer_view.value("buffer", 0) != 0) {
+		return fail("only the embedded glb buffer is supported");
+	}
+	const std::size_t offset = buffer_view.value("byteOffset", std::size_t{0});
+	const std::size_t length = buffer_view.at("byteLength").get<std::size_t>();
+	if (offset + length > glb.bin.size()) {
+		return fail("image reads past the end of the buffer");
+	}
+	out.assign(glb.bin.begin() + offset, glb.bin.begin() + offset + length);
+	return true;
+}
+
+bool write_png_sidecar(const std::string& path,
+                       const std::vector<std::uint8_t>& encoded,
+                       const std::string& mime_type, std::string* error)
+{
+	namespace fs = std::filesystem;
+	const fs::path out_path{path};
+	if (out_path.has_parent_path()) {
+		std::error_code ec;
+		fs::create_directories(out_path.parent_path(), ec);
+	}
+
+	if (mime_type == "image/png") {
+		std::ofstream out(path, std::ios::binary | std::ios::trunc);
+		if (!out) {
+			if (error) {
+				*error = "cannot write " + path;
+			}
+			return false;
+		}
+		out.write(reinterpret_cast<const char*>(encoded.data()),
+		          static_cast<std::streamsize>(encoded.size()));
+		return static_cast<bool>(out);
+	}
+
+	int width = 0;
+	int height = 0;
+	int components = 0;
+	unsigned char* pixels = stbi_load_from_memory(
+	        encoded.data(), static_cast<int>(encoded.size()), &width, &height,
+	        &components, 0);
+	if (!pixels) {
+		if (error) {
+			*error = "stb_image could not decode embedded texture";
+		}
+		return false;
+	}
+	const int written =
+	        stbi_write_png(path.c_str(), width, height, components, pixels,
+	                       width * components);
+	stbi_image_free(pixels);
+	if (!written) {
+		if (error) {
+			*error = "failed to write png sidecar: " + path;
+		}
+		return false;
+	}
+	return true;
+}
+
+bool import_glb_materials(const std::string& path, const std::string& stem,
+                          const std::string& assets_dir,
+                          AssetRegistry& registry,
+                          std::vector<GlbMaterialSlot>& materials,
+                          int& first_primitive_material, std::string* error)
+{
+	Glb glb;
+	if (!read_glb(path, glb, error)) {
+		return false;
+	}
+	first_primitive_material = first_primitive_material_index(glb.json);
+	materials.clear();
+
+	if (!glb.json.contains("materials") || !glb.json.at("materials").is_array()) {
+		return true;
+	}
+
+	const auto& json_materials = glb.json.at("materials");
+	materials.resize(json_materials.size());
+
+	for (std::size_t i = 0; i < json_materials.size(); ++i) {
+		GlbMaterialSlot slot;
+		slot.albedo_id = stem + "#" + std::to_string(i);
+
+		const auto& material = json_materials.at(i);
+		if (material.contains("pbrMetallicRoughness")) {
+			const auto& pbr = material.at("pbrMetallicRoughness");
+			if (pbr.contains("baseColorFactor") &&
+			    pbr.at("baseColorFactor").is_array() &&
+			    pbr.at("baseColorFactor").size() >= 3) {
+				const auto& c = pbr.at("baseColorFactor");
+				slot.base_color = {c[0].get<float>(), c[1].get<float>(),
+				                   c[2].get<float>()};
+			}
+			if (pbr.contains("baseColorTexture") &&
+			    pbr.at("baseColorTexture").contains("index")) {
+				const int texture_index =
+				        pbr.at("baseColorTexture").at("index").get<int>();
+				if (glb.json.contains("textures") &&
+				    glb.json.at("textures").is_array() &&
+				    texture_index >= 0 &&
+				    static_cast<std::size_t>(texture_index) <
+				            glb.json.at("textures").size()) {
+					const auto& texture =
+					        glb.json.at("textures")
+					                .at(static_cast<std::size_t>(texture_index));
+					if (texture.contains("source")) {
+						const int image_index = texture.at("source").get<int>();
+						std::vector<std::uint8_t> bytes;
+						if (!read_embedded_image_bytes(glb, image_index, bytes,
+						                               error)) {
+							return false;
+						}
+						std::string mime = "image/png";
+						if (glb.json.at("images")
+						            .at(static_cast<std::size_t>(image_index))
+						            .contains("mimeType")) {
+							mime = glb.json.at("images")
+							               .at(static_cast<std::size_t>(
+							                       image_index))
+							               .at("mimeType")
+							               .get<std::string>();
+						}
+						if (!assets_dir.empty()) {
+							const std::string filename =
+							        stem + "#" + std::to_string(i) + ".png";
+							const std::string out_path =
+							        assets_dir + "/" + filename;
+							if (!write_png_sidecar(out_path, bytes, mime,
+							                       error)) {
+								return false;
+							}
+							registry.set(slot.albedo_id, out_path);
+						}
+					}
+				}
+			}
+		}
+		materials[i] = std::move(slot);
+	}
 	return true;
 }
 

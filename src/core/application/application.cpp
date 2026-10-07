@@ -422,7 +422,7 @@ void Application::wire_assets()
 	scripts_.set_assets(&assets_);
 	for (const std::string& name : scenes_.names()) {
 		if (Scene* scene = scenes_.get(name)) {
-			scene->set_assets(&assets_);
+			scene->set_assets(&assets_, assets_dir_);
 		}
 	}
 }
@@ -500,7 +500,7 @@ bool Application::load_scene_by_name(const std::string& name, std::string* error
 	Scene& scene = scenes_.create(name);
 	scene = std::move(scratch);
 	scene.resolve_refs();
-	scene.set_assets(&assets_);
+	scene.set_assets(&assets_, assets_dir_);
 	scenes_.activate(name);
 	adopt_scene_path(path);
 	return true;
@@ -587,7 +587,7 @@ void Application::poll_async_scene_load()
 		if (async_scene_load_.take(loaded)) {
 			Scene& scene = scenes_.create(pending_async_scene_);
 			scene = std::move(loaded);
-			scene.set_assets(&assets_);
+			scene.set_assets(&assets_, assets_dir_);
 			scenes_.activate(pending_async_scene_);
 			adopt_scene_path(scene_file_for(pending_async_scene_));
 			scripts_.sync(scene);

@@ -1,0 +1,16 @@
+{
+  "regions": [
+    {
+      "name": "hub",
+      "path": "hub.json",
+      "center": [0, 0, 0],
+      "radius": 80
+    },
+    {
+      "name": "east_wing",
+      "path": "east_wing.json",
+      "center": [120, 0, 0],
+      "radius": 60
+    }
+  ]
+}

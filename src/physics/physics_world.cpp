@@ -171,6 +171,17 @@ glm::quat to_glm_quat(const JPH::Quat& q)
 	return glm::quat{q.GetW(), q.GetX(), q.GetY(), q.GetZ()};
 }
 
+bool scene_has_physics(const Registry& registry)
+{
+	for (const Entity entity : registry.view<RigidBody>()) {
+		if (registry.all_of<BoxCollider>(entity) ||
+		    registry.all_of<SphereCollider>(entity)) {
+			return true;
+		}
+	}
+	return false;
+}
+
 JPH::RefConst<JPH::Shape> make_shape(const Registry& registry, Entity entity)
 {
 	if (const auto* box = registry.try_get<BoxCollider>(entity)) {
@@ -245,6 +256,11 @@ void PhysicsWorld::step(Scene& scene, float dt)
 	}
 
 	auto& registry       = scene.registry();
+	const bool simulate  = scene_has_physics(registry);
+	if (!simulate && impl_->bodies.empty()) {
+		return;
+	}
+
 	auto& physics        = impl_->physics;
 	auto& body_interface = physics.GetBodyInterface();
 
@@ -263,6 +279,10 @@ void PhysicsWorld::step(Scene& scene, float dt)
 		} else {
 			++it;
 		}
+	}
+
+	if (!simulate) {
+		return;
 	}
 
 	const auto view = registry.view<Transform, RigidBody>();

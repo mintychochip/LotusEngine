@@ -11,7 +11,10 @@
 #include "lotus/scene/culling.hpp"
 #include "lotus/scene/lod.hpp"
 #include "lotus/scene/depth_pyramid.hpp"
+#include <filesystem>
+
 #include "lotus/scene/assets.hpp"
+#include "lotus/scene/glb.hpp"
 #include "lotus/scene/mesh.hpp"
 
 namespace lotus {
@@ -513,6 +516,34 @@ std::string Scene::resolve_mesh_path(const MeshSource& source) const
 	return assets_->resolve(source.id, source.path);
 }
 
+bool path_ends_with_glb(const std::string& path)
+{
+	if (path.size() < 4) {
+		return false;
+	}
+	const std::string tail = path.substr(path.size() - 4);
+	return tail == ".glb" || tail == ".GLB";
+}
+
+void apply_glb_material(Registry& registry, Entity entity,
+                        const std::vector<GlbMaterialSlot>& slots, int index)
+{
+	if (index < 0 || index >= static_cast<int>(slots.size())) {
+		return;
+	}
+	const GlbMaterialSlot& slot = slots[static_cast<std::size_t>(index)];
+	if (registry.all_of<Material>(entity)) {
+		Material& material = registry.get<Material>(entity);
+		if (material.albedo_id.empty() && !slot.albedo_id.empty()) {
+			material.albedo_id = slot.albedo_id;
+		}
+		material.base_color = slot.base_color;
+		return;
+	}
+	registry.emplace<Material>(entity,
+	                           Material{slot.base_color, slot.albedo_id, 0.5f});
+}
+
 void Scene::sync_meshes()
 {
 	for (const Entity entity : registry_.view<MeshSource>()) {
@@ -536,6 +567,20 @@ void Scene::sync_meshes()
 		resolved.bounds = mesh::compute_mesh_bounds(resolved);
 		registry_.emplace_or_replace<Mesh>(entity, std::move(resolved));
 		last_mesh_error_.clear();
+
+		if (assets_ != nullptr && path_ends_with_glb(path)) {
+			const std::string stem =
+			        std::filesystem::path(path).stem().string();
+			std::vector<GlbMaterialSlot> slots;
+			int material_index = -1;
+			std::string import_error;
+			if (import_glb_materials(path, stem, assets_directory_, *assets_,
+			                         slots, material_index, &import_error)) {
+				apply_glb_material(registry_, entity, slots, material_index);
+			} else if (!import_error.empty()) {
+				last_mesh_error_ = import_error;
+			}
+		}
 	}
 }
 
