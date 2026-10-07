@@ -202,6 +202,77 @@ void to_json(nlohmann::json& j, const Material& m)
 	}
 }
 
+void to_json(nlohmann::json& j, const RigidBody& body)
+{
+	const char* motion = "dynamic";
+	switch (body.motion_type) {
+	case PhysicsMotionType::Static:
+		motion = "static";
+		break;
+	case PhysicsMotionType::Kinematic:
+		motion = "kinematic";
+		break;
+	case PhysicsMotionType::Dynamic:
+		break;
+	}
+	j = nlohmann::json{{"motion_type", motion},
+	                   {"mass", tidy(body.mass)},
+	                   {"friction", tidy(body.friction)},
+	                   {"restitution", tidy(body.restitution)}};
+}
+
+void from_json(const nlohmann::json& j, RigidBody& body)
+{
+	if (j.contains("motion_type") && j.at("motion_type").is_string()) {
+		const std::string motion = j.at("motion_type").get<std::string>();
+		if (motion == "static") {
+			body.motion_type = PhysicsMotionType::Static;
+		} else if (motion == "kinematic") {
+			body.motion_type = PhysicsMotionType::Kinematic;
+		} else {
+			body.motion_type = PhysicsMotionType::Dynamic;
+		}
+	}
+	if (j.contains("mass") && j.at("mass").is_number()) {
+		body.mass = j.at("mass").get<float>();
+	}
+	if (j.contains("friction") && j.at("friction").is_number()) {
+		body.friction = j.at("friction").get<float>();
+	}
+	if (j.contains("restitution") && j.at("restitution").is_number()) {
+		body.restitution = j.at("restitution").get<float>();
+	}
+}
+
+void to_json(nlohmann::json& j, const BoxCollider& box)
+{
+	j = nlohmann::json{
+	        {"half_extents",
+	         arr3(box.half_extents.x, box.half_extents.y, box.half_extents.z)}};
+}
+
+void from_json(const nlohmann::json& j, BoxCollider& box)
+{
+	if (j.contains("half_extents") && j.at("half_extents").is_array() &&
+	    j.at("half_extents").size() == 3) {
+		const auto& e = j.at("half_extents");
+		box.half_extents = {e[0].get<float>(), e[1].get<float>(),
+		                    e[2].get<float>()};
+	}
+}
+
+void to_json(nlohmann::json& j, const SphereCollider& sphere)
+{
+	j = nlohmann::json{{"radius", tidy(sphere.radius)}};
+}
+
+void from_json(const nlohmann::json& j, SphereCollider& sphere)
+{
+	if (j.contains("radius") && j.at("radius").is_number()) {
+		sphere.radius = j.at("radius").get<float>();
+	}
+}
+
 void from_json(const nlohmann::json& j, Material& m)
 {
 	if (j.contains("base_color") && j.at("base_color").is_array() &&
@@ -455,6 +526,46 @@ ComponentCodecs& mutable_component_codecs()
 		        },
 		        [](Registry& r, Entity e, const nlohmann::json& j) {
 			        r.emplace_or_replace<Lod>(e, j.get<Lod>());
+		        });
+		c.add(
+		        "RigidBody",
+		        [](const Registry& r, Entity e, nlohmann::json& j) {
+			        const auto* value = r.try_get<RigidBody>(e);
+			        if (!value) {
+				        return false;
+			        }
+			        j = *value;
+			        return true;
+		        },
+		        [](Registry& r, Entity e, const nlohmann::json& j) {
+			        r.emplace_or_replace<RigidBody>(e, j.get<RigidBody>());
+		        });
+		c.add(
+		        "BoxCollider",
+		        [](const Registry& r, Entity e, nlohmann::json& j) {
+			        const auto* value = r.try_get<BoxCollider>(e);
+			        if (!value) {
+				        return false;
+			        }
+			        j = *value;
+			        return true;
+		        },
+		        [](Registry& r, Entity e, const nlohmann::json& j) {
+			        r.emplace_or_replace<BoxCollider>(e, j.get<BoxCollider>());
+		        });
+		c.add(
+		        "SphereCollider",
+		        [](const Registry& r, Entity e, nlohmann::json& j) {
+			        const auto* value = r.try_get<SphereCollider>(e);
+			        if (!value) {
+				        return false;
+			        }
+			        j = *value;
+			        return true;
+		        },
+		        [](Registry& r, Entity e, const nlohmann::json& j) {
+			        r.emplace_or_replace<SphereCollider>(e,
+			                                             j.get<SphereCollider>());
 		        });
 		return c;
 	}();

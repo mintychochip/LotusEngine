@@ -11,6 +11,17 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Add EnTT (entity-component-system, header-only, submodule)
 add_subdirectory(dependencies/entt)
 
+# === Jolt Physics (static lib, submodule) ===
+set(JPH_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(TARGET_UNIT_TESTS OFF CACHE BOOL "" FORCE)
+set(TARGET_HELLO_WORLD OFF CACHE BOOL "" FORCE)
+set(TARGET_PERFORMANCE_TEST OFF CACHE BOOL "" FORCE)
+set(TARGET_SAMPLES OFF CACHE BOOL "" FORCE)
+set(TARGET_VIEWER OFF CACHE BOOL "" FORCE)
+set(ENABLE_ALL_WARNINGS OFF CACHE BOOL "" FORCE)
+set(INTERPROCEDURAL_OPTIMIZATION OFF CACHE BOOL "" FORCE)
+add_subdirectory(dependencies/jolt/Build EXCLUDE_FROM_ALL)
+
 # === nlohmann/json (scene serialization, header-only, submodule) ===
 add_library(nlohmann_json INTERFACE)
 add_library(nlohmann_json::nlohmann_json ALIAS nlohmann_json)
@@ -65,6 +76,7 @@ target_link_libraries(lotus_engine
     nlohmann_json::nlohmann_json
     lua
     imgui
+    Jolt
 )
 
 # === Main Executable ===

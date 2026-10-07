@@ -170,6 +170,29 @@ struct SceneOrigin {
 	std::string scene;
 };
 
+/// How a rigid body interacts with the simulation.
+enum class PhysicsMotionType : std::uint8_t {
+	Static,
+	Kinematic,
+	Dynamic,
+};
+
+/// Simulation properties for an entity with a collider shape.
+struct RigidBody {
+	PhysicsMotionType motion_type{PhysicsMotionType::Dynamic};
+	float mass{1.0f};
+	float friction{0.5f};
+	float restitution{0.0f};
+};
+
+struct BoxCollider {
+	glm::vec3 half_extents{0.5f};
+};
+
+struct SphereCollider {
+	float radius{0.5f};
+};
+
 /// Per-scene environment. Replaces the renderer's global lighting when a scene
 /// specifies one; a scene without settings leaves the globals alone.
 struct SceneSettings {

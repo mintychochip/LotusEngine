@@ -1,0 +1,382 @@
+#include "lotus/physics/physics_world.hpp"
+
+#include <Jolt/Jolt.h>
+#include <Jolt/Core/Factory.h>
+#include <Jolt/Core/JobSystemSingleThreaded.h>
+#include <Jolt/Core/TempAllocator.h>
+#include <Jolt/Physics/Body/BodyCreationSettings.h>
+#include <Jolt/Physics/Body/BodyInterface.h>
+#include <Jolt/Physics/Body/BodyLock.h>
+#include <Jolt/Physics/Collision/CastResult.h>
+#include <Jolt/Physics/Collision/RayCast.h>
+#include <Jolt/Physics/Collision/Shape/BoxShape.h>
+#include <Jolt/Physics/Collision/Shape/SphereShape.h>
+#include <Jolt/Physics/PhysicsSystem.h>
+#include <Jolt/RegisterTypes.h>
+
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/matrix_decompose.hpp>
+
+#include <memory>
+
+#include "lotus/scene/components.hpp"
+#include "lotus/scene/scene.hpp"
+
+JPH_SUPPRESS_WARNINGS
+
+namespace lotus {
+namespace {
+
+constexpr float kFixedTimestep   = 1.0f / 60.0f;
+constexpr int kMaxSubstepsPerFrame = 4;
+
+namespace Layers {
+static constexpr JPH::ObjectLayer kNonMoving = 0;
+static constexpr JPH::ObjectLayer kMoving    = 1;
+static constexpr JPH::ObjectLayer kNumLayers = 2;
+} // namespace Layers
+
+class ObjectLayerPairFilter final : public JPH::ObjectLayerPairFilter {
+public:
+	bool ShouldCollide(JPH::ObjectLayer object1,
+	                   JPH::ObjectLayer object2) const override
+	{
+		switch (object1) {
+		case Layers::kNonMoving:
+			return object2 == Layers::kMoving;
+		case Layers::kMoving:
+			return true;
+		default:
+			return false;
+		}
+	}
+};
+
+class BroadPhaseLayerInterface final : public JPH::BroadPhaseLayerInterface {
+public:
+	BroadPhaseLayerInterface()
+	{
+		object_to_broad_phase_[Layers::kNonMoving] =
+		        JPH::BroadPhaseLayer(0);
+		object_to_broad_phase_[Layers::kMoving] = JPH::BroadPhaseLayer(1);
+	}
+
+	JPH::uint GetNumBroadPhaseLayers() const override { return 2; }
+
+	JPH::BroadPhaseLayer GetBroadPhaseLayer(
+	        JPH::ObjectLayer layer) const override
+	{
+		return object_to_broad_phase_[layer];
+	}
+
+	const char* GetBroadPhaseLayerName(
+	        JPH::BroadPhaseLayer layer) const override
+	{
+		switch (static_cast<JPH::BroadPhaseLayer::Type>(layer)) {
+		case 0:
+			return "NON_MOVING";
+		case 1:
+			return "MOVING";
+		default:
+			return "INVALID";
+		}
+	}
+
+private:
+	JPH::BroadPhaseLayer object_to_broad_phase_[Layers::kNumLayers];
+};
+
+class ObjectVsBroadPhaseLayerFilter final
+    : public JPH::ObjectVsBroadPhaseLayerFilter {
+public:
+	bool ShouldCollide(JPH::ObjectLayer layer1,
+	                   JPH::BroadPhaseLayer layer2) const override
+	{
+		switch (layer1) {
+		case Layers::kNonMoving:
+			return layer2 == JPH::BroadPhaseLayer(0);
+		case Layers::kMoving:
+			return true;
+		default:
+			return false;
+		}
+	}
+};
+
+JPH::EMotionType to_jolt_motion(PhysicsMotionType type)
+{
+	switch (type) {
+	case PhysicsMotionType::Static:
+		return JPH::EMotionType::Static;
+	case PhysicsMotionType::Kinematic:
+		return JPH::EMotionType::Kinematic;
+	case PhysicsMotionType::Dynamic:
+		return JPH::EMotionType::Dynamic;
+	}
+	return JPH::EMotionType::Dynamic;
+}
+
+JPH::ObjectLayer object_layer_for(PhysicsMotionType type)
+{
+	return type == PhysicsMotionType::Static ? Layers::kNonMoving
+	                                         : Layers::kMoving;
+}
+
+glm::vec3 world_position(const Transform& transform)
+{
+	return glm::vec3{transform.world[3]};
+}
+
+glm::quat world_rotation(const Transform& transform)
+{
+	glm::vec3 scale;
+	glm::quat rotation;
+	glm::vec3 translation;
+	glm::vec3 skew;
+	glm::vec4 perspective;
+	glm::decompose(transform.world, scale, rotation, translation, skew,
+	               perspective);
+	return rotation;
+}
+
+JPH::RVec3 to_jolt_vec3(const glm::vec3& v)
+{
+	return JPH::RVec3{v.x, v.y, v.z};
+}
+
+JPH::Vec3 to_jolt_vec3f(const glm::vec3& v)
+{
+	return JPH::Vec3{v.x, v.y, v.z};
+}
+
+JPH::Quat to_jolt_quat(const glm::quat& q)
+{
+	return JPH::Quat{q.x, q.y, q.z, q.w};
+}
+
+glm::vec3 to_glm_vec3(const JPH::RVec3& v)
+{
+	return glm::vec3{static_cast<float>(v.GetX()),
+	               static_cast<float>(v.GetY()),
+	               static_cast<float>(v.GetZ())};
+}
+
+glm::vec3 to_glm_vec3f(const JPH::Vec3& v)
+{
+	return glm::vec3{v.GetX(), v.GetY(), v.GetZ()};
+}
+
+glm::quat to_glm_quat(const JPH::Quat& q)
+{
+	return glm::quat{q.GetW(), q.GetX(), q.GetY(), q.GetZ()};
+}
+
+JPH::RefConst<JPH::Shape> make_shape(const Registry& registry, Entity entity)
+{
+	if (const auto* box = registry.try_get<BoxCollider>(entity)) {
+		return new JPH::BoxShape{JPH::Vec3{box->half_extents.x,
+		                                   box->half_extents.y,
+		                                   box->half_extents.z}};
+	}
+	if (const auto* sphere = registry.try_get<SphereCollider>(entity)) {
+		return new JPH::SphereShape{sphere->radius};
+	}
+	return nullptr;
+}
+
+} // namespace
+
+struct PhysicsWorld::Impl {
+	JPH::PhysicsSystem physics;
+	JPH::JobSystemSingleThreaded job_system;
+	std::unique_ptr<JPH::TempAllocatorImpl> temp_allocator;
+	BroadPhaseLayerInterface broad_phase_layers;
+	ObjectVsBroadPhaseLayerFilter object_vs_broadphase;
+	ObjectLayerPairFilter object_vs_object;
+	std::unordered_map<Entity, JPH::BodyID> bodies;
+	float accumulator{0.0f};
+
+	Impl()
+	{
+		static bool jolt_globals = false;
+		if (!jolt_globals) {
+			JPH::RegisterDefaultAllocator();
+			JPH::Factory::sInstance = new JPH::Factory();
+			JPH::RegisterTypes();
+			jolt_globals = true;
+		}
+		temp_allocator = std::make_unique<JPH::TempAllocatorImpl>(
+		        4 * 1024 * 1024);
+		job_system.Init(2048);
+		constexpr JPH::uint max_bodies              = 4096;
+		constexpr JPH::uint max_body_pairs          = 4096;
+		constexpr JPH::uint max_contact_constraints = 4096;
+		physics.Init(max_bodies, 0, max_body_pairs, max_contact_constraints,
+		             broad_phase_layers, object_vs_broadphase,
+		             object_vs_object);
+	}
+
+	~Impl()
+	{
+		JPH::BodyInterface& body_interface = physics.GetBodyInterface();
+		for (const auto& [entity, body] : bodies) {
+			if (!body.IsInvalid()) {
+				body_interface.RemoveBody(body);
+				body_interface.DestroyBody(body);
+			}
+			(void)entity;
+		}
+		bodies.clear();
+	}
+};
+
+PhysicsWorld::PhysicsWorld() : impl_(new Impl()) {}
+
+PhysicsWorld::~PhysicsWorld()
+{
+	delete impl_;
+	impl_ = nullptr;
+}
+
+void PhysicsWorld::step(Scene& scene, float dt)
+{
+	if (!impl_) {
+		return;
+	}
+
+	auto& registry       = scene.registry();
+	auto& physics        = impl_->physics;
+	auto& body_interface = physics.GetBodyInterface();
+
+	for (auto it = impl_->bodies.begin(); it != impl_->bodies.end();) {
+		const Entity entity = it->first;
+		const bool keep     = registry.valid(entity) &&
+		                      registry.all_of<RigidBody>(entity) &&
+		                      (registry.all_of<BoxCollider>(entity) ||
+		                       registry.all_of<SphereCollider>(entity));
+		if (!keep) {
+			if (!it->second.IsInvalid()) {
+				body_interface.RemoveBody(it->second);
+				body_interface.DestroyBody(it->second);
+			}
+			it = impl_->bodies.erase(it);
+		} else {
+			++it;
+		}
+	}
+
+	const auto view = registry.view<Transform, RigidBody>();
+	for (const Entity entity : view) {
+		if (!registry.all_of<BoxCollider>(entity) &&
+		    !registry.all_of<SphereCollider>(entity)) {
+			continue;
+		}
+		const Transform& transform = view.get<Transform>(entity);
+		const RigidBody& body      = view.get<RigidBody>(entity);
+
+		const auto existing = impl_->bodies.find(entity);
+		if (existing == impl_->bodies.end()) {
+			const JPH::RefConst<JPH::Shape> shape =
+			        make_shape(registry, entity);
+			if (!shape) {
+				continue;
+			}
+			JPH::BodyCreationSettings settings(
+			        shape, to_jolt_vec3(world_position(transform)),
+			        to_jolt_quat(world_rotation(transform)),
+			        to_jolt_motion(body.motion_type),
+			        object_layer_for(body.motion_type));
+			settings.mFriction    = body.friction;
+			settings.mRestitution = body.restitution;
+			if (body.motion_type == PhysicsMotionType::Dynamic) {
+				settings.mOverrideMassProperties =
+				        JPH::EOverrideMassProperties::CalculateInertia;
+				settings.mMassPropertiesOverride.mMass = body.mass;
+			}
+			JPH::Body* created = body_interface.CreateBody(settings);
+			if (!created) {
+				continue;
+			}
+			created->SetUserData(
+			        static_cast<JPH::uint64>(entt::to_integral(entity)));
+			const JPH::BodyID id = created->GetID();
+			body_interface.AddBody(id, JPH::EActivation::Activate);
+			impl_->bodies.emplace(entity, id);
+			continue;
+		}
+
+		if (body.motion_type == PhysicsMotionType::Dynamic) {
+			continue;
+		}
+		body_interface.SetPositionAndRotation(
+		        existing->second, to_jolt_vec3(world_position(transform)),
+		        to_jolt_quat(world_rotation(transform)),
+		        JPH::EActivation::DontActivate);
+	}
+
+	impl_->accumulator += dt;
+	int substeps = 0;
+	while (impl_->accumulator >= kFixedTimestep &&
+	       substeps < kMaxSubstepsPerFrame) {
+		physics.Update(kFixedTimestep, 1, impl_->temp_allocator.get(),
+		               &impl_->job_system);
+		impl_->accumulator -= kFixedTimestep;
+		++substeps;
+	}
+
+	for (const auto& [entity, id] : impl_->bodies) {
+		if (!registry.valid(entity)) {
+			continue;
+		}
+		const RigidBody* body = registry.try_get<RigidBody>(entity);
+		if (!body || body->motion_type != PhysicsMotionType::Dynamic) {
+			continue;
+		}
+		Transform* transform = registry.try_get<Transform>(entity);
+		if (!transform) {
+			continue;
+		}
+		JPH::RVec3 position;
+		JPH::Quat rotation;
+		body_interface.GetPositionAndRotation(id, position, rotation);
+		transform->position = to_glm_vec3(position);
+		transform->rotation = glm::eulerAngles(to_glm_quat(rotation));
+	}
+
+	update_world_transforms(scene);
+}
+
+bool PhysicsWorld::raycast(const glm::vec3& origin, const glm::vec3& direction,
+                           float max_distance, PhysicsRaycastHit& hit) const
+{
+	if (!impl_ || max_distance <= 0.0f) {
+		return false;
+	}
+	const float length = glm::length(direction);
+	if (length <= 0.0f) {
+		return false;
+	}
+	const glm::vec3 unit = direction / length;
+
+	JPH::RRayCast ray{to_jolt_vec3(origin),
+	                  to_jolt_vec3(unit * max_distance)};
+	JPH::RayCastResult result;
+	if (!impl_->physics.GetNarrowPhaseQuery().CastRay(ray, result)) {
+		return false;
+	}
+
+	JPH::BodyLockRead lock(impl_->physics.GetBodyLockInterface(),
+	                       result.mBodyID);
+	if (!lock.Succeeded()) {
+		return false;
+	}
+	const JPH::Body& body = lock.GetBody();
+	hit.entity            = static_cast<Entity>(body.GetUserData());
+	hit.fraction          = result.mFraction;
+	hit.point             = to_glm_vec3(ray.GetPointOnRay(result.mFraction));
+	hit.normal = to_glm_vec3f(body.GetWorldSpaceSurfaceNormal(
+	        result.mSubShapeID2, ray.GetPointOnRay(result.mFraction)));
+	return true;
+}
+
+} // namespace lotus

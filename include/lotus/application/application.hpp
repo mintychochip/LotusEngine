@@ -7,6 +7,7 @@
 #include "lotus/console/console.hpp"
 #include "lotus/input/keybinds.hpp"
 #include "lotus/io/file_watcher.hpp"
+#include "lotus/physics/physics_world.hpp"
 #include "lotus/scene/assets.hpp"
 #include "lotus/scene/scene_manager.hpp"
 #include "lotus/script/script_engine.hpp"
@@ -101,6 +102,7 @@ private:
 	void wire_assets();
 
 	SceneManager scenes_;
+	PhysicsWorld physics_;
 	Editor editor_;
 	ScriptEngine scripts_;
 	Console console_;

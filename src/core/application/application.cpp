@@ -738,6 +738,7 @@ void Application::run(int width, int height, const std::string& title)
 			poll_hot_reload();
 			if (Scene* scene = scenes_.active()) {
 				scene->update(dt);
+				physics_.step(*scene, dt);
 				scripts_.update(*scene, dt);
 				scripts_.poll(*scene);
 			}
