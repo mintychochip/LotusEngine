@@ -5,7 +5,7 @@
 # Builds lotus_render_bench (Release) and renders one fixed synthetic scene
 # (bench/render_bench.cpp: ~950 entities, 190k vertices drawn, 17 textured
 # batches, shadows + SSAO + FXAA + sky + fog + Hi-Z occlusion) through the
-# offscreen pipeline, twice:
+# offscreen pipeline, up to three times:
 #
 #   1. On the system's default Vulkan device: the number a user would see. On
 #      a discrete GPU this workload is CPU-bound (scene build + upload), so
@@ -13,6 +13,13 @@
 #   2. On Mesa lavapipe, a software rasterizer that is bit-exact from run to
 #      run. It carries the fidelity check, and its GPU time is a stable,
 #      heavily amplified signal for GPU-side work (passes, shaders, overdraw).
+#   3. On an integrated GPU, when the machine has one that is not the system
+#      device (an Intel Vulkan ICD is looked for; override with
+#      LOTUS_BENCH_IGPU_ICD). A discrete card maps cached readback memory, an
+#      integrated one can map write-combined memory where ordinary loads are
+#      uncached: the Hi-Z readback alone cost 0.85 ms of a 1.4 ms CPU frame
+#      there, which the system device cannot show. Skipped, quietly, where
+#      there is none; no igpu_* metric is then reported.
 #
 # Every frame is synchronous (record, submit, wait for idle): occlusion culling
 # reads the previous frame's Hi-Z only once its fence has signalled, so an
@@ -47,6 +54,13 @@
 #   lvp_image_exact   1 when the full-resolution lavapipe image hash matches
 #                     the golden's (higher is better; only reported while the
 #                     golden's device name matches)
+#   igpu_frame_ms     integrated GPU: frame median (median of 3 processes)
+#   igpu_cpu_ms       ... CPU side (the metric that exposed the readback cost)
+#   igpu_gpu_ms       ... time waiting for the GPU after submit
+#   igpu_begin_ms     ... begin_frame_offscreen(): fence poll, Hi-Z unpack
+#   igpu_build_ms     ... Scene::upload()
+#   igpu_record_ms    ... pass recording
+#   igpu_image_mae    ... fidelity frame vs the golden (not zero by design)
 #
 # Noise (this machine, pinned to the P-cores): frame_ms CV ~0.8% between
 # invocations, lvp_* CV 0.3-0.4%, so wins of ~2% or more on frame_ms are
@@ -59,6 +73,9 @@
 #   LOTUS_BENCH_ICD     Vulkan ICD json for the primary run (default: the
 #                       loader's own choice, i.e. the discrete GPU)
 #   LOTUS_BENCH_LVP_ICD lavapipe ICD json (default: searched for)
+#   LOTUS_BENCH_IGPU_ICD Vulkan ICD json of an integrated GPU to also benchmark
+#                       (default: an Intel ICD if present and not the system
+#                       device)
 #   LOTUS_BENCH_CPUS    CPU list to pin to, or "none" (default: the fastest
 #                       cores; see fast_cpus)
 #   GLSLANG             glslangValidator used to keep shader headers in sync
@@ -246,6 +263,42 @@ done
 run_bench "$work/lvp.out" VK_DRIVER_FILES="$lvp_icd" VK_ICD_FILENAMES="$lvp_icd" \
           LP_NUM_THREADS="$lp_threads" -- --frames 30 --rounds 2 --warmup 10
 
+# 3. An integrated GPU, when the machine has one that is not the system device.
+# See the header: the system device cannot show the costs of write-combined
+# readback memory. Skipped, quietly, where there is none.
+find_igpu_icd() {
+	local candidate
+	for candidate in "${LOTUS_BENCH_IGPU_ICD:-}" \
+	                 /usr/share/vulkan/icd.d/intel_icd*.json \
+	                 /etc/vulkan/icd.d/intel_icd*.json; do
+		if [[ -n "$candidate" && -f "$candidate" ]]; then
+			echo "$candidate"
+			return 0
+		fi
+	done
+	return 1
+}
+device_of() { sed -n -E 's/^bench: device="([^"]*)".*/\1/p' "$1" | head -n 1; }
+
+igpu_runs=0
+igpu_device=""
+igpu_icd="$(find_igpu_icd || true)"
+if [[ -n "$igpu_icd" ]]; then
+	for i in 1 2 3; do
+		if run_bench "$work/igpu.$i.out" VK_DRIVER_FILES="$igpu_icd" \
+		             VK_ICD_FILENAMES="$igpu_icd" -- 2>/dev/null; then
+			igpu_runs=$((igpu_runs + 1))
+		else
+			break
+		fi
+	done
+	igpu_device="$(device_of "$work/igpu.1.out" 2>/dev/null || true)"
+	if (( igpu_runs != 3 )) || [[ -z "$igpu_device" ]] ||
+	   [[ "$igpu_device" == "$(device_of "$work/system.1.out")" ]]; then
+		igpu_runs=0 # no such hardware, or it is the system device already
+	fi
+fi
+
 # Median of each METRIC across the system runs (keeps the measured value's own
 # formatting, so integer counters stay integers).
 median_metrics() {
@@ -282,3 +335,12 @@ grep -E '^ASI ' "$work/system.1.out"
 sed -n -E 's/^METRIC (frame_ms|gpu_ms|cpu_ms|image_mae|image_max_diff|image_exact)=/METRIC lvp_\1=/p' \
     "$work/lvp.out"
 sed -n 's/^ASI /ASI lvp_/p' "$work/lvp.out"
+
+if (( igpu_runs == 3 )); then
+	echo "=== integrated GPU: $igpu_device (run 1 of 3) ==="
+	grep -v -E '^(METRIC|ASI) ' "$work/igpu.1.out" || true
+	median_metrics "$work"/igpu.*.out |
+	    sed -n -E 's/^METRIC (frame_ms|cpu_ms|gpu_ms|begin_ms|build_ms|record_ms|image_mae)=/METRIC igpu_\1=/p'
+else
+	log "no integrated GPU benchmarked (none found, or it is the system device)"
+fi
