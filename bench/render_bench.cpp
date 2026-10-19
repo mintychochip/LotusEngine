@@ -60,7 +60,8 @@ constexpr const char* kUsage =
         "                          [--grid N] [--lods N] [--assets-dir DIR]\n"
         "                          [--golden PATH] [--write-golden PATH]\n"
         "                          [--ppm PATH] [--pipelined] [--seconds S]\n"
-        "                          [--no-occlusion] [--frame-hashes N]";
+        "                          [--no-occlusion] [--frame-hashes N]\n"
+        "                          [--no-fxaa] [--no-ssao]";
 
 constexpr int kTextureCount          = 16;
 constexpr uint32_t kTextureSize      = 512;
@@ -102,6 +103,11 @@ struct Options {
 	/// Per-frame verification: renders this many frames of the standard camera
 	/// loop, capturing and hashing each (see --frame-hashes).
 	int frame_hashes{0};
+	/// Turn a pass off, for comparing against a backend that does not implement
+	/// it yet: the lit/shadow/sky half of a port is verified per frame with both
+	/// off, before FXAA and SSAO exist there.
+	bool no_fxaa{false};
+	bool no_ssao{false};
 };
 
 bool parse_int(const std::string& text, long long& out)
@@ -125,6 +131,14 @@ bool parse_options(int argc, char** argv, Options& options)
 		}
 		if (flag == "--no-occlusion") {
 			options.occlusion = false;
+			continue;
+		}
+		if (flag == "--no-fxaa") {
+			options.no_fxaa = true;
+			continue;
+		}
+		if (flag == "--no-ssao") {
+			options.no_ssao = true;
 			continue;
 		}
 		if (i + 1 >= argc) {
@@ -689,8 +703,11 @@ bool compare_golden(const std::string& path, const std::vector<uint8_t>& rgba,
 }
 
 /// One synchronous frame: record, submit, wait for idle. Phase times and the
-/// scene's workload counters are captured on the way.
-FrameSample render_frame(GpuRenderer& gpu, Scene& scene, float aspect)
+/// scene's workload counters are captured on the way. \p occlusion false
+/// suppresses the Hi-Z download, which pins the drawn set (no culling) so two
+/// builds can be compared frame by frame without relying on identical culling.
+FrameSample render_frame(GpuRenderer& gpu, Scene& scene, float aspect,
+                         bool occlusion = true)
 {
 	const auto t0 = Clock::now();
 	gpu.begin_frame_offscreen();
@@ -699,6 +716,9 @@ FrameSample render_frame(GpuRenderer& gpu, Scene& scene, float aspect)
 	const auto t2 = Clock::now();
 	gpu.begin_scene_pass();
 	scene.draw(gpu);
+	if (!occlusion) {
+		gpu.suppress_occlusion_record();
+	}
 	gpu.end_scene_pass();
 	const auto t3 = Clock::now();
 	gpu.end_frame();
@@ -886,6 +906,12 @@ int run_gpu(const Options& options, Scene& scene, World& world)
 	GpuRenderer& gpu = *owned;
 	gpu.init_offscreen(options.width, options.height);
 	configure_lighting(gpu);
+	if (options.no_fxaa) {
+		gpu.lighting().fxaa_enabled = false;
+	}
+	if (options.no_ssao) {
+		gpu.lighting().ssao_enabled = false;
+	}
 
 	const char* device_name = gpu.device_name();
 	const char* driver_name = gpu.device_driver();
@@ -913,7 +939,7 @@ int run_gpu(const Options& options, Scene& scene, World& world)
 			animate(scene, world,
 			        static_cast<float>(frame % options.frames) /
 			                static_cast<float>(options.frames));
-			render_frame(gpu, scene, aspect);
+			render_frame(gpu, scene, aspect, options.occlusion);
 			uint32_t width  = 0;
 			uint32_t height = 0;
 			const std::vector<uint8_t> pixels = gpu.capture_rgba(width, height);
@@ -944,7 +970,8 @@ int run_gpu(const Options& options, Scene& scene, World& world)
 		                 options.frames;
 		animate(scene, world,
 		        static_cast<float>(slot) / static_cast<float>(options.frames));
-		const FrameSample sample = render_frame(gpu, scene, aspect);
+		const FrameSample sample =
+		        render_frame(gpu, scene, aspect, options.occlusion);
 		if (timed_index >= 0) {
 			samples.push_back(sample);
 		}
