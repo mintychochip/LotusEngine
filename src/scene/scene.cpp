@@ -68,6 +68,13 @@ bool ray_hits_sphere(const glm::vec3& origin, const glm::vec3& direction,
 }
 
 /// Emits world-space lit vertices for an indexed mesh.
+///
+/// Each distinct vertex is transformed once and then gathered through the
+/// index list: the lists repeat vertices heavily (every vertex of a UV sphere
+/// is referenced about five times), and the transform (matrix product, normal
+/// matrix, normalize) costs far more than the copy. Each vertex's value is a
+/// pure function of (world, position, normal), so the output is bit-identical
+/// to transforming per index.
 void emit_mesh(std::vector<GpuVertex>& out, std::vector<glm::vec2>& uvs_out,
                const Transform& transform, const Mesh& mesh,
                const glm::vec3& color, float roughness)
@@ -75,29 +82,36 @@ void emit_mesh(std::vector<GpuVertex>& out, std::vector<glm::vec2>& uvs_out,
 	// Correct for rotation and uniform scale; non-uniform scale would need the
 	// inverse transpose.
 	const glm::mat3 normal_matrix{transform.world};
-	const bool has_uvs = mesh.uvs.size() == mesh.positions.size();
-	for (const std::uint32_t index : mesh.indices) {
-		if (index >= mesh.positions.size()) {
-			continue;
-		}
-		const glm::vec3 position =
-		        glm::vec3{transform.world * glm::vec4{mesh.positions[index], 1.0f}};
+	const std::size_t vertex_count = mesh.positions.size();
+	const bool has_uvs             = mesh.uvs.size() == vertex_count;
+
+	thread_local std::vector<GpuVertex> transformed;
+	transformed.resize(vertex_count);
+	for (std::size_t i = 0; i < vertex_count; ++i) {
+		GpuVertex& vertex = transformed[i];
+		vertex            = GpuVertex{};
+		vertex.position =
+		        glm::vec3{transform.world * glm::vec4{mesh.positions[i], 1.0f}};
 		glm::vec3 normal{0.0f, 0.0f, 1.0f};
-		if (index < mesh.normals.size()) {
-			const glm::vec3 transformed = normal_matrix * mesh.normals[index];
-			if (glm::length(transformed) > 0.0f) {
-				normal = glm::normalize(transformed);
+		if (i < mesh.normals.size()) {
+			const glm::vec3 rotated = normal_matrix * mesh.normals[i];
+			if (glm::length(rotated) > 0.0f) {
+				normal = glm::normalize(rotated);
 			}
 		}
-		const glm::vec2 uv =
-		        has_uvs ? mesh.uvs[index] : glm::vec2{0.0f, 0.0f};
-		GpuVertex vertex{};
-		vertex.position  = position;
 		vertex.normal    = normal;
 		vertex.color     = color;
 		vertex.roughness = roughness;
-		out.push_back(vertex);
-		uvs_out.push_back(uv);
+	}
+
+	out.reserve(out.size() + mesh.indices.size());
+	uvs_out.reserve(uvs_out.size() + mesh.indices.size());
+	for (const std::uint32_t index : mesh.indices) {
+		if (index >= vertex_count) {
+			continue;
+		}
+		out.push_back(transformed[index]);
+		uvs_out.push_back(has_uvs ? mesh.uvs[index] : glm::vec2{0.0f, 0.0f});
 	}
 }
 
