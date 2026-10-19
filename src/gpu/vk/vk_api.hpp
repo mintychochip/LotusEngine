@@ -35,7 +35,8 @@ namespace lotus::vk {
 	X(GetPhysicalDeviceSurfaceFormatsKHR)                                      \
 	X(GetPhysicalDeviceSurfacePresentModesKHR)                                 \
 	X(CreateDebugUtilsMessengerEXT)                                            \
-	X(DestroyDebugUtilsMessengerEXT)
+	X(DestroyDebugUtilsMessengerEXT)                                           \
+	X(SetDebugUtilsObjectNameEXT)
 
 #define LOTUS_VK_DEVICE_COMMANDS(X)                                            \
 	X(DestroyDevice)                                                           \
