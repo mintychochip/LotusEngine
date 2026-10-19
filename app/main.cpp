@@ -1,8 +1,22 @@
 #include "lotus/application.hpp"
+#include "lotus/application/headless.hpp"
 #include "lotus/gpu/renderer.hpp"
 #include "lotus/scene/scene.hpp"
 
+#include <algorithm>
 #include <iostream>
+#include <string>
+#include <vector>
+
+namespace {
+
+constexpr const char* kHeadlessUsage =
+        "usage: lotus --headless [--scene NAME] [--ticks N] [--screenshot PATH]\n"
+        "                       [--width W] [--height H] [--seed S]\n"
+        "                       [--dump-state PATH] [--scene-dir DIR]\n"
+        "                       [--assets-dir DIR]";
+
+} // namespace
 
 class DemoApplication : public lotus::Application {
 public:
@@ -39,9 +53,24 @@ protected:
 	void on_shutdown() override {}
 };
 
-int main()
+int main(int argc, char** argv)
 {
 	try {
+		std::vector<std::string> args(argv + 1, argv + argc);
+		const auto headless =
+		        std::find(args.begin(), args.end(), "--headless");
+		if (headless != args.end()) {
+			args.erase(headless);
+			lotus::HeadlessOptions options;
+			std::string error;
+			if (!lotus::parse_headless_args(args, &options, &error)) {
+				std::cerr << "lotus: " << error << "\n"
+				          << kHeadlessUsage << "\n";
+				return 2;
+			}
+			DemoApplication app;
+			return app.run_headless(options);
+		}
 		DemoApplication app;
 		app.run(1100, 700, "lotus");
 	} catch (const std::exception& ex) {

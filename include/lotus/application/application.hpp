@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 
+#include "lotus/application/headless.hpp"
 #include "lotus/application/window.hpp"
 #include "lotus/audio/audio_system.hpp"
 #include "lotus/console/console.hpp"
@@ -35,6 +36,13 @@ public:
 
 	void run(int width = 800, int height = 600,
 	         const std::string& title = "lotus");
+
+	/// Headless verify loop: loads a scene, steps fixed-dt ticks, optionally
+	/// dumps scene JSON and captures a screenshot, then exits. No window,
+	/// editor, audio, or hot-reload. Returns the process exit code: 0 ok,
+	/// 1 run failure. Screenshots need a Vulkan device (software lavapipe
+	/// is enough); everything else is GPU-free.
+	int run_headless(const HeadlessOptions& options);
 
 	SceneManager& scenes() { return scenes_; }
 	Editor& editor() { return editor_; }
