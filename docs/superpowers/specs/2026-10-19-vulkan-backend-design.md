@@ -25,6 +25,37 @@ Acceptance (all must hold):
 Non-goals: new rendering features, changed shader math, async compute / multi-queue,
 bindless, GPU-driven culling, Vulkan < 1.3, mobile tiling optimisations.
 
+## Backends and compatibility (decided 2026-10-19, after the first draft)
+
+The engine targets three graphics APIs, each a backend behind `GpuRenderer`'s unchanged
+public API, selected at configure time (`LOTUS_GPU_BACKEND`):
+
+| backend | platforms | status |
+|---|---|---|
+| `vulkan` (this spec) | Linux, Windows | built and verified here |
+| `d3d12` (hand-written) | Windows 10+ | written here; **unverified** — no Windows runtime on this machine |
+| `d3d11` (hand-written) | Windows 7/8, pre-2015 Intel GPUs | same |
+
+SDL_GPU is **not** retained as a backend: its D3D12 path is replaced by the hand-written
+backends, and the clean cutover stands. Consequences, named to the user and accepted:
+Windows has no working backend until `d3d12`/`d3d11` land, and macOS loses its backend
+(SDL's Metal path) unless a Metal backend is written later. D3D11 is required because it
+is the only API that reaches Windows 7/8 and pre-2015 Intel GPUs; SDL has no D3D11 GPU
+backend at all, so it is a from-scratch renderer either way.
+
+What "unverified" means, precisely: the D3D backends **compile** (checked with the
+MinGW-w64 cross toolchain, `mingw64-gcc-c++`/`mingw64-headers` extracted under
+`/tmp/mingw` — proven: C++23 with `d3d12.h`, `d3d11.h`, `dxgi1_6.h`), and their HLSL
+**compiles to DXBC** (checked with `vkd3d-compiler` 1.17: `-x hlsl -p vs_5_1 -b dxbc-tpf`
+— proven to emit a `DXBC` container). Nothing about their runtime behaviour, image
+equality or performance is claimed. Every D3D source file carries a header comment
+saying so, and the README repeats it in the backend matrix.
+
+D3D shaders: the GLSL stages are re-expressed in HLSL (same math, same uniform layouts,
+a `cbuffer` per block laid out like the std140 ones), compiled to DXBC SM 5.1 blobs by
+`shaders/build-shaders-d3d.sh` (vkd3d-compiler on Linux; fxc/dxc on Windows) and
+committed as headers, exactly like the SPIR-V ones.
+
 ## What SDL_GPU does today (so the port can match it)
 
 SDL's Vulkan backend (`SDL_gpu_vulkan.c`, SDL 3.4.0) is Vulkan 1.0 core + `KHR_maintenance1`:
@@ -133,6 +164,11 @@ the validation layer + debug messenger (errors counted and printed).
 3. **Stage 2** — swapchain, ImGui, `LOTUS_PRESENT_MODE`; remove SDL_GPU, `imgui_impl_sdlgpu3`; docs.
 4. **Vulkan-only optimisations**, each A/B'd against the faithful port (fused 4x4 Hi-Z dispatch,
    skipping the linear-depth clear when the sky covers it, descriptor caching, …).
+5. **D3D12 backend** (hand-written, Windows): the same pass structure behind the same seam;
+   compile-checked with MinGW-w64, shaders via vkd3d-compiler; labelled unverified.
+6. **D3D11 backend** (hand-written, Windows 7/8): the same feature set with D3D11's state
+   mapping (input layouts, constant buffers, no explicit barriers, and the Hi-Z reduction
+   degrading where compute is unavailable, exactly as the SDL path's occlusion flag does).
 
 A/B protocol: frozen binaries, ABBA interleaved, `taskset` P-cores, check `uptime`, n ≥ 20 on the
 3080. Sync mode = the existing bench (median of frames). Pipelined mode = 2 frames in flight, occlusion
@@ -145,3 +181,6 @@ on, N seconds, fps + Mverts/s + mean drawn entities. "vps" is read as fps; Mvert
 - Sync bugs show up only on some drivers → validation layer on every device, hashes on every device.
 - NVIDIA cannot present to the headless surface → the window path there is smoke-tested on Wayland.
 - ~4k lines of raw Vulkan to maintain → kept in focused files, no abstraction beyond the four `vk_*` units.
+- The D3D backends cannot be run on this machine at all: compile-checked with MinGW-w64 and their
+  HLSL compiled with vkd3d-compiler, but correctness, image equality and performance are unverified
+  by construction — the user's explicit choice, recorded here so nobody mistakes them for tested.

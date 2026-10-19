@@ -42,6 +42,7 @@ target_include_directories(lua PUBLIC ${CMAKE_SOURCE_DIR}/dependencies/lua)
 target_link_libraries(lua PUBLIC m)
 
 include(FindLotusSDL3)
+include(FindLotusVulkanHeaders)
 
 # === Dear ImGui (debug overlay) ===
 add_library(imgui STATIC
@@ -76,6 +77,7 @@ target_include_directories(lotus_engine PUBLIC
 target_link_libraries(lotus_engine
     PUBLIC
     SDL3::SDL3
+    Lotus::VulkanHeaders
     EnTT::EnTT
     nlohmann_json::nlohmann_json
     lua

@@ -67,5 +67,27 @@ export VVL='VK_ADD_LAYER_PATH=/tmp/vvl/root/usr/share/vulkan/explicit_layer.d LD
 
 ## Phase 3 — Vulkan-only optimisations (each A/B'd vs the faithful port)
 
-Fused 4×4 Hi-Z dispatch (one dispatch, mip K only); skip the linear-depth clear when the sky covers the frame;
+Fused 4×4 Hi-Z dispatch (one dispatch, mip K only); skip the linear-depth clear when the sky covers it;
 descriptor-set caching; barrier batching; mesh arena if binds show up; `kFramesInFlight` 2 vs 3.
+
+## Phase D — hand-written D3D backends (compile-checked here, unverified by construction)
+
+Decided 2026-10-19: `d3d12` for Windows 10+, `d3d11` for Windows 7/8 and pre-2015 Intel GPUs,
+both behind the same seam; SDL_GPU is not retained. Toolchain on this machine:
+`/tmp/mingw/root` (`x86_64-w64-mingw32-g++` 16.2.1; set
+`CPLUS_INCLUDE_PATH=/tmp/mingw/root/usr/x86_64-w64-mingw32/sys-root/mingw/include`) and
+`/tmp/vkd3d/root/usr/bin/vkd3d-compiler` (needs `LD_LIBRARY_PATH=/tmp/vkd3d/root/usr/lib64`;
+target type is `dxbc-tpf`, source type `hlsl`).
+
+- [ ] **D1** Seam: `LOTUS_GPU_BACKEND=vulkan|d3d12|d3d11` selects the implementation files for
+      `GpuRenderer`; the public header stays the only interface; Vulkan keeps building.
+- [ ] **D2** `scripts/compile-check-d3d.sh`: extracts the MinGW toolchain if missing and compiles
+      every `src/gpu/d3d*/` translation unit; kept in the loop while writing D3D code.
+- [ ] **D3** HLSL ports (lit.vert/frag, shadow.vert, sky.vert/frag, fxaa.vert/frag, ssao.vert/frag,
+      depth.comp) + `shaders/build-shaders-d3d.sh` -> DXBC SM 5.1 headers.
+- [ ] **D4** `d3d12`: device/queue/swapchain (DXGI), descriptor heaps, root signature, PSOs,
+      upload/default heaps, barrier mapping from the Vulkan design, the same passes, Hi-Z compute,
+      readback, ImGui via `imgui_impl_dx12`.
+- [ ] **D5** `d3d11`: same feature set with D3D11 state mapping (input layouts, `Map`/`Unmap`
+      dynamic buffers, no explicit barriers, FL 10/11 fallbacks), ImGui via `imgui_impl_dx11`.
+- [ ] **D6** Docs: README backend matrix with the unverified banner; per-platform build notes.
