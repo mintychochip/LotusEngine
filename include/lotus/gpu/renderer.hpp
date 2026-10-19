@@ -105,6 +105,103 @@ inline float linear_to_srgb(float c)
 /// HEMI_REFERENCE in shaders/lit.frag; keep the two in sync.
 inline const glm::vec3 kHemiReference{0.15f, 0.15f, 0.18f};
 
+inline glm::vec3 srgb_to_linear_vec3(const glm::vec3& c)
+{
+	return {srgb_to_linear(c.x), srgb_to_linear(c.y), srgb_to_linear(c.z)};
+}
+
+/// Decode-then-multiply albedo: vertex color and texel are each sRGB-encoded,
+/// so each is decoded to linear first and then multiplied. Matches lit.frag.
+/// (The old `srgb_to_linear(v_color * tex)` decoded the product and washed
+/// mid-tones out.)
+inline glm::vec3 decode_albedo(const glm::vec3& vertex_color,
+                               const glm::vec3& texel)
+{
+	const glm::vec3 a = srgb_to_linear_vec3(vertex_color);
+	const glm::vec3 b = srgb_to_linear_vec3(texel);
+	return {a.x * b.x, a.y * b.y, a.z * b.z};
+}
+
+/// Linear-space exponential fog factor for a view depth (world units) and a
+/// small density. Matches lit.frag: 1 - exp(-density * depth), clamped.
+inline float fog_amount(float view_depth, float density)
+{
+	if (density <= 0.0f || view_depth <= 0.0f) {
+		return 0.0f;
+	}
+	return clamp01(1.0f - std::exp(-density * view_depth));
+}
+
+inline glm::vec3 apply_fog(const glm::vec3& outgoing,
+                           const glm::vec3& fog_color, float amount)
+{
+	const float t = clamp01(amount);
+	return {outgoing.x + (fog_color.x - outgoing.x) * t,
+	        outgoing.y + (fog_color.y - outgoing.y) * t,
+	        outgoing.z + (fog_color.z - outgoing.z) * t};
+}
+
+/// Third-directional bounce fill: opposite the sun in XZ, unshadowed like the
+/// hemisphere. Matches lit.frag.
+inline glm::vec3 bounce_direction(const glm::vec3& sun_direction)
+{
+	const glm::vec3 b = {sun_direction.x * -1.0f, sun_direction.y,
+	                     sun_direction.z * -1.0f};
+	const float len   = std::sqrt(b.x * b.x + b.y * b.y + b.z * b.z);
+	if (len <= 0.0f) {
+		return {0.0f, 1.0f, 0.0f};
+	}
+	return {b.x / len, b.y / len, b.z / len};
+}
+
+/// Sun angular radius (radians-ish soft-edge scale) for blob shadows.
+/// Matches BLOB_SUN_RADIUS in lit.frag.
+inline constexpr float kBlobSunRadius = 0.05f;
+inline constexpr uint32_t kMaxBlobCasters = 4;
+
+/// Analytic blob term for one caster: 1 lit far away, ~0.3 directly under the
+/// center, with a soft edge scaled by the sun angular radius. Matches
+/// lit.frag's `blob_tap`.
+inline float blob_tap(const glm::vec3& world_position,
+                      const glm::vec3& center, float radius)
+{
+	if (radius <= 0.0f) {
+		return 1.0f;
+	}
+	const float dx = world_position.x - center.x;
+	const float dy = world_position.y - center.y;
+	const float dz = world_position.z - center.z;
+	const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+	const float soft = radius * kBlobSunRadius + 0.05f;
+	const float lo   = radius - soft;
+	const float hi   = radius + soft;
+	float t = hi <= lo ? (dist >= radius ? 1.0f : 0.0f)
+	                   : (dist - lo) / (hi - lo);
+	t = clamp01(t);
+	const float smooth = t * t * (3.0f - 2.0f * t);
+	// Height fade: a fragment far above the caster escapes its shadow.
+	const float above = world_position.y - center.y;
+	const float fade =
+	        above <= 0.0f ? 1.0f : clamp01(1.0f - above / (radius * 4.0f + 1e-4f));
+	return 1.0f - (1.0f - (0.3f + 0.7f * smooth)) * fade;
+}
+
+inline float blob_shadow(const glm::vec3& world_position,
+                         const glm::vec4* spheres, uint32_t count)
+{
+	float shadow = 1.0f;
+	for (uint32_t i = 0; i < count; ++i) {
+		const glm::vec3 center{spheres[i].x, spheres[i].y, spheres[i].z};
+		shadow *= blob_tap(world_position, center, spheres[i].w);
+	}
+	return shadow;
+}
+
+ /// Reference gray the hemisphere colours are stored against. Sky/ground
+ /// default to exactly this, so the hemisphere multiplier below is 1.0 and an
+ /// old document renders the legacy flat floor bit-for-bit. Matches
+ /// HEMI_REFERENCE in shaders/lit.frag; keep the two in sync.
+
 /// Hemisphere blend weight from world normal Y: 0 facing down, 1 facing up.
 /// Matches `hemi_t` in shaders/lit.frag.
 inline float hemisphere_blend(float normal_y)
@@ -152,8 +249,13 @@ inline float shadow_tap(float surface_depth, float occluder_depth, float bias)
 /// `shadows_enabled`/`fxaa_enabled`/`sky_enabled` default ON; each restores
 /// the exact legacy path when off (for the sky, the clear-color background).
 /// `horizon_warmth` scales the warm horizon glow around the sun azimuth (1.0
-/// neutral, 0.0 off). Mirrors SceneSettings; application/headless copy every
-/// field across each frame.
+/// neutral, 0.0 off). `fog_enabled`/`fog_density` add linear-space exp fog
+/// (off restores legacy); `bounce_*` add an unshadowed warm fill from
+/// normalize(sun * vec3(-1,0,-1)) (off restores legacy); `ssao_enabled`
+/// scales only ambient/hemisphere/bounce (off restores legacy). Color policy:
+/// `color`/`sky_color`/`ground_color`/`bounce_color` are sRGB-authored,
+/// `ambient` is a linear gain, the rest are linear non-color data. Mirrors
+/// SceneSettings; application/headless copy every field across each frame.
 struct LightingSettings {
 	/// Unit vector pointing toward the light.
 	glm::vec3 direction{0.5f, 0.8f, 0.45f};
@@ -167,6 +269,12 @@ struct LightingSettings {
 	bool fxaa_enabled{true};
 	bool sky_enabled{true};
 	float horizon_warmth{1.0f};
+	bool fog_enabled{true};
+	float fog_density{0.015f};
+	bool bounce_enabled{true};
+	glm::vec3 bounce_color{0.40f, 0.28f, 0.20f};
+	float bounce_intensity{0.5f};
+	bool ssao_enabled{true};
 };
 
 /// SDL3 GPU backend (Vulkan on Linux). Owns the device, the lit pipeline,
@@ -299,6 +407,15 @@ public:
 	LightingSettings& lighting() { return lighting_; }
 	const LightingSettings& lighting() const { return lighting_; }
 
+	/// Analytic blob casters for this frame (xyz center in world space,
+	/// w radius). Copies up to 4; extra entries are ignored. Entry points
+	/// keep their signatures: scenes that never call this render with no
+	/// blobs, exactly the legacy path.
+	void set_blob_casters(const glm::vec4* spheres, uint32_t count);
+	void clear_blob_casters();
+	uint32_t blob_count() const { return blob_count_; }
+	const glm::vec4* blob_spheres() const { return blob_spheres_; }
+
 private:
 	void create_pipeline();
 	void ensure_vertex_capacity(uint32_t vertex_bytes, uint32_t uv_bytes);
@@ -364,6 +481,18 @@ private:
 	void fxaa_resolve(SDL_GPUTexture* destination, uint32_t width,
 	                  uint32_t height);
 	void destroy_fxaa();
+	// --- SSAO (fullscreen AO from the linear-depth MRT, quarter-res allowed)
+	// The scene pass writes linear view depth as colour target 1; the SSAO
+	// pass samples the previous frame's depth texture with 8-16 taps and
+	// writes single-channel AO. lit.frag samples that AO (via gl_FragCoord)
+	// and scales ONLY ambient/hemisphere/bounce, never the sun.
+	// ssao_enabled=false binds white (AO=1), restoring the legacy path.
+	// Entry points keep their signatures: the pass runs lazily inside
+	// end_scene_pass from state draw() already receives.
+	bool ensure_ssao_resources(uint32_t width, uint32_t height);
+	bool ensure_ssao_pipeline();
+	void run_ssao_pass(uint32_t width, uint32_t height);
+	void destroy_ssao();
 
 	SDL_GPUDevice* device_{nullptr};
 	SDL_Window* window_{nullptr};
@@ -467,6 +596,19 @@ private:
 	SDL_GPUTexture* pass_destination_{nullptr};
 	SDL_GPUSampler* default_sampler_{nullptr};
 	SDL_GPUTexture* white_texture_{nullptr};
+	// --- Analytic blob shadows (up to 4 uniform spheres, direct lobe only)
+	glm::vec4 blob_spheres_[4]{};
+	uint32_t blob_count_{0};
+	// --- SSAO (samples previous frame's linear depth, scales fill only)
+	SDL_GPUGraphicsPipeline* ssao_pipeline_{nullptr};
+	SDL_GPUTexture* ssao_texture_{nullptr};
+	uint32_t ssao_width_{0};
+	uint32_t ssao_height_{0};
+	SDL_GPUSampler* ssao_sampler_{nullptr};
+	SDL_GPUSampler* ssao_depth_sampler_{nullptr};
+	bool ssao_unavailable_{false};
+	uint32_t ssao_target_width_{0};
+	uint32_t ssao_target_height_{0};
 	struct CachedAlbedo {
 		SDL_GPUTexture* texture{nullptr};
 	};

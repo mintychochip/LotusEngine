@@ -1127,6 +1127,12 @@ void Application::run(int width, int height, const std::string& title)
 				gpu.lighting().fxaa_enabled    = s.fxaa_enabled;
 				gpu.lighting().sky_enabled     = s.sky_enabled;
 				gpu.lighting().horizon_warmth  = s.horizon_warmth;
+				gpu.lighting().fog_enabled      = s.fog_enabled;
+				gpu.lighting().fog_density      = s.fog_density;
+				gpu.lighting().bounce_enabled   = s.bounce_enabled;
+				gpu.lighting().bounce_color     = s.bounce_color;
+				gpu.lighting().bounce_intensity = s.bounce_intensity;
+				gpu.lighting().ssao_enabled     = s.ssao_enabled;
 			}
 			gpu.begin_frame(window.handle(), 0.05f, 0.05f, 0.08f);
 			if (gpu.has_frame()) {

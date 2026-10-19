@@ -275,6 +275,10 @@ TEST(PbrLightingTest, NewSettingsDefaultOnAndMatchAmbient)
 	const LightingSettings lighting;
 	EXPECT_TRUE(lighting.shadows_enabled);
 	EXPECT_TRUE(lighting.fxaa_enabled);
+	EXPECT_TRUE(lighting.sky_enabled);
+	EXPECT_TRUE(lighting.fog_enabled);
+	EXPECT_TRUE(lighting.bounce_enabled);
+	EXPECT_TRUE(lighting.ssao_enabled);
 	EXPECT_FLOAT_EQ(lighting.sky_color.x, lighting.ambient.x);
 	EXPECT_FLOAT_EQ(lighting.sky_color.y, lighting.ambient.y);
 	EXPECT_FLOAT_EQ(lighting.sky_color.z, lighting.ambient.z);
@@ -285,10 +289,79 @@ TEST(PbrLightingTest, NewSettingsDefaultOnAndMatchAmbient)
 	const SceneSettings scene;
 	EXPECT_TRUE(scene.shadows_enabled);
 	EXPECT_TRUE(scene.fxaa_enabled);
+	EXPECT_TRUE(scene.sky_enabled);
+	EXPECT_TRUE(scene.fog_enabled);
+	EXPECT_TRUE(scene.bounce_enabled);
+	EXPECT_TRUE(scene.ssao_enabled);
 	EXPECT_FLOAT_EQ(scene.sky_color.x, scene.ambient.x);
 	EXPECT_FLOAT_EQ(scene.sky_color.y, scene.ambient.y);
 	EXPECT_FLOAT_EQ(scene.sky_color.z, scene.ambient.z);
 	EXPECT_FLOAT_EQ(scene.ground_color.x, scene.ambient.x);
 	EXPECT_FLOAT_EQ(scene.ground_color.y, scene.ambient.y);
 	EXPECT_FLOAT_EQ(scene.ground_color.z, scene.ambient.z);
+	// Small default density; warm default bounce color.
+	EXPECT_GT(scene.fog_density, 0.0f);
+	EXPECT_LT(scene.fog_density, 0.1f);
+	EXPECT_GT(scene.bounce_color.x, scene.bounce_color.z);
+}
+
+TEST(PbrAlbedoTest, DecodeThenMultiplyDiffersFromDecodeOfProduct)
+{
+	// Mid-tone color * mid-tone texel: decoding each first (correct)
+	// yields a darker, honest linear product than decoding the product.
+	const glm::vec3 v{0.5f, 0.5f, 0.5f};
+	const glm::vec3 t{0.5f, 0.5f, 0.5f};
+	const glm::vec3 correct = pbr::decode_albedo(v, t);
+	const float product_decode =
+	        pbr::srgb_to_linear(0.5f * 0.5f);
+	EXPECT_LT(correct.x, product_decode);
+	// White stays white either way.
+	const glm::vec3 white =
+	        pbr::decode_albedo({1.0f, 1.0f, 1.0f}, {1.0f, 1.0f, 1.0f});
+	EXPECT_NEAR(white.x, 1.0f, 1e-5f);
+	EXPECT_NEAR(white.y, 1.0f, 1e-5f);
+	EXPECT_NEAR(white.z, 1.0f, 1e-5f);
+}
+
+TEST(PbrFogTest, AmountIsClampedAndMonotonic)
+{
+	EXPECT_FLOAT_EQ(pbr::fog_amount(0.0f, 0.015f), 0.0f);
+	EXPECT_FLOAT_EQ(pbr::fog_amount(10.0f, 0.0f), 0.0f);
+	const float near = pbr::fog_amount(1.0f, 0.015f);
+	const float far  = pbr::fog_amount(100.0f, 0.015f);
+	EXPECT_GT(far, near);
+	EXPECT_GE(near, 0.0f);
+	EXPECT_LE(far, 1.0f);
+	EXPECT_FLOAT_EQ(pbr::fog_amount(1.0e9f, 0.015f), 1.0f);
+	// Full fog reaches the fog color exactly.
+	const glm::vec3 mixed = pbr::apply_fog({0.1f, 0.2f, 0.3f},
+	                                       {0.5f, 0.5f, 0.5f}, 1.0f);
+	EXPECT_FLOAT_EQ(mixed.x, 0.5f);
+	EXPECT_FLOAT_EQ(mixed.y, 0.5f);
+	EXPECT_FLOAT_EQ(mixed.z, 0.5f);
+}
+
+TEST(PbrBounceTest, DirectionMirrorsSunInXz)
+{
+	const glm::vec3 sun = glm::normalize(glm::vec3{0.5f, 0.8f, 0.45f});
+	const glm::vec3 bounce = pbr::bounce_direction(sun);
+	EXPECT_LT(bounce.x * sun.x, 0.0f);
+	EXPECT_LT(bounce.z * sun.z, 0.0f);
+	EXPECT_GT(bounce.y, 0.0f);
+	EXPECT_NEAR(glm::length(bounce), 1.0f, 1e-6f);
+}
+
+TEST(PbrBlobTest, TapIsLitFarAndDarkNear)
+{
+	const glm::vec3 center{0.0f, 0.0f, 0.0f};
+	EXPECT_NEAR(pbr::blob_tap({10.0f, 0.0f, 0.0f}, center, 0.5f), 1.0f,
+	            1e-5f);
+	EXPECT_LT(pbr::blob_tap(center, center, 0.5f), 0.5f);
+	EXPECT_FLOAT_EQ(pbr::blob_tap(center, center, 0.0f), 1.0f);
+	// Empty set leaves the direct lobe untouched.
+	EXPECT_FLOAT_EQ(pbr::blob_shadow(center, nullptr, 0), 1.0f);
+	glm::vec4 spheres[1] = {glm::vec4{0.0f, 0.0f, 0.0f, 0.5f}};
+	EXPECT_LT(pbr::blob_shadow(center, spheres, 1), 1.0f);
+	EXPECT_FLOAT_EQ(pbr::blob_shadow({10.0f, 0.0f, 0.0f}, spheres, 1),
+	                1.0f);
 }

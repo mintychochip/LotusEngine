@@ -631,3 +631,94 @@ TEST(SceneSerialization, OldV3SettingsWithoutSkyKeysKeepDefaults)
 	EXPECT_NE(to_json_string(loaded).find("\"version\": 3"),
 	          std::string::npos);
 }
+
+TEST(SceneSerialization, RenderBundleSettingsRoundTrip)
+{
+	// Fog, bounce fill, and SSAO survive save/load, including off.
+	Scene with{"s"};
+	SceneSettings settings;
+	settings.fog_enabled      = false;
+	settings.fog_density      = 0.05f;
+	settings.bounce_enabled   = false;
+	settings.bounce_color     = {0.5f, 0.3f, 0.2f};
+	settings.bounce_intensity = 0.7f;
+	settings.ssao_enabled     = false;
+	with.set_settings(settings);
+
+	const std::string text = to_json_string(with);
+	EXPECT_NE(text.find("\"fog_enabled\""), std::string::npos) << text;
+	EXPECT_NE(text.find("\"fog_density\""), std::string::npos) << text;
+	EXPECT_NE(text.find("\"bounce_enabled\""), std::string::npos) << text;
+	EXPECT_NE(text.find("\"bounce_color\""), std::string::npos) << text;
+	EXPECT_NE(text.find("\"bounce_intensity\""), std::string::npos)
+	        << text;
+	EXPECT_NE(text.find("\"ssao_enabled\""), std::string::npos) << text;
+
+	Scene loaded{"s"};
+	ASSERT_TRUE(scene_from_json(loaded, text, nullptr));
+	ASSERT_TRUE(loaded.has_settings());
+	EXPECT_FALSE(loaded.settings().fog_enabled);
+	EXPECT_FLOAT_EQ(loaded.settings().fog_density, 0.05f);
+	EXPECT_FALSE(loaded.settings().bounce_enabled);
+	EXPECT_FLOAT_EQ(loaded.settings().bounce_color.x, 0.5f);
+	EXPECT_FLOAT_EQ(loaded.settings().bounce_intensity, 0.7f);
+	EXPECT_FALSE(loaded.settings().ssao_enabled);
+}
+
+TEST(SceneSerialization, OldV3SettingsWithoutBundleKeysKeepDefaults)
+{
+	// Documents written before the render-upgrade bundle carry none of the
+	// new keys. They must still load with fog/bounce/SSAO on (sane, not
+	// black), and the saved form still declares version 3: the keys are
+	// optional within v3, never a version bump.
+	Scene loaded{"s"};
+	ASSERT_TRUE(scene_from_json(loaded,
+	                            R"({"version":3,"name":"p","settings":{)"
+	                            R"("light_direction":[0.0,-1.0,0.0],)"
+	                            R"("light_color":[1.0,1.0,1.0],)"
+	                            R"("light_intensity":2.0,)"
+	                            R"("ambient":[0.1,0.1,0.1],)"
+	                            R"("exposure":1.0,)"
+	                            R"("sky_color":[0.25,0.35,0.5],)"
+	                            R"("ground_color":[0.1,0.08,0.06],)"
+	                            R"("shadows_enabled":true,)"
+	                            R"("fxaa_enabled":true,)"
+	                            R"("sky_enabled":true,)"
+	                            R"("horizon_warmth":1.0)"
+	                            R"(},"entities":[]})",
+	                            nullptr));
+	ASSERT_TRUE(loaded.has_settings());
+	const SceneSettings defaults;
+	EXPECT_TRUE(loaded.settings().fog_enabled);
+	EXPECT_FLOAT_EQ(loaded.settings().fog_density, defaults.fog_density);
+	EXPECT_TRUE(loaded.settings().bounce_enabled);
+	EXPECT_FLOAT_EQ(loaded.settings().bounce_color.x,
+	                defaults.bounce_color.x);
+	EXPECT_FLOAT_EQ(loaded.settings().bounce_intensity,
+	                defaults.bounce_intensity);
+	EXPECT_TRUE(loaded.settings().ssao_enabled);
+	EXPECT_NE(to_json_string(loaded).find("\"version\": 3"),
+	          std::string::npos);
+}
+
+TEST(SceneSerialization, BlobCasterRoundTrips)
+{
+	Scene with{"s"};
+	const Entity e = with.create("blob");
+	with.registry().emplace<BlobCaster>(e, BlobCaster{0.75f});
+
+	const std::string text = to_json_string(with);
+	EXPECT_NE(text.find("\"BlobCaster\""), std::string::npos) << text;
+
+	Scene loaded{"s"};
+	ASSERT_TRUE(scene_from_json(loaded, text, nullptr));
+	const Entity found = loaded.find("blob");
+	ASSERT_NE(found, NullEntity);
+	ASSERT_TRUE(loaded.registry().all_of<BlobCaster>(found));
+	EXPECT_FLOAT_EQ(loaded.registry().get<BlobCaster>(found).radius,
+	                0.75f);
+	// Center comes from the Transform, gathered per frame (up to 4).
+	const std::vector<glm::vec4> spheres = loaded.blob_spheres();
+	ASSERT_EQ(spheres.size(), 1u);
+	EXPECT_FLOAT_EQ(spheres[0].w, 0.75f);
+}

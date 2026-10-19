@@ -59,6 +59,8 @@ struct Hierarchy {
 };
 
 /// Axis-aligned coloured quad drawn in world space (2D path).
+/// `color` is sRGB-authored (color-picker/JSON values); the renderer decodes
+/// each channel to linear before lighting.
 struct Sprite {
 	glm::vec4 color{1.0f, 1.0f, 1.0f, 1.0f};
 	glm::vec2 size{1.0f, 1.0f};
@@ -131,10 +133,22 @@ struct LodGeometry {
 };
 
 /// Surface colour and optional albedo texture (asset registry key).
+/// `base_color` is sRGB-authored (color-picker/JSON value); the shader
+/// decodes it (and the albedo texel) to linear before lighting. Texture
+/// texels are sRGB-encoded; `roughness` is linear (non-color data).
 struct Material {
 	glm::vec3 base_color{0.82f, 0.82f, 0.86f};
 	std::string albedo_id;
 	float roughness{0.5f};
+};
+
+/// Analytic blob shadow caster. The center is derived per frame from the
+/// entity's world Transform (translation column); only the radius is stored.
+/// The renderer gathers up to 4 per frame into a uniform array and multiplies
+/// the analytic sphere term with the shadow-map factor on the direct lobe
+/// only (ambient/hemisphere/bounce stay unshadowed).
+struct BlobCaster {
+	float radius{0.5f};
 };
 
 /// Perspective camera.
@@ -230,6 +244,14 @@ struct Animator {
 /// specifies one; a scene without settings leaves the globals alone.
 /// `exposure` scales linear HDR before ACES tone mapping (1.0 = neutral).
 ///
+/// Color policy (linear vs sRGB-authored): `light_color`, `sky_color`,
+/// `ground_color`, `bounce_color` are sRGB-authored in JSON/color pickers and
+/// decoded to linear before lighting; `ambient` is a linear gain floor;
+/// `light_intensity`, `bounce_intensity`, `exposure`, `fog_density`,
+/// `horizon_warmth` are linear non-color data. The fog color uniform is
+/// derived per frame from the sky/sun hues (never hardcoded); the sky dome
+/// itself is unfogged (writes DEPTH_FAR).
+///
 /// Hemisphere ambient: the shader blends `ground_color` (down) to `sky_color`
 /// (up) by world normal Y, then multiplies by `ambient` as the floor. Both
 /// default to the ambient gray, so a document that never sets them renders
@@ -240,20 +262,31 @@ struct Animator {
 /// `light_direction`); it defaults ON so old documents gain the sky instead
 /// of the black void, while false restores the exact legacy clear-color path.
 /// `horizon_warmth` scales the warm glow around the sun azimuth (1.0 neutral,
-/// 0.0 off). All are additive v3 keys: absent in an old document means "keep
-/// the default", never a version bump.
+/// 0.0 off). `fog_enabled`/`fog_density` add linear-space exponential fog
+/// between lighting and ACES (clamped to [0,1]); off restores the legacy
+/// path. `bounce_enabled`/`bounce_color`/`bounce_intensity` add an
+/// unshadowed warm fill from normalize(sun * vec3(-1,0,-1)); off restores the
+/// legacy path. `ssao_enabled` scales only ambient/hemisphere/bounce (never
+/// the sun); off restores the legacy path. All are additive v3 keys: absent
+/// in an old document means "keep the default", never a version bump.
 struct SceneSettings {
 	glm::vec3 light_direction{0.5f, 0.8f, 0.45f};
-	glm::vec3 light_color{1.0f, 1.0f, 1.0f};
-	float light_intensity{1.1f};
-	glm::vec3 ambient{0.15f, 0.15f, 0.18f};
-	float exposure{1.0f};
-	glm::vec3 sky_color{0.15f, 0.15f, 0.18f};
-	glm::vec3 ground_color{0.15f, 0.15f, 0.18f};
+	glm::vec3 light_color{1.0f, 1.0f, 1.0f}; // sRGB-authored
+	float light_intensity{1.1f}; // linear
+	glm::vec3 ambient{0.15f, 0.15f, 0.18f}; // linear gain floor
+	float exposure{1.0f}; // linear
+	glm::vec3 sky_color{0.15f, 0.15f, 0.18f}; // sRGB-authored
+	glm::vec3 ground_color{0.15f, 0.15f, 0.18f}; // sRGB-authored
 	bool shadows_enabled{true};
 	bool fxaa_enabled{true};
 	bool sky_enabled{true};
-	float horizon_warmth{1.0f};
+	float horizon_warmth{1.0f}; // linear
+	bool fog_enabled{true};
+	float fog_density{0.015f}; // linear, small
+	bool bounce_enabled{true};
+	glm::vec3 bounce_color{0.40f, 0.28f, 0.20f}; // sRGB-authored warm fill
+	float bounce_intensity{0.5f}; // linear
+	bool ssao_enabled{true};
 };
 
 } // namespace lotus

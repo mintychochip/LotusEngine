@@ -814,6 +814,26 @@ void Scene::draw(GpuRenderer& gpu)
 	         static_cast<std::uint32_t>(draw_batches_.size()), assets_);
 }
 
+std::vector<glm::vec4> Scene::blob_spheres() const
+{
+	std::vector<glm::vec4> spheres;
+	for (const Entity entity : registry_.view<Transform, BlobCaster>()) {
+		if (spheres.size() >= 4) {
+			break;
+		}
+		const Transform& transform =
+		        registry_.get<Transform>(entity);
+		const BlobCaster& caster = registry_.get<BlobCaster>(entity);
+		if (caster.radius <= 0.0f) {
+			continue;
+		}
+		const glm::vec3 center =
+		        glm::vec3{transform.world * glm::vec4{0.0f, 0.0f, 0.0f, 1.0f}};
+		spheres.emplace_back(center, caster.radius);
+	}
+	return spheres;
+}
+
 void update_world_transforms(Scene& scene)
 {
 	auto& registry = scene.registry();

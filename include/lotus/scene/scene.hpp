@@ -122,6 +122,10 @@ public:
 	/// Records the draw for the uploaded vertices. INSIDE a render pass.
 	void draw(GpuRenderer& gpu);
 
+	/// Analytic blob spheres for this frame (xyz world center from the
+	/// entity Transform, w radius from BlobCaster), up to 4. Pass to
+	/// GpuRenderer::set_blob_casters; empty when no entity carries one.
+	std::vector<glm::vec4> blob_spheres() const;
 	uint32_t vertex_count() const { return vertex_count_; }
 	uint32_t draw_calls() const { return draw_call_count_; }
 

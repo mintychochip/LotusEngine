@@ -12,6 +12,8 @@
 #include "lotus/gpu/fxaa.frag.spv.h"
 #include "lotus/gpu/sky.vert.spv.h"
 #include "lotus/gpu/sky.frag.spv.h"
+#include "lotus/gpu/ssao.vert.spv.h"
+#include "lotus/gpu/ssao.frag.spv.h"
 
 #include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -79,10 +81,27 @@ struct FragmentUniforms {
 	glm::vec4 hemi_ground;    // rgb: ground (down) hemisphere colour
 	glm::vec4 shadow_params;  // x: enabled; y: bias; z: normal offset; w: texel
 	glm::mat4 light_vp;       // light view-projection for in-frag shadow UVs
+	glm::vec4 fog_params;     // x: enabled; y: density; zw reserved
+	glm::vec4 fog_color;      // rgb: linear fog color from sky/sun hues
+	glm::vec4 bounce_color;   // rgb + intensity in .a
+	glm::vec4 bounce_params;  // x: enabled; yzw reserved
+	glm::vec4 blob_spheres[4]; // xyz: center; w: radius
+	glm::vec4 blob_params;    // x: count; y: sun angular radius; zw reserved
+	glm::vec4 ssao_params;    // x: enabled; yzw reserved
+	glm::vec4 ssao_texel;     // xy: 1/width, 1/height; zw reserved
 };
 
-static_assert(sizeof(FragmentUniforms) == 192,
+static_assert(sizeof(FragmentUniforms) == 368,
               "must match lit.frag's std140 block");
+
+/// Must match shaders/ssao.frag (set 3, binding 0).
+struct SsaoUniforms {
+	glm::vec4 texel;  // xy: 1/width, 1/height; zw reserved
+	glm::vec4 params; // x: radius (texels); y: bias; z: strength; w reserved
+};
+
+static_assert(sizeof(SsaoUniforms) == 32,
+              "must match ssao.frag's std140 block");
 
 /// Must match shaders/fxaa.frag (set 3, binding 0).
 struct FxaaUniforms {
@@ -125,8 +144,8 @@ SDL_GPUShader* create_shader(SDL_GPUDevice* device, bool vertex)
 		info.code      = lit_vert_spv;
 		info.code_size = lit_vert_spv_len;
 	} else {
-		// Albedo (binding 0) plus the shadow map (binding 1).
-		info.num_samplers = 2;
+		// Albedo (binding 0), shadow map (binding 1), SSAO (binding 2).
+		info.num_samplers = 3;
 		info.code      = lit_frag_spv;
 		info.code_size = lit_frag_spv_len;
 	}
@@ -400,14 +419,25 @@ bool GpuRenderer::load_texture_from_file(const std::string& path,
 		return false;
 	}
 
+	// Full mip chain so texture() auto-LODs: the sampler already requests
+	// LINEAR mip filtering, but a num_levels=1 texture has no mips to pick.
+	uint32_t levels = 1;
+	for (uint32_t dim =
+	             static_cast<uint32_t>(std::max(width, height)) >> 1;
+	     dim > 0; dim >>= 1) {
+		++levels;
+	}
 	SDL_GPUTextureCreateInfo info{};
 	info.type                 = SDL_GPU_TEXTURETYPE_2D;
 	info.format               = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
-	info.usage                = SDL_GPU_TEXTUREUSAGE_SAMPLER;
+	// COLOR_TARGET is required by SDL_GenerateMipmapsForGPUTexture (it
+	// blits mip by mip); SAMPLER keeps the texture samplable.
+	info.usage = static_cast<SDL_GPUTextureUsageFlags>(
+	        SDL_GPU_TEXTUREUSAGE_SAMPLER | SDL_GPU_TEXTUREUSAGE_COLOR_TARGET);
 	info.width                = static_cast<Uint32>(width);
 	info.height               = static_cast<Uint32>(height);
 	info.layer_count_or_depth = 1;
-	info.num_levels           = 1;
+	info.num_levels           = levels;
 	info.sample_count         = SDL_GPU_SAMPLECOUNT_1;
 	SDL_GPUTexture* texture   = SDL_CreateGPUTexture(device_, &info);
 	if (!texture) {
@@ -462,6 +492,9 @@ bool GpuRenderer::load_texture_from_file(const std::string& path,
 	dst.d         = 1;
 	SDL_UploadToGPUTexture(copy, &src, &dst, true);
 	SDL_EndGPUCopyPass(copy);
+	// Blits mip 0 down the chain on the GPU so minified fragments sample
+	// filtered mips instead of shimmering on full-res texels.
+	SDL_GenerateMipmapsForGPUTexture(cmd, texture);
 	const bool submitted = SDL_SubmitGPUCommandBuffer(cmd);
 	SDL_ReleaseGPUTransferBuffer(device_, transfer);
 	if (!submitted) {
@@ -1010,6 +1043,194 @@ void GpuRenderer::destroy_sky()
 	sky_format_ = SDL_GPU_TEXTUREFORMAT_INVALID;
 }
 
+void GpuRenderer::set_blob_casters(const glm::vec4* spheres, uint32_t count)
+{
+	blob_count_ = 0;
+	if (spheres == nullptr || count == 0) {
+		return;
+	}
+	blob_count_ = std::min(count, pbr::kMaxBlobCasters);
+	for (uint32_t i = 0; i < blob_count_; ++i) {
+		blob_spheres_[i] = spheres[i];
+	}
+}
+
+void GpuRenderer::clear_blob_casters()
+{
+	blob_count_ = 0;
+}
+
+bool GpuRenderer::ensure_ssao_resources(uint32_t width, uint32_t height)
+{
+	if (!device_ || width == 0 || height == 0 ||
+	    swapchain_format_ == SDL_GPU_TEXTUREFORMAT_INVALID) {
+		return false;
+	}
+	// Quarter-res AO: resolution-independent UVs keep it valid at any size.
+	const uint32_t w = std::max(1u, width / 4u);
+	const uint32_t h = std::max(1u, height / 4u);
+	if (ssao_texture_ && ssao_width_ == w && ssao_height_ == h) {
+		return true;
+	}
+	SDL_GPUTextureCreateInfo info{};
+	info.type                 = SDL_GPU_TEXTURETYPE_2D;
+	info.format               = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+	info.usage                = static_cast<SDL_GPUTextureUsageFlags>(
+                SDL_GPU_TEXTUREUSAGE_COLOR_TARGET |
+                SDL_GPU_TEXTUREUSAGE_SAMPLER);
+	info.width                = w;
+	info.height               = h;
+	info.layer_count_or_depth = 1;
+	info.num_levels           = 1;
+	info.sample_count         = SDL_GPU_SAMPLECOUNT_1;
+	SDL_GPUTexture* replacement = SDL_CreateGPUTexture(device_, &info);
+	if (!replacement) {
+		if (!ssao_unavailable_) {
+			ssao_unavailable_ = true;
+			std::cerr << "ssao: AO target unavailable, "
+			             "continuing without AO: " << SDL_GetError()
+			          << '\n';
+		}
+		return false;
+	}
+	if (ssao_texture_) {
+		SDL_ReleaseGPUTexture(device_, ssao_texture_);
+	}
+	ssao_texture_ = replacement;
+	ssao_width_   = w;
+	ssao_height_  = h;
+	return true;
+}
+
+bool GpuRenderer::ensure_ssao_pipeline()
+{
+	if (!device_ || swapchain_format_ == SDL_GPU_TEXTUREFORMAT_INVALID) {
+		return false;
+	}
+	if (ssao_unavailable_) {
+		return false;
+	}
+	if (ssao_pipeline_ && ssao_sampler_ && ssao_depth_sampler_) {
+		return true;
+	}
+	destroy_ssao();
+	ssao_unavailable_ = false;
+	SDL_GPUShader* vert = create_graphics_shader(
+	        device_, SDL_GPU_SHADERSTAGE_VERTEX, ssao_vert_spv,
+	        ssao_vert_spv_len, 0, 0);
+	SDL_GPUShader* frag = create_graphics_shader(
+	        device_, SDL_GPU_SHADERSTAGE_FRAGMENT, ssao_frag_spv,
+	        ssao_frag_spv_len, 1, 1);
+	if (vert && frag) {
+		SDL_GPUColorTargetDescription target{};
+		target.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+		SDL_GPUGraphicsPipelineCreateInfo pipe{};
+		pipe.vertex_shader   = vert;
+		pipe.fragment_shader = frag;
+		pipe.primitive_type  = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+		pipe.target_info.num_color_targets         = 1u;
+		pipe.target_info.color_target_descriptions = &target;
+		pipe.target_info.has_depth_stencil_target  = false;
+		pipe.vertex_input_state.num_vertex_buffers = 0;
+		pipe.vertex_input_state.vertex_buffer_descriptions = nullptr;
+		pipe.vertex_input_state.num_vertex_attributes      = 0;
+		pipe.vertex_input_state.vertex_attributes          = nullptr;
+		pipe.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+		pipe.multisample_state.sample_count = SDL_GPU_SAMPLECOUNT_1;
+		ssao_pipeline_ = SDL_CreateGPUGraphicsPipeline(device_, &pipe);
+	}
+	if (vert) {
+		SDL_ReleaseGPUShader(device_, vert);
+	}
+	if (frag) {
+		SDL_ReleaseGPUShader(device_, frag);
+	}
+	if (ssao_pipeline_) {
+		SDL_GPUSamplerCreateInfo linear{};
+		linear.min_filter    = SDL_GPU_FILTER_LINEAR;
+		linear.mag_filter    = SDL_GPU_FILTER_LINEAR;
+		linear.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+		linear.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+		linear.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+		ssao_sampler_ = SDL_CreateGPUSampler(device_, &linear);
+		SDL_GPUSamplerCreateInfo nearest{};
+		// Nearest: the depth source is R32_FLOAT, and float-linear
+		// filtering is not universally supported (lavapipe included).
+		// Taps are exact texel reads; the 12-tap average smooths.
+		nearest.min_filter    = SDL_GPU_FILTER_NEAREST;
+		nearest.mag_filter    = SDL_GPU_FILTER_NEAREST;
+		nearest.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+		nearest.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+		nearest.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+		ssao_depth_sampler_ = SDL_CreateGPUSampler(device_, &nearest);
+	}
+	if (!ssao_pipeline_ || !ssao_sampler_ || !ssao_depth_sampler_) {
+		std::cerr << "ssao: post pipeline unavailable, "
+		             "continuing without AO: " << SDL_GetError() << '\n';
+		destroy_ssao();
+		ssao_unavailable_ = true;
+		return false;
+	}
+	return true;
+}
+
+void GpuRenderer::run_ssao_pass(uint32_t width, uint32_t height)
+{
+	if (!cmd_ || !pyramid_texture_ || width == 0 || height == 0 ||
+	    !ensure_ssao_pipeline() ||
+	    !ensure_ssao_resources(width, height)) {
+		return;
+	}
+	SDL_GPUColorTargetInfo target{};
+	target.texture  = ssao_texture_;
+	target.load_op  = SDL_GPU_LOADOP_CLEAR;
+	target.store_op = SDL_GPU_STOREOP_STORE;
+	target.clear_color = SDL_FColor{1.0f, 1.0f, 1.0f, 1.0f};
+	SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd_, &target, 1, nullptr);
+	if (!pass) {
+		return;
+	}
+	SsaoUniforms uniforms{};
+	uniforms.texel =
+	        glm::vec4{1.0f / static_cast<float>(width),
+	                  1.0f / static_cast<float>(height), 0.0f, 0.0f};
+	uniforms.params = glm::vec4{2.5f, 0.02f, 1.0f, 0.0f};
+	SDL_PushGPUFragmentUniformData(cmd_, 0, &uniforms, sizeof(uniforms));
+	SDL_BindGPUGraphicsPipeline(pass, ssao_pipeline_);
+	SDL_GPUTextureSamplerBinding binding{};
+	binding.texture = pyramid_texture_;
+	binding.sampler = ssao_depth_sampler_;
+	SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
+	SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+	SDL_EndGPURenderPass(pass);
+	ssao_target_width_  = width;
+	ssao_target_height_ = height;
+}
+
+void GpuRenderer::destroy_ssao()
+{
+	if (ssao_pipeline_) {
+		SDL_ReleaseGPUGraphicsPipeline(device_, ssao_pipeline_);
+		ssao_pipeline_ = nullptr;
+	}
+	if (ssao_texture_) {
+		SDL_ReleaseGPUTexture(device_, ssao_texture_);
+		ssao_texture_ = nullptr;
+	}
+	if (ssao_sampler_) {
+		SDL_ReleaseGPUSampler(device_, ssao_sampler_);
+		ssao_sampler_ = nullptr;
+	}
+	if (ssao_depth_sampler_) {
+		SDL_ReleaseGPUSampler(device_, ssao_depth_sampler_);
+		ssao_depth_sampler_ = nullptr;
+	}
+	ssao_width_          = 0;
+	ssao_height_         = 0;
+	ssao_target_width_   = 0;
+	ssao_target_height_  = 0;
+}
+
 void GpuRenderer::destroy_buffers()
 {
 	if (vertex_buffer_) {
@@ -1203,7 +1424,9 @@ void GpuRenderer::ensure_pyramid_stand_in(uint32_t width, uint32_t height)
 	SDL_GPUTextureCreateInfo info{};
 	info.type                 = SDL_GPU_TEXTURETYPE_2D;
 	info.format               = SDL_GPU_TEXTUREFORMAT_R32_FLOAT;
-	info.usage                = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET;
+	// SAMPLER keeps the SSAO pass valid on this path too (it samples mip 0).
+	info.usage = static_cast<SDL_GPUTextureUsageFlags>(
+	        SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER);
 	info.width                = width;
 	info.height               = height;
 	info.layer_count_or_depth = 1;
@@ -1236,8 +1459,12 @@ void GpuRenderer::ensure_pyramid_texture(uint32_t width, uint32_t height)
 	info.format               = SDL_GPU_TEXTUREFORMAT_R32_FLOAT;
 	// SIMULTANEOUS_READ_WRITE, never READ | WRITE: depth.comp reads and writes
 	// storage images, and SDL_gpu.h warns the two are not equivalent.
-	info.usage                = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET |
-	                             SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_SIMULTANEOUS_READ_WRITE;
+	// SAMPLER lets the SSAO pass sample mip 0 as the fullscreen AO source;
+	// without it the SSAO sampler binding would be a validation error.
+	info.usage = static_cast<SDL_GPUTextureUsageFlags>(
+	        SDL_GPU_TEXTUREUSAGE_COLOR_TARGET |
+	        SDL_GPU_TEXTUREUSAGE_SAMPLER |
+	        SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_SIMULTANEOUS_READ_WRITE);
 	info.width                = width;
 	info.height               = height;
 	info.layer_count_or_depth = 1;
@@ -1788,6 +2015,7 @@ void GpuRenderer::shutdown()
 	destroy_shadows();
 	destroy_fxaa();
 	destroy_sky();
+	destroy_ssao();
 	destroy_textures();
 	if (depth_texture_) {
 		SDL_ReleaseGPUTexture(device_, depth_texture_);
@@ -2025,6 +2253,49 @@ void GpuRenderer::draw(const glm::mat4& view, const glm::mat4& view_projection,
 	        glm::vec4{shadow_on ? 1.0f : 0.0f, kShadowBias,
 	                  kShadowNormalOffset, 1.0f / kShadowMapSize};
 	fragment_uniforms.light_vp = light_vp_;
+	// Fog: linear-space exp fog tinted by the sky/sun hues, never hardcoded.
+	// Disabled restores the exact legacy path.
+	const glm::vec3 sky_lin{pbr::srgb_to_linear(lighting_.sky_color.x),
+	                        pbr::srgb_to_linear(lighting_.sky_color.y),
+	                        pbr::srgb_to_linear(lighting_.sky_color.z)};
+	const glm::vec3 sun_lin{pbr::srgb_to_linear(lighting_.color.x),
+	                        pbr::srgb_to_linear(lighting_.color.y),
+	                        pbr::srgb_to_linear(lighting_.color.z)};
+	const float warmth =
+	        std::min(std::max(lighting_.horizon_warmth, 0.0f), 1.0f);
+	const glm::vec3 fog_color =
+	        sky_lin + (sun_lin - sky_lin) * (0.25f * warmth);
+	fragment_uniforms.fog_params =
+	        glm::vec4{lighting_.fog_enabled ? 1.0f : 0.0f,
+	                  std::max(lighting_.fog_density, 0.0f), 0.0f, 0.0f};
+	fragment_uniforms.fog_color = glm::vec4{fog_color, 0.0f};
+	// Bounce fill: warm third directional, unshadowed like the hemisphere.
+	// Disabled restores the exact legacy path.
+	fragment_uniforms.bounce_color =
+	        glm::vec4{lighting_.bounce_color, lighting_.bounce_intensity};
+	fragment_uniforms.bounce_params =
+	        glm::vec4{lighting_.bounce_enabled ? 1.0f : 0.0f, 0.0f, 0.0f,
+	                  0.0f};
+	// Blob shadows: up to 4 analytic spheres on the direct lobe only.
+	for (uint32_t i = 0; i < 4; ++i) {
+		fragment_uniforms.blob_spheres[i] =
+		        i < blob_count_ ? blob_spheres_[i] : glm::vec4{0.0f};
+	}
+	fragment_uniforms.blob_params =
+	        glm::vec4{static_cast<float>(blob_count_), pbr::kBlobSunRadius,
+	                  0.0f, 0.0f};
+	// SSAO: scales fill only, never the sun. Disabled (or no texture yet)
+	// binds white so the factor reads 1.
+	const bool ssao_on = lighting_.ssao_enabled && !ssao_unavailable_ &&
+	                     ssao_texture_ != nullptr && ssao_sampler_ != nullptr &&
+	                     ssao_target_width_ != 0 && ssao_target_height_ != 0;
+	fragment_uniforms.ssao_params =
+	        glm::vec4{ssao_on ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f};
+	fragment_uniforms.ssao_texel =
+	        ssao_on ? glm::vec4{1.0f / static_cast<float>(ssao_target_width_),
+	                            1.0f / static_cast<float>(ssao_target_height_),
+	                            0.0f, 0.0f}
+	                : glm::vec4{0.0f};
 
 	SDL_PushGPUVertexUniformData(cmd_, 0, &vertex_uniforms,
 	                             sizeof(vertex_uniforms));
@@ -2035,7 +2306,8 @@ void GpuRenderer::draw(const glm::mat4& view, const glm::mat4& view_projection,
 	// Binding 1 (shadow map) lives here, next to the pipeline, so both draw
 	// overloads sample a valid descriptor: the map when lit, else the white
 	// texel (depth 1.0 reads as lit, failing open). Binding 0 (albedo) is
-	// bound per batch by the overload below.
+	// bound per batch by the overload below. Binding 2 (SSAO) samples the
+	// previous frame's AO texture, or white (AO=1) when off/unavailable.
 	ensure_default_sampler();
 	ensure_white_texture();
 	SDL_GPUTextureSamplerBinding shadow_binding{};
@@ -2047,6 +2319,15 @@ void GpuRenderer::draw(const glm::mat4& view, const glm::mat4& view_projection,
 		shadow_binding.sampler = default_sampler_;
 	}
 	SDL_BindGPUFragmentSamplers(pass_, 1, &shadow_binding, 1);
+	SDL_GPUTextureSamplerBinding ssao_binding{};
+	if (ssao_on) {
+		ssao_binding.texture = ssao_texture_;
+		ssao_binding.sampler = ssao_sampler_;
+	} else {
+		ssao_binding.texture = white_texture_;
+		ssao_binding.sampler = default_sampler_;
+	}
+	SDL_BindGPUFragmentSamplers(pass_, 2, &ssao_binding, 1);
 	SDL_GPUBufferBinding bindings[2]{};
 	bindings[0].buffer = vertex_buffer_;
 	bindings[0].offset = 0;
@@ -2094,6 +2375,20 @@ void GpuRenderer::end_scene_pass()
 		}
 		pass_redirected_  = false;
 		pass_destination_ = nullptr;
+		// SSAO samples the linear depth this pass just wrote (colour target
+		// 1) and produces the AO texture the NEXT frame's lit pass samples:
+		// one frame of lag, no circular dependency. Disabled restores the
+		// legacy path (lit binds white, AO=1).
+		if (lighting_.ssao_enabled && !ssao_unavailable_ &&
+		    pyramid_texture_) {
+			const uint32_t target_width =
+			        offscreen_ ? offscreen_width_ : swapchain_width_;
+			const uint32_t target_height =
+			        offscreen_ ? offscreen_height_ : swapchain_height_;
+			if (target_width != 0 && target_height != 0) {
+				run_ssao_pass(target_width, target_height);
+			}
+		}
 		// The reduction reads the colour target this pass just wrote, so it can
 		// only be recorded after the render pass has ended. A clear-only pass
 		// behind the editor suppresses this so it does not replace the pyramid

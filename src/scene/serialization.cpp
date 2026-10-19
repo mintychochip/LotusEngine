@@ -298,6 +298,18 @@ void from_json(const nlohmann::json& j, CharacterController& controller)
 	}
 }
 
+void to_json(nlohmann::json& j, const BlobCaster& blob)
+{
+	j = nlohmann::json{{"radius", tidy(blob.radius)}};
+}
+
+void from_json(const nlohmann::json& j, BlobCaster& blob)
+{
+	if (j.contains("radius") && j.at("radius").is_number()) {
+		blob.radius = j.at("radius").get<float>();
+	}
+}
+
 void to_json(nlohmann::json& j, const Animator& animator)
 {
 	j = nlohmann::json{{"time", tidy(animator.time)},
@@ -666,6 +678,19 @@ ComponentCodecs& mutable_component_codecs()
 		        [](Registry& r, Entity e, const nlohmann::json& j) {
 			        r.emplace_or_replace<Animator>(e, j.get<Animator>());
 		        });
+		c.add(
+		        "BlobCaster",
+		        [](const Registry& r, Entity e, nlohmann::json& j) {
+			        const auto* value = r.try_get<BlobCaster>(e);
+			        if (!value) {
+				        return false;
+			        }
+			        j = *value;
+			        return true;
+		        },
+		        [](Registry& r, Entity e, const nlohmann::json& j) {
+			        r.emplace_or_replace<BlobCaster>(e, j.get<BlobCaster>());
+		        });
 		return c;
 	}();
 	return codecs;
@@ -896,7 +921,20 @@ std::string to_json_string(const Scene& scene)
 		    // (enabled, neutral warmth), so no version bump.
 		    << ", \"sky_enabled\": "
 		    << (s.sky_enabled ? "true" : "false")
-		    << ", \"horizon_warmth\": " << tidy(s.horizon_warmth) << "},\n";
+		    << ", \"horizon_warmth\": " << tidy(s.horizon_warmth)
+		    // Render-upgrade bundle: fog, bounce fill, SSAO. Same additive
+		    // rule, absent keeps struct defaults (all on), no version bump.
+		    << ", \"fog_enabled\": "
+		    << (s.fog_enabled ? "true" : "false")
+		    << ", \"fog_density\": " << tidy(s.fog_density)
+		    << ", \"bounce_enabled\": "
+		    << (s.bounce_enabled ? "true" : "false")
+		    << ", \"bounce_color\": "
+		    << dump_compact(arr3(s.bounce_color.x, s.bounce_color.y,
+		                         s.bounce_color.z))
+		    << ", \"bounce_intensity\": " << tidy(s.bounce_intensity)
+		    << ", \"ssao_enabled\": "
+		    << (s.ssao_enabled ? "true" : "false") << "},\n";
 	}
 	out << "  \"entities\": [\n";
 	bool first = true;
@@ -1005,6 +1043,31 @@ bool scene_from_json(Scene& scene, const std::string& text, std::string* error)
 		if (s.contains("horizon_warmth") &&
 		    s.at("horizon_warmth").is_number()) {
 			settings.horizon_warmth = s.at("horizon_warmth").get<float>();
+		}
+		// Same additive rule for the render-upgrade bundle: absent keys keep
+		// struct defaults (fog/bounce/SSAO on), so old v3 scenes load sane
+		// with no version bump.
+		if (s.contains("fog_enabled") &&
+		    s.at("fog_enabled").is_boolean()) {
+			settings.fog_enabled = s.at("fog_enabled").get<bool>();
+		}
+		if (s.contains("fog_density") &&
+		    s.at("fog_density").is_number()) {
+			settings.fog_density = s.at("fog_density").get<float>();
+		}
+		if (s.contains("bounce_enabled") &&
+		    s.at("bounce_enabled").is_boolean()) {
+			settings.bounce_enabled = s.at("bounce_enabled").get<bool>();
+		}
+		read3("bounce_color", settings.bounce_color);
+		if (s.contains("bounce_intensity") &&
+		    s.at("bounce_intensity").is_number()) {
+			settings.bounce_intensity =
+			        s.at("bounce_intensity").get<float>();
+		}
+		if (s.contains("ssao_enabled") &&
+		    s.at("ssao_enabled").is_boolean()) {
+			settings.ssao_enabled = s.at("ssao_enabled").get<bool>();
 		}
 		has_settings = true;
 	}
