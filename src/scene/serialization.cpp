@@ -877,7 +877,9 @@ std::string to_json_string(const Scene& scene)
 		    << ", \"light_intensity\": " << tidy(s.light_intensity)
 		    << ", \"ambient\": "
 		    << dump_compact(arr3(s.ambient.x, s.ambient.y, s.ambient.z))
-		    << "},\n";
+		    // Additive within v3 (like the 2 -> 3 ids): an old document
+		    // without "exposure" loads with the default below.
+		    << ", \"exposure\": " << tidy(s.exposure) << "},\n";
 	}
 	out << "  \"entities\": [\n";
 	bool first = true;
@@ -943,6 +945,11 @@ bool scene_from_json(Scene& scene, const std::string& text, std::string* error)
 		read3("ambient", settings.ambient);
 		if (s.contains("light_intensity") && s.at("light_intensity").is_number()) {
 			settings.light_intensity = s.at("light_intensity").get<float>();
+		}
+		// Absent in documents written before exposure existed: keep the
+		// default (1.0, neutral), so old v3 scenes load unchanged.
+		if (s.contains("exposure") && s.at("exposure").is_number()) {
+			settings.exposure = s.at("exposure").get<float>();
 		}
 		has_settings = true;
 	}

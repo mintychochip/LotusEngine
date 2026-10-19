@@ -2,6 +2,8 @@
 
 #include <SDL3/SDL_gpu.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -19,13 +21,96 @@ namespace lotus {
 
 class AssetRegistry;
 
-/// A directional light plus an ambient term (Blinn-Phong).
+/// CPU mirror of shaders/lit.frag. The fragment shader owns the ground truth;
+/// these helpers exist so unit tests can assert the new-model invariants
+/// (energy conservation, monotonic roughness response, tone-map bounds)
+/// without a GPU. Keep the constants and formulas in sync with lit.frag.
+namespace pbr {
+
+inline constexpr float kPi = 3.14159265f;
+/// Base reflectance of a dielectric at normal incidence (matches lit.frag).
+inline constexpr float kDielectricF0 = 0.04f;
+/// Floor on alpha = roughness^2; without it the GGX denominator is 0/0 at
+/// roughness 0 (matches MIN_ALPHA in lit.frag).
+inline constexpr float kMinAlpha = 0.001f;
+
+inline float clamp01(float x) { return std::min(std::max(x, 0.0f), 1.0f); }
+
+/// Trowbridge-Reitz GGX normal distribution.
+inline float ndf_ggx(float n_dot_h, float roughness)
+{
+	const float a     = std::max(roughness * roughness, kMinAlpha);
+	const float a2    = a * a;
+	const float denom = n_dot_h * n_dot_h * (a2 - 1.0f) + 1.0f;
+	return a2 / (kPi * denom * denom);
+}
+
+/// Schlick-GGX approximation of the Smith geometry term (direct lighting).
+inline float geometry_schlick_ggx(float n_dot, float roughness)
+{
+	const float r = roughness + 1.0f;
+	const float k = (r * r) / 8.0f;
+	return n_dot / (n_dot * (1.0f - k) + k);
+}
+
+/// Schlick Fresnel for a dielectric (F0 = kDielectricF0).
+inline float fresnel_schlick(float cos_theta)
+{
+	const float t = clamp01(1.0f - cos_theta);
+	return kDielectricF0 +
+	       (1.0f - kDielectricF0) * t * t * t * t * t;
+}
+
+/// Fraction of light left for the diffuse lobe after Fresnel reflection.
+/// Metallic is 0 (dielectric-only pipeline), so this is simply 1 - F.
+inline float diffuse_fraction(float h_dot_v)
+{
+	return 1.0f - fresnel_schlick(h_dot_v);
+}
+
+/// Cook-Torrance specular term: D * G * F / (4 (N.L) (N.V)).
+inline float specular(float n_dot_l, float n_dot_v, float n_dot_h,
+                      float h_dot_v, float roughness)
+{
+	const float d = ndf_ggx(n_dot_h, roughness);
+	const float g = geometry_schlick_ggx(n_dot_l, roughness) *
+	                geometry_schlick_ggx(n_dot_v, roughness);
+	const float denom = std::max(4.0f * n_dot_l * n_dot_v, 0.001f);
+	return d * g * fresnel_schlick(h_dot_v) / denom;
+}
+
+/// Narkowicz ACES filmic fit (scalar lane of the shader's vec3 version).
+inline float aces(float x)
+{
+	const float mapped =
+	        (x * (2.51f * x + 0.03f)) / (x * (2.43f * x + 0.59f) + 0.14f);
+	return clamp01(mapped);
+}
+
+inline float srgb_to_linear(float c)
+{
+	return c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f);
+}
+
+inline float linear_to_srgb(float c)
+{
+	return c <= 0.0031308f
+	        ? c * 12.92f
+	        : 1.055f * std::pow(c, 1.0f / 2.4f) - 0.055f;
+}
+
+} // namespace pbr
+
+/// A directional light plus an ambient floor, evaluated by the
+/// Cook-Torrance dielectric BRDF in shaders/lit.frag with ACES tone mapping
+/// and sRGB output. `exposure` scales linear HDR before the tone map.
 struct LightingSettings {
 	/// Unit vector pointing toward the light.
 	glm::vec3 direction{0.4f, 0.8f, 0.6f};
 	glm::vec3 color{1.0f, 1.0f, 1.0f};
 	float intensity{1.0f};
 	glm::vec3 ambient{0.15f, 0.15f, 0.18f};
+	float exposure{1.0f};
 };
 
 /// SDL3 GPU backend (Vulkan on Linux). Owns the device, the lit pipeline,

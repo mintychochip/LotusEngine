@@ -228,11 +228,13 @@ struct Animator {
 
 /// Per-scene environment. Replaces the renderer's global lighting when a scene
 /// specifies one; a scene without settings leaves the globals alone.
+/// `exposure` scales linear HDR before ACES tone mapping (1.0 = neutral).
 struct SceneSettings {
 	glm::vec3 light_direction{0.5f, 0.9f, 0.4f};
 	glm::vec3 light_color{1.0f, 1.0f, 1.0f};
 	float light_intensity{1.0f};
 	glm::vec3 ambient{0.12f, 0.13f, 0.17f};
+	float exposure{1.0f};
 };
 
 } // namespace lotus

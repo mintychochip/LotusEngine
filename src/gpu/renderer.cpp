@@ -42,7 +42,11 @@ struct FragmentUniforms {
 	glm::vec4 light_color;    // rgb + intensity in .a
 	glm::vec4 ambient_color;
 	glm::vec4 camera_position;
+	glm::vec4 tone_params;    // x: exposure; yzw reserved
 };
+
+static_assert(sizeof(FragmentUniforms) == 80,
+              "must match lit.frag's std140 block");
 
 SDL_GPUShader* create_shader(SDL_GPUDevice* device, bool vertex)
 {
@@ -1384,6 +1388,8 @@ void GpuRenderer::draw(const glm::mat4& view, const glm::mat4& view_projection,
 	        glm::vec4{lighting_.color, lighting_.intensity};
 	fragment_uniforms.ambient_color   = glm::vec4{lighting_.ambient, 0.0f};
 	fragment_uniforms.camera_position = glm::vec4{camera_position, 1.0f};
+	fragment_uniforms.tone_params =
+	        glm::vec4{lighting_.exposure, 0.0f, 0.0f, 0.0f};
 
 	SDL_PushGPUVertexUniformData(cmd_, 0, &vertex_uniforms,
 	                             sizeof(vertex_uniforms));

@@ -483,10 +483,12 @@ TEST(SceneSerialization, SceneSettingsRoundTripAndAreOptional)
 	with.set_settings(SceneSettings{{0.0f, -1.0f, 0.0f},
 	                                {1.0f, 0.5f, 0.25f},
 	                                2.5f,
-	                                {0.4f, 0.3f, 0.2f}});
+	                                {0.4f, 0.3f, 0.2f},
+	                                0.75f});
 
 	const std::string text = to_json_string(with);
 	EXPECT_NE(text.find("\"settings\""), std::string::npos) << text;
+	EXPECT_NE(text.find("\"exposure\""), std::string::npos) << text;
 
 	Scene loaded{"s"};
 	ASSERT_TRUE(scene_from_json(loaded, text, nullptr));
@@ -494,6 +496,7 @@ TEST(SceneSerialization, SceneSettingsRoundTripAndAreOptional)
 	EXPECT_FLOAT_EQ(loaded.settings().light_intensity, 2.5f);
 	EXPECT_FLOAT_EQ(loaded.settings().light_direction.y, -1.0f);
 	EXPECT_FLOAT_EQ(loaded.settings().ambient.z, 0.2f);
+	EXPECT_FLOAT_EQ(loaded.settings().exposure, 0.75f);
 
 	// A document without settings must not claim to have them, or loading it
 	// would silently override the renderer's globals.
@@ -502,4 +505,23 @@ TEST(SceneSerialization, SceneSettingsRoundTripAndAreOptional)
 	        plain, R"({"version":3,"name":"p","entities":[]})", nullptr));
 	EXPECT_FALSE(plain.has_settings());
 	EXPECT_EQ(to_json_string(plain).find("\"settings\""), std::string::npos);
+}
+
+TEST(SceneSerialization, OldV3SettingsWithoutExposureLoadNeutral)
+{
+	// Documents written before exposure existed carry no "exposure" key.
+	// They must still load, with a neutral 1.0 exposure.
+	Scene loaded{"s"};
+	ASSERT_TRUE(scene_from_json(loaded,
+	                            R"({"version":3,"name":"p","settings":{)"
+	                            R"("light_direction":[0.0,-1.0,0.0],)"
+	                            R"("light_color":[1.0,1.0,1.0],)"
+	                            R"("light_intensity":2.0,)"
+	                            R"("ambient":[0.1,0.1,0.1])"
+	                            R"(},"entities":[]})",
+	                            nullptr));
+	ASSERT_TRUE(loaded.has_settings());
+	EXPECT_FLOAT_EQ(loaded.settings().exposure, 1.0f);
+	EXPECT_FLOAT_EQ(loaded.settings().light_intensity, 2.0f);
+	EXPECT_FLOAT_EQ(loaded.settings().light_direction.y, -1.0f);
 }
