@@ -173,11 +173,24 @@ SDL_GPUShader* create_graphics_shader(SDL_GPUDevice* device,
 	return SDL_CreateGPUShader(device, &info); // null on failure: caller skips
 }
 
+/// Vertex buffer slots of the lit and shadow pipelines: a mesh vertex (0), its
+/// UV (1), and one GpuInstance per instance (2).
+constexpr uint32_t kVertexBufferSlots = 3;
+constexpr uint32_t kVertexAttributes  = 10;
+
+/// Instance 0 of the instance buffer is the identity the immediate stream
+/// draws with; the instances of a frame's batches follow it.
+constexpr uint32_t kReservedInstances = 1;
+
+/// Initial capacity of the instance buffer, in instances.
+constexpr uint32_t kInitialInstances = 1024;
+
 /// Shared vertex input state for the lit and shadow pipelines: both consume
-/// the same uploaded buffers (shadow.vert reads only position; unconsumed
-/// attributes are legal).
-void lit_vertex_descriptions(SDL_GPUVertexBufferDescription (&vb)[2],
-                             SDL_GPUVertexAttribute (&attrs)[5])
+/// the same buffers (shadow.vert reads only the position and the model
+/// matrix; unconsumed attributes are legal).
+void lit_vertex_descriptions(
+        SDL_GPUVertexBufferDescription (&vb)[kVertexBufferSlots],
+        SDL_GPUVertexAttribute (&attrs)[kVertexAttributes])
 {
 	vb[0].slot               = 0;
 	vb[0].pitch              = kVertexStride;
@@ -187,6 +200,10 @@ void lit_vertex_descriptions(SDL_GPUVertexBufferDescription (&vb)[2],
 	vb[1].pitch              = sizeof(glm::vec2);
 	vb[1].input_rate         = SDL_GPU_VERTEXINPUTRATE_VERTEX;
 	vb[1].instance_step_rate = 0;
+	vb[2].slot               = 2;
+	vb[2].pitch              = sizeof(GpuInstance);
+	vb[2].input_rate         = SDL_GPU_VERTEXINPUTRATE_INSTANCE;
+	vb[2].instance_step_rate = 0;
 
 	attrs[0].location    = 0;
 	attrs[0].buffer_slot = 0;
@@ -208,6 +225,20 @@ void lit_vertex_descriptions(SDL_GPUVertexBufferDescription (&vb)[2],
 	attrs[4].buffer_slot = 0;
 	attrs[4].format      = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT;
 	attrs[4].offset      = offsetof(GpuVertex, roughness);
+	// The model matrix is four consecutive vec4 columns: locations 8..11.
+	for (uint32_t column = 0; column < 4; ++column) {
+		SDL_GPUVertexAttribute& attr = attrs[5 + column];
+		attr.location    = 8 + column;
+		attr.buffer_slot = 2;
+		attr.format      = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4;
+		attr.offset      = static_cast<Uint32>(offsetof(GpuInstance, model) +
+                                                  column * sizeof(glm::vec4));
+	}
+	// rgb colour multiplier and roughness multiplier, location 12.
+	attrs[9].location    = 12;
+	attrs[9].buffer_slot = 2;
+	attrs[9].format      = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4;
+	attrs[9].offset      = offsetof(GpuInstance, color);
 }
 
 } // namespace
@@ -553,8 +584,8 @@ void GpuRenderer::create_pipeline()
 		pipeline_ = nullptr;
 	}
 
-	SDL_GPUVertexBufferDescription vb_desc[2]{};
-	SDL_GPUVertexAttribute attrs[5]{};
+	SDL_GPUVertexBufferDescription vb_desc[kVertexBufferSlots]{};
+	SDL_GPUVertexAttribute attrs[kVertexAttributes]{};
 	lit_vertex_descriptions(vb_desc, attrs);
 
 	SDL_GPUGraphicsPipelineCreateInfo pipe{};
@@ -565,9 +596,9 @@ void GpuRenderer::create_pipeline()
 	pipe.target_info.color_target_descriptions = color_targets;
 	pipe.target_info.has_depth_stencil_target  = true;
 	pipe.target_info.depth_stencil_format      = kDepthFormat;
-	pipe.vertex_input_state.num_vertex_buffers = 2;
+	pipe.vertex_input_state.num_vertex_buffers = kVertexBufferSlots;
 	pipe.vertex_input_state.vertex_buffer_descriptions = vb_desc;
-	pipe.vertex_input_state.num_vertex_attributes      = 5;
+	pipe.vertex_input_state.num_vertex_attributes      = kVertexAttributes;
 	pipe.vertex_input_state.vertex_attributes          = attrs;
 	pipe.rasterizer_state.cull_mode   = SDL_GPU_CULLMODE_NONE;
 	pipe.multisample_state.sample_count = SDL_GPU_SAMPLECOUNT_1;
@@ -677,8 +708,8 @@ void GpuRenderer::ensure_shadow_resources()
 		        device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shadow_frag_spv,
 		        shadow_frag_spv_len, 0, 0);
 		if (vert && frag) {
-			SDL_GPUVertexBufferDescription vb_desc[2]{};
-			SDL_GPUVertexAttribute attrs[5]{};
+			SDL_GPUVertexBufferDescription vb_desc[kVertexBufferSlots]{};
+			SDL_GPUVertexAttribute attrs[kVertexAttributes]{};
 			lit_vertex_descriptions(vb_desc, attrs);
 			SDL_GPUGraphicsPipelineCreateInfo pipe{};
 			pipe.vertex_shader   = vert;
@@ -688,9 +719,9 @@ void GpuRenderer::ensure_shadow_resources()
 			pipe.target_info.color_target_descriptions = nullptr;
 			pipe.target_info.has_depth_stencil_target  = true;
 			pipe.target_info.depth_stencil_format      = kShadowFormat;
-			pipe.vertex_input_state.num_vertex_buffers = 2;
+			pipe.vertex_input_state.num_vertex_buffers = kVertexBufferSlots;
 			pipe.vertex_input_state.vertex_buffer_descriptions = vb_desc;
-			pipe.vertex_input_state.num_vertex_attributes      = 5;
+			pipe.vertex_input_state.num_vertex_attributes      = kVertexAttributes;
 			pipe.vertex_input_state.vertex_attributes          = attrs;
 			pipe.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
 			pipe.multisample_state.sample_count = SDL_GPU_SAMPLECOUNT_1;
@@ -718,8 +749,8 @@ void GpuRenderer::ensure_shadow_resources()
 
 void GpuRenderer::render_shadow_map()
 {
-	if (shadow_rendered_ || !cmd_ || uploaded_vertex_count_ == 0 ||
-	    !vertex_buffer_ || !uv_buffer_) {
+	if (shadow_rendered_ || !cmd_ || geometry_draws_.empty() ||
+	    !instance_buffer_) {
 		return;
 	}
 	if (!shadows_ready()) {
@@ -748,13 +779,9 @@ void GpuRenderer::render_shadow_map()
 	uniforms.view            = light_view;
 	SDL_PushGPUVertexUniformData(cmd_, 0, &uniforms, sizeof(uniforms));
 	SDL_BindGPUGraphicsPipeline(pass, shadow_pipeline_);
-	SDL_GPUBufferBinding bindings[2]{};
-	bindings[0].buffer = vertex_buffer_;
-	bindings[0].offset = 0;
-	bindings[1].buffer = uv_buffer_;
-	bindings[1].offset = 0;
-	SDL_BindGPUVertexBuffers(pass, 0, bindings, 2);
-	SDL_DrawGPUPrimitives(pass, uploaded_vertex_count_, 1, 0, 0);
+	for (const GeometryDraw& draw : geometry_draws_) {
+		record_geometry_draw(pass, draw);
+	}
 	SDL_EndGPURenderPass(pass);
 	shadow_rendered_ = true;
 }
@@ -1712,6 +1739,7 @@ void GpuRenderer::begin_frame_offscreen()
 	if (!offscreen_ || !offscreen_color_) {
 		return;
 	}
+	begin_geometry_frame();
 	poll_pyramid_fence();
 	cmd_ = SDL_AcquireGPUCommandBuffer(device_);
 	if (!cmd_) {
@@ -2011,7 +2039,10 @@ void GpuRenderer::shutdown()
 	}
 	retired_fences_.clear();
 
+	abandon_geometry_staging();
 	destroy_buffers();
+	destroy_instance_buffers();
+	destroy_meshes();
 	destroy_shadows();
 	destroy_fxaa();
 	destroy_sky();
@@ -2056,6 +2087,8 @@ void GpuRenderer::begin_frame(SDL_Window* window, float clear_r, float clear_g,
 	clear_g_ = clear_g;
 	clear_b_ = clear_b;
 
+	begin_geometry_frame();
+
 	// Before anything else, so occlusion for this frame uses the previous
 	// frame's pyramid. Polls, never waits.
 	poll_pyramid_fence();
@@ -2090,86 +2123,430 @@ void GpuRenderer::begin_frame(SDL_Window* window, float clear_r, float clear_g,
 	pass_destination_ = nullptr;
 }
 
-GpuRenderer::VertexStaging GpuRenderer::begin_vertex_upload(uint32_t count)
+void GpuRenderer::begin_geometry_frame()
 {
-	staged_vertex_count_ = 0;
-	if (!cmd_ || count == 0) {
-		uploaded_vertex_count_ = 0;
-		return {};
+	abandon_geometry_staging();
+	// The draw list belongs to the frame that uploaded it: a frame that
+	// uploads nothing draws no shadows, and cannot reach a mesh the eviction
+	// below has just released.
+	geometry_draws_.clear();
+	// Cheap enough to check every 64th frame; a scene that stopped drawing
+	// still lets its meshes age out.
+	if ((frames_rendered_ & 63u) == 0 && !mesh_ids_.empty()) {
+		evict_idle_meshes();
 	}
-	uploaded_vertex_count_ = count;
-	ensure_vertex_capacity(count * static_cast<uint32_t>(sizeof(GpuVertex)),
-	                       count * static_cast<uint32_t>(sizeof(glm::vec2)));
-
-	void* mapped = SDL_MapGPUTransferBuffer(device_, transfer_buffer_, true);
-	if (!mapped) {
-		throw std::runtime_error(SDL_GetError());
-	}
-	void* uv_mapped = SDL_MapGPUTransferBuffer(device_, uv_transfer_buffer_, true);
-	if (!uv_mapped) {
-		SDL_UnmapGPUTransferBuffer(device_, transfer_buffer_);
-		throw std::runtime_error(SDL_GetError());
-	}
-	staged_vertex_count_ = count;
-	return {static_cast<GpuVertex*>(mapped), static_cast<glm::vec2*>(uv_mapped)};
 }
 
-void GpuRenderer::commit_vertex_upload()
+bool GpuRenderer::mesh_live(GpuMeshId mesh) const
 {
-	if (staged_vertex_count_ == 0) {
+	return mesh < meshes_.size() && meshes_[mesh].live;
+}
+
+uint32_t GpuRenderer::mesh_index_count(GpuMeshId mesh) const
+{
+	return mesh_live(mesh) ? meshes_[mesh].index_count : 0u;
+}
+
+uint32_t GpuRenderer::cached_mesh_count() const
+{
+	return static_cast<uint32_t>(mesh_ids_.size());
+}
+
+void GpuRenderer::release_mesh(GpuMeshId mesh)
+{
+	if (!mesh_live(mesh)) {
 		return;
 	}
-	const uint32_t count = staged_vertex_count_;
-	staged_vertex_count_ = 0;
-	const uint32_t bytes =
-	        count * static_cast<uint32_t>(sizeof(GpuVertex));
-	const uint32_t uv_bytes =
-	        count * static_cast<uint32_t>(sizeof(glm::vec2));
-	SDL_UnmapGPUTransferBuffer(device_, transfer_buffer_);
-	SDL_UnmapGPUTransferBuffer(device_, uv_transfer_buffer_);
+	CachedMesh& cached = meshes_[mesh];
+	// SDL frees a buffer only once the work using it has finished, so a mesh
+	// released right after the frame that drew it is safe.
+	if (cached.vertex) {
+		SDL_ReleaseGPUBuffer(device_, cached.vertex);
+	}
+	if (cached.uv) {
+		SDL_ReleaseGPUBuffer(device_, cached.uv);
+	}
+	if (cached.index) {
+		SDL_ReleaseGPUBuffer(device_, cached.index);
+	}
+	mesh_ids_.erase(cached.key);
+	std::erase_if(pending_meshes_, [mesh](const PendingMeshUpload& pending) {
+		return pending.id == mesh;
+	});
+	cached = CachedMesh{};
+	free_mesh_ids_.push_back(mesh);
+}
+
+void GpuRenderer::evict_idle_meshes()
+{
+	for (GpuMeshId id = 0; id < meshes_.size(); ++id) {
+		const CachedMesh& cached = meshes_[id];
+		if (cached.live && frames_rendered_ - cached.last_used > kMeshIdleFrames) {
+			release_mesh(id);
+		}
+	}
+}
+
+void GpuRenderer::destroy_meshes()
+{
+	for (GpuMeshId id = 0; id < meshes_.size(); ++id) {
+		release_mesh(id);
+	}
+	meshes_.clear();
+	free_mesh_ids_.clear();
+	mesh_ids_.clear();
+	pending_meshes_.clear();
+}
+
+GpuMeshId GpuRenderer::acquire_mesh(const std::string& key,
+                                    const GpuMeshData& data)
+{
+	if (!device_ || data.positions == nullptr || data.indices == nullptr ||
+	    data.vertex_count == 0 || data.index_count == 0) {
+		return kNoGpuMesh;
+	}
+	if (const auto found = mesh_ids_.find(key); found != mesh_ids_.end()) {
+		const GpuMeshId cached_id = found->second;
+		CachedMesh& cached        = meshes_[cached_id];
+		if (cached.vertex_count == data.vertex_count &&
+		    cached.source_index_count == data.index_count) {
+			cached.last_used = frames_rendered_;
+			return cached_id;
+		}
+		// The key now names geometry of a different size: replace it.
+		release_mesh(cached_id);
+	}
+
+	const std::size_t vertex_count = data.vertex_count;
+	PendingMeshUpload upload;
+	upload.vertices.resize(vertex_count);
+	for (std::size_t i = 0; i < vertex_count; ++i) {
+		GpuVertex& vertex = upload.vertices[i];
+		vertex.position   = data.positions[i];
+		// A vertex without a normal is stored as zero; lit.vert turns that
+		// into +Z, as the CPU path always did.
+		vertex.normal = (data.normals != nullptr && i < data.normal_count)
+		                        ? data.normals[i]
+		                        : glm::vec3{0.0f};
+		// The instance supplies colour and roughness; 1 passes them through.
+		vertex.color     = glm::vec3{1.0f};
+		vertex.roughness = 1.0f;
+	}
+	upload.uvs.resize(vertex_count);
+	const bool has_uvs = data.uvs != nullptr && data.uv_count == vertex_count;
+	for (std::size_t i = 0; i < vertex_count; ++i) {
+		upload.uvs[i] = has_uvs ? data.uvs[i] : glm::vec2{0.0f};
+	}
+	// An index that names no vertex is skipped, exactly as the world-space
+	// path always did, so both paths draw the same triangles.
+	upload.indices.reserve(data.index_count);
+	for (std::size_t i = 0; i < data.index_count; ++i) {
+		if (data.indices[i] < vertex_count) {
+			upload.indices.push_back(data.indices[i]);
+		}
+	}
+	if (upload.indices.empty()) {
+		return kNoGpuMesh;
+	}
+
+	const auto create = [this](SDL_GPUBufferUsageFlags usage, std::size_t bytes) {
+		SDL_GPUBufferCreateInfo info{};
+		info.usage = usage;
+		info.size  = static_cast<Uint32>(bytes);
+		return SDL_CreateGPUBuffer(device_, &info);
+	};
+	CachedMesh mesh;
+	mesh.vertex = create(SDL_GPU_BUFFERUSAGE_VERTEX,
+	                     vertex_count * sizeof(GpuVertex));
+	mesh.uv     = create(SDL_GPU_BUFFERUSAGE_VERTEX,
+	                     vertex_count * sizeof(glm::vec2));
+	mesh.index  = create(SDL_GPU_BUFFERUSAGE_INDEX,
+	                     upload.indices.size() * sizeof(uint32_t));
+	if (!mesh.vertex || !mesh.uv || !mesh.index) {
+		const std::string error = SDL_GetError();
+		for (SDL_GPUBuffer* buffer : {mesh.vertex, mesh.uv, mesh.index}) {
+			if (buffer) {
+				SDL_ReleaseGPUBuffer(device_, buffer);
+			}
+		}
+		throw std::runtime_error(error);
+	}
+	mesh.vertex_count       = static_cast<uint32_t>(vertex_count);
+	mesh.source_index_count = static_cast<uint32_t>(data.index_count);
+	mesh.index_count        = static_cast<uint32_t>(upload.indices.size());
+	mesh.last_used          = frames_rendered_;
+	mesh.key                = key;
+	mesh.live               = true;
+
+	GpuMeshId id = kNoGpuMesh;
+	if (!free_mesh_ids_.empty()) {
+		id = free_mesh_ids_.back();
+		free_mesh_ids_.pop_back();
+	} else {
+		id = static_cast<GpuMeshId>(meshes_.size());
+		meshes_.emplace_back();
+	}
+	meshes_[id] = std::move(mesh);
+	mesh_ids_.emplace(key, id);
+	upload.id = id;
+	pending_meshes_.push_back(std::move(upload));
+	return id;
+}
+
+void GpuRenderer::upload_pending_meshes(SDL_GPUCopyPass* copy)
+{
+	if (pending_meshes_.empty()) {
+		return;
+	}
+	std::size_t total = 0;
+	for (const PendingMeshUpload& pending : pending_meshes_) {
+		total += pending.vertices.size() * sizeof(GpuVertex) +
+		         pending.uvs.size() * sizeof(glm::vec2) +
+		         pending.indices.size() * sizeof(uint32_t);
+	}
+	SDL_GPUTransferBufferCreateInfo info{};
+	info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+	info.size  = static_cast<Uint32>(total);
+	SDL_GPUTransferBuffer* transfer =
+	        SDL_CreateGPUTransferBuffer(device_, &info);
+	if (!transfer) {
+		throw std::runtime_error(SDL_GetError());
+	}
+	auto* bytes = static_cast<uint8_t*>(
+	        SDL_MapGPUTransferBuffer(device_, transfer, false));
+	if (!bytes) {
+		const std::string error = SDL_GetError();
+		SDL_ReleaseGPUTransferBuffer(device_, transfer);
+		throw std::runtime_error(error);
+	}
+	std::size_t offset = 0;
+	const auto put     = [&](const void* source, std::size_t size) {
+		std::memcpy(bytes + offset, source, size);
+		offset += size;
+	};
+	for (const PendingMeshUpload& pending : pending_meshes_) {
+		put(pending.vertices.data(), pending.vertices.size() * sizeof(GpuVertex));
+		put(pending.uvs.data(), pending.uvs.size() * sizeof(glm::vec2));
+		put(pending.indices.data(), pending.indices.size() * sizeof(uint32_t));
+	}
+	SDL_UnmapGPUTransferBuffer(device_, transfer);
+
+	offset = 0;
+	const auto record = [&](SDL_GPUBuffer* destination, std::size_t size) {
+		SDL_GPUTransferBufferLocation source{};
+		source.transfer_buffer = transfer;
+		source.offset          = static_cast<Uint32>(offset);
+		SDL_GPUBufferRegion region{};
+		region.buffer = destination;
+		region.offset = 0;
+		region.size   = static_cast<Uint32>(size);
+		SDL_UploadToGPUBuffer(copy, &source, &region, false);
+		offset += size;
+	};
+	for (const PendingMeshUpload& pending : pending_meshes_) {
+		const CachedMesh& mesh = meshes_[pending.id];
+		record(mesh.vertex, pending.vertices.size() * sizeof(GpuVertex));
+		record(mesh.uv, pending.uvs.size() * sizeof(glm::vec2));
+		record(mesh.index, pending.indices.size() * sizeof(uint32_t));
+	}
+	// SDL keeps the transfer buffer alive until the copy has executed.
+	SDL_ReleaseGPUTransferBuffer(device_, transfer);
+	pending_meshes_.clear();
+}
+
+void GpuRenderer::ensure_instance_capacity(uint32_t bytes)
+{
+	if (instance_buffer_ && instance_transfer_ && bytes <= instance_capacity_) {
+		return;
+	}
+	uint32_t next = instance_capacity_
+	                        ? instance_capacity_
+	                        : kInitialInstances * static_cast<uint32_t>(
+	                                                      sizeof(GpuInstance));
+	while (next < bytes) {
+		next *= 2;
+	}
+	destroy_instance_buffers();
+
+	SDL_GPUBufferCreateInfo buffer_info{};
+	buffer_info.usage = SDL_GPU_BUFFERUSAGE_VERTEX;
+	buffer_info.size  = next;
+	instance_buffer_  = SDL_CreateGPUBuffer(device_, &buffer_info);
+	if (!instance_buffer_) {
+		throw std::runtime_error(SDL_GetError());
+	}
+	SDL_GPUTransferBufferCreateInfo transfer_info{};
+	transfer_info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+	transfer_info.size  = next;
+	instance_transfer_  = SDL_CreateGPUTransferBuffer(device_, &transfer_info);
+	if (!instance_transfer_) {
+		throw std::runtime_error(SDL_GetError());
+	}
+	instance_capacity_ = next;
+}
+
+void GpuRenderer::destroy_instance_buffers()
+{
+	if (instance_buffer_) {
+		SDL_ReleaseGPUBuffer(device_, instance_buffer_);
+		instance_buffer_ = nullptr;
+	}
+	if (instance_transfer_) {
+		SDL_ReleaseGPUTransferBuffer(device_, instance_transfer_);
+		instance_transfer_ = nullptr;
+	}
+	instance_capacity_ = 0;
+}
+
+void GpuRenderer::abandon_geometry_staging()
+{
+	if (!geometry_mapped_) {
+		return;
+	}
+	if (staged_vertices_ != 0) {
+		SDL_UnmapGPUTransferBuffer(device_, transfer_buffer_);
+		SDL_UnmapGPUTransferBuffer(device_, uv_transfer_buffer_);
+	}
+	SDL_UnmapGPUTransferBuffer(device_, instance_transfer_);
+	geometry_mapped_  = false;
+	staged_vertices_  = 0;
+	staged_instances_ = 0;
+}
+
+GpuRenderer::GeometryStaging GpuRenderer::begin_geometry_upload(
+        uint32_t immediate_vertices, uint32_t instance_count)
+{
+	abandon_geometry_staging();
+	geometry_draws_.clear();
+	if (!cmd_ || (immediate_vertices == 0 && instance_count == 0)) {
+		return {};
+	}
+
+	GeometryStaging staging;
+	if (immediate_vertices != 0) {
+		ensure_vertex_capacity(
+		        immediate_vertices * static_cast<uint32_t>(sizeof(GpuVertex)),
+		        immediate_vertices * static_cast<uint32_t>(sizeof(glm::vec2)));
+		void* vertices =
+		        SDL_MapGPUTransferBuffer(device_, transfer_buffer_, true);
+		if (!vertices) {
+			throw std::runtime_error(SDL_GetError());
+		}
+		void* uvs =
+		        SDL_MapGPUTransferBuffer(device_, uv_transfer_buffer_, true);
+		if (!uvs) {
+			const std::string error = SDL_GetError();
+			SDL_UnmapGPUTransferBuffer(device_, transfer_buffer_);
+			throw std::runtime_error(error);
+		}
+		staging.vertices = static_cast<GpuVertex*>(vertices);
+		staging.uvs      = static_cast<glm::vec2*>(uvs);
+	}
+
+	ensure_instance_capacity((instance_count + kReservedInstances) *
+	                         static_cast<uint32_t>(sizeof(GpuInstance)));
+	void* instances =
+	        SDL_MapGPUTransferBuffer(device_, instance_transfer_, true);
+	if (!instances) {
+		const std::string error = SDL_GetError();
+		if (immediate_vertices != 0) {
+			SDL_UnmapGPUTransferBuffer(device_, transfer_buffer_);
+			SDL_UnmapGPUTransferBuffer(device_, uv_transfer_buffer_);
+		}
+		throw std::runtime_error(error);
+	}
+	auto* records = static_cast<GpuInstance*>(instances);
+	records[0]    = GpuInstance{}; // the identity the immediate stream draws with
+	staging.instances = records + kReservedInstances;
+
+	staged_vertices_  = immediate_vertices;
+	staged_instances_ = instance_count;
+	geometry_mapped_  = true;
+	return staging;
+}
+
+void GpuRenderer::commit_geometry_upload(const GpuDrawBatch* batches,
+                                         uint32_t batch_count)
+{
+	if (!geometry_mapped_) {
+		return;
+	}
+	const uint32_t vertices  = staged_vertices_;
+	const uint32_t instances = staged_instances_;
+	if (vertices != 0) {
+		SDL_UnmapGPUTransferBuffer(device_, transfer_buffer_);
+		SDL_UnmapGPUTransferBuffer(device_, uv_transfer_buffer_);
+	}
+	SDL_UnmapGPUTransferBuffer(device_, instance_transfer_);
+	geometry_mapped_  = false;
+	staged_vertices_  = 0;
+	staged_instances_ = 0;
+
+	geometry_draws_.clear();
+	for (uint32_t i = 0; i < batch_count; ++i) {
+		const GpuDrawBatch& batch = batches[i];
+		const bool instanced      = batch.mesh != kNoGpuMesh;
+		if (instanced ? (batch.instance_count == 0 || !mesh_live(batch.mesh))
+		              : batch.vertex_count == 0) {
+			continue;
+		}
+		geometry_draws_.push_back(GeometryDraw{
+		        batch.mesh, batch.first_vertex, batch.vertex_count,
+		        batch.first_instance, batch.instance_count});
+	}
 
 	SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(cmd_);
-	SDL_GPUTransferBufferLocation src{};
-	src.transfer_buffer = transfer_buffer_;
-	src.offset          = 0;
-	SDL_GPUBufferRegion dst{};
-	dst.buffer = vertex_buffer_;
-	dst.offset = 0;
-	dst.size   = bytes;
-	SDL_UploadToGPUBuffer(copy, &src, &dst, true);
+	if (vertices != 0) {
+		SDL_GPUTransferBufferLocation source{};
+		source.transfer_buffer = transfer_buffer_;
+		SDL_GPUBufferRegion region{};
+		region.buffer = vertex_buffer_;
+		region.size   = vertices * static_cast<uint32_t>(sizeof(GpuVertex));
+		SDL_UploadToGPUBuffer(copy, &source, &region, true);
 
-	SDL_GPUTransferBufferLocation uv_src{};
-	uv_src.transfer_buffer = uv_transfer_buffer_;
-	uv_src.offset          = 0;
-	SDL_GPUBufferRegion uv_dst{};
-	uv_dst.buffer = uv_buffer_;
-	uv_dst.offset = 0;
-	uv_dst.size   = uv_bytes;
-	SDL_UploadToGPUBuffer(copy, &uv_src, &uv_dst, true);
+		SDL_GPUTransferBufferLocation uv_source{};
+		uv_source.transfer_buffer = uv_transfer_buffer_;
+		SDL_GPUBufferRegion uv_region{};
+		uv_region.buffer = uv_buffer_;
+		uv_region.size   = vertices * static_cast<uint32_t>(sizeof(glm::vec2));
+		SDL_UploadToGPUBuffer(copy, &uv_source, &uv_region, true);
+	}
+	SDL_GPUTransferBufferLocation instance_source{};
+	instance_source.transfer_buffer = instance_transfer_;
+	SDL_GPUBufferRegion instance_region{};
+	instance_region.buffer = instance_buffer_;
+	instance_region.size   = (instances + kReservedInstances) *
+	                         static_cast<uint32_t>(sizeof(GpuInstance));
+	SDL_UploadToGPUBuffer(copy, &instance_source, &instance_region, true);
+	upload_pending_meshes(copy);
 	SDL_EndGPUCopyPass(copy);
 }
 
-void GpuRenderer::upload_vertices(const GpuVertex* vertices,
-                                  const glm::vec2* uvs, uint32_t count)
+void GpuRenderer::record_geometry_draw(SDL_GPURenderPass* pass,
+                                       const GeometryDraw& draw)
 {
-	if (!vertices) {
-		uploaded_vertex_count_ = 0;
+	SDL_GPUBufferBinding bindings[kVertexBufferSlots]{};
+	bindings[2].buffer = instance_buffer_;
+	if (draw.mesh == kNoGpuMesh) {
+		bindings[0].buffer = vertex_buffer_;
+		bindings[1].buffer = uv_buffer_;
+		SDL_BindGPUVertexBuffers(pass, 0, bindings, kVertexBufferSlots);
+		// Instance 0 is the identity: the stream is already in world space.
+		SDL_DrawGPUPrimitives(pass, draw.vertex_count, 1, draw.first_vertex, 0);
 		return;
 	}
-	const VertexStaging staging = begin_vertex_upload(count);
-	if (staging.vertices == nullptr) {
+	if (!mesh_live(draw.mesh)) {
 		return;
 	}
-	std::memcpy(staging.vertices, vertices,
-	            count * static_cast<std::size_t>(sizeof(GpuVertex)));
-	if (uvs != nullptr) {
-		std::memcpy(staging.uvs, uvs,
-		            count * static_cast<std::size_t>(sizeof(glm::vec2)));
-	} else {
-		std::memset(staging.uvs, 0,
-		            count * static_cast<std::size_t>(sizeof(glm::vec2)));
-	}
-	commit_vertex_upload();
+	const CachedMesh& mesh = meshes_[draw.mesh];
+	bindings[0].buffer     = mesh.vertex;
+	bindings[1].buffer     = mesh.uv;
+	SDL_BindGPUVertexBuffers(pass, 0, bindings, kVertexBufferSlots);
+	SDL_GPUBufferBinding index{};
+	index.buffer = mesh.index;
+	SDL_BindGPUIndexBuffer(pass, &index, SDL_GPU_INDEXELEMENTSIZE_32BIT);
+	SDL_DrawGPUIndexedPrimitives(pass, mesh.index_count, draw.instance_count, 0,
+	                             0, draw.first_instance + kReservedInstances);
 }
 
 void GpuRenderer::begin_scene_pass()
@@ -2177,9 +2554,9 @@ void GpuRenderer::begin_scene_pass()
 	if (!cmd_ || !swapchain_) {
 		return;
 	}
-	// Depth-only pass from the light, once per frame. Reuses the buffers
-	// upload_vertices() just filled; a no-vertex frame skips it and the
-	// shader flag below takes the legacy unshadowed path.
+	// Depth-only pass from the light, once per frame. Replays the draw list
+	// commit_geometry_upload() kept; a frame with no geometry skips it and
+	// the shader flag below takes the legacy unshadowed path.
 	render_shadow_map();
 	// FXAA: render into the intermediate, resolve onto the real target in
 	// end_scene_pass(). The clear-only pass behind the editor stays direct:
@@ -2240,21 +2617,10 @@ void GpuRenderer::begin_scene_pass()
 	}
 }
 
-void GpuRenderer::draw(const glm::mat4& view, const glm::mat4& view_projection,
-                       const glm::vec3& camera_position, uint32_t first_vertex,
-                       uint32_t vertex_count)
+void GpuRenderer::bind_lit_state(const glm::mat4& view,
+                                 const glm::mat4& view_projection,
+                                 const glm::vec3& camera_position)
 {
-	if (!pass_) {
-		return;
-	}
-	// Background step for this pass: draws the sky dome once, before any
-	// geometry, on every target (swapchain, viewport, offscreen). A pass
-	// with no draws keeps the legacy clear color.
-	draw_sky(view_projection, camera_position);
-	if (!pipeline_ || vertex_count == 0) {
-		return;
-	}
-
 	VertexUniforms vertex_uniforms{};
 	vertex_uniforms.view_projection = view_projection;
 	vertex_uniforms.view            = view;
@@ -2332,13 +2698,11 @@ void GpuRenderer::draw(const glm::mat4& view, const glm::mat4& view_projection,
 	                               sizeof(fragment_uniforms));
 
 	SDL_BindGPUGraphicsPipeline(pass_, pipeline_);
-	// Binding 1 (shadow map) lives here, next to the pipeline, so both draw
-	// overloads sample a valid descriptor: the map when lit, else the white
-	// texel (depth 1.0 reads as lit, failing open). Binding 0 (albedo) is
-	// bound per batch by the overload below. Binding 2 (SSAO) samples the
-	// previous frame's AO texture, or white (AO=1) when off/unavailable.
-	ensure_default_sampler();
-	ensure_white_texture();
+	// Binding 1 (shadow map) lives here, next to the pipeline, so every draw
+	// samples a valid descriptor: the map when lit, else the white texel
+	// (depth 1.0 reads as lit, failing open). Binding 0 (albedo) is bound per
+	// run of batches by draw(). Binding 2 (SSAO) samples the previous
+	// frame's AO texture, or white (AO=1) when off/unavailable.
 	SDL_GPUTextureSamplerBinding shadow_binding{};
 	if (shadow_on) {
 		shadow_binding.texture = shadow_texture_;
@@ -2357,13 +2721,6 @@ void GpuRenderer::draw(const glm::mat4& view, const glm::mat4& view_projection,
 		ssao_binding.sampler = default_sampler_;
 	}
 	SDL_BindGPUFragmentSamplers(pass_, 2, &ssao_binding, 1);
-	SDL_GPUBufferBinding bindings[2]{};
-	bindings[0].buffer = vertex_buffer_;
-	bindings[0].offset = 0;
-	bindings[1].buffer = uv_buffer_;
-	bindings[1].offset = 0;
-	SDL_BindGPUVertexBuffers(pass_, 0, bindings, 2);
-	SDL_DrawGPUPrimitives(pass_, vertex_count, 1, first_vertex, 0);
 }
 
 void GpuRenderer::draw(const glm::mat4& view, const glm::mat4& view_projection,
@@ -2371,23 +2728,42 @@ void GpuRenderer::draw(const glm::mat4& view, const glm::mat4& view_projection,
                        const GpuDrawBatch* batches, uint32_t batch_count,
                        const AssetRegistry* assets)
 {
-	if (!pass_ || !pipeline_ || batches == nullptr || batch_count == 0) {
+	if (!pass_ || !pipeline_ || batches == nullptr || batch_count == 0 ||
+	    !vertex_buffer_ || !uv_buffer_ || !instance_buffer_) {
 		return;
 	}
 	ensure_default_sampler();
 	ensure_white_texture();
 
+	bool state_bound             = false;
+	SDL_GPUTexture* bound_albedo = nullptr;
 	for (uint32_t i = 0; i < batch_count; ++i) {
 		const GpuDrawBatch& batch = batches[i];
-		if (batch.vertex_count == 0) {
+		const bool instanced      = batch.mesh != kNoGpuMesh;
+		if (instanced ? (batch.instance_count == 0 || !mesh_live(batch.mesh))
+		              : batch.vertex_count == 0) {
 			continue;
 		}
-		SDL_GPUTextureSamplerBinding sampler_binding{};
-		sampler_binding.texture = texture_for_albedo(batch.albedo_id, assets);
-		sampler_binding.sampler = default_sampler_;
-		SDL_BindGPUFragmentSamplers(pass_, 0, &sampler_binding, 1);
-		draw(view, view_projection, camera_position, batch.first_vertex,
-		     batch.vertex_count);
+		if (!state_bound) {
+			// Background step for this pass: draws the sky dome once,
+			// before any geometry, on every target (swapchain, viewport,
+			// offscreen). A pass with no draws keeps the legacy clear color.
+			draw_sky(view_projection, camera_position);
+			bind_lit_state(view, view_projection, camera_position);
+			state_bound = true;
+		}
+		SDL_GPUTexture* albedo = texture_for_albedo(batch.albedo_id, assets);
+		if (albedo != bound_albedo) {
+			SDL_GPUTextureSamplerBinding binding{};
+			binding.texture = albedo;
+			binding.sampler = default_sampler_;
+			SDL_BindGPUFragmentSamplers(pass_, 0, &binding, 1);
+			bound_albedo = albedo;
+		}
+		record_geometry_draw(
+		        pass_, GeometryDraw{batch.mesh, batch.first_vertex,
+		                            batch.vertex_count, batch.first_instance,
+		                            batch.instance_count});
 	}
 }
 

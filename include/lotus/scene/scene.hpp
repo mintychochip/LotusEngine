@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "lotus/ecs.hpp"
@@ -110,23 +111,38 @@ public:
 	void update(float dt);
 
 	/// Resolves the camera, culls against the view frustum and \p occlusion,
-	/// picks LOD levels, and returns this frame's vertices. Pure CPU work: no
-	/// GPU needed, which is what makes culling and LOD testable. Passing a null
-	/// or empty pyramid disables occlusion culling.
+	/// picks LOD levels, and returns this frame's vertices in world space,
+	/// one entity after another. Pure CPU work: no GPU needed, which is what
+	/// makes culling and LOD testable. Passing a null or empty pyramid
+	/// disables occlusion culling. draw_calls() then counts the albedo
+	/// batches these vertices would be drawn in.
 	std::vector<GpuVertex> build_vertices(float aspect,
 	                                      const DepthPyramid* occlusion = nullptr);
 
-	/// Builds this frame's vertex data and uploads it. OUTSIDE a render pass.
+	/// Culls this frame's entities and uploads what the GPU needs to draw
+	/// them. A mesh with a Mesh::source names immutable geometry: it is cached
+	/// on the GPU, once, in local space, and every entity using it is one
+	/// instance of a single instanced draw (one draw per albedo and mesh).
+	/// Sprites and meshes without a source (hand-built or dynamic geometry)
+	/// are written as world-space vertices every frame instead. A source must
+	/// therefore always name the same geometry; to change a mesh, resolve it
+	/// again under a different source or clear the source. Needs a frame in
+	/// flight (GpuRenderer::has_frame()); without one nothing is uploaded.
+	/// OUTSIDE a render pass.
 	void upload(GpuRenderer& gpu, float aspect);
 
-	/// Records the draw for the uploaded vertices. INSIDE a render pass.
+	/// Records the draws of the last upload(). INSIDE a render pass.
 	void draw(GpuRenderer& gpu);
 
 	/// Analytic blob spheres for this frame (xyz world center from the
 	/// entity Transform, w radius from BlobCaster), up to 4. Pass to
 	/// GpuRenderer::set_blob_casters; empty when no entity carries one.
 	std::vector<glm::vec4> blob_spheres() const;
+	/// Vertices the last upload() submits: indices per mesh times instances,
+	/// plus the world-space vertices.
 	uint32_t vertex_count() const { return vertex_count_; }
+	/// Draw calls of the last upload(): one per albedo and mesh for instanced
+	/// geometry, one per albedo for the world-space vertices.
 	uint32_t draw_calls() const { return draw_call_count_; }
 
 	/// Entities submitted last frame.
@@ -170,10 +186,10 @@ public:
 	const AssetRegistry* assets() const { return assets_; }
 
 private:
-	/// One entity that survived culling this frame, queued for emission.
-	/// The pointers address registry storage: valid from build_frame() until
-	/// the registry is next modified, i.e. across the emit_frame() that
-	/// follows it in upload()/build_vertices().
+	/// One entity that survived culling this frame, queued for drawing. The
+	/// pointers address registry storage: valid from build_frame() until the
+	/// registry is next modified, i.e. across the upload()/build_vertices()
+	/// that follows it.
 	struct DrawItem {
 		const std::string* albedo{nullptr};
 		const Transform* transform{nullptr};
@@ -181,34 +197,51 @@ private:
 		const Sprite* sprite{nullptr}; // null for a 3D mesh
 		glm::vec3 color{1.0f};
 		float roughness{0.5f};
+		/// Which mesh the item is an instance of: an index into mesh_slots_
+		/// (1-based), or 0 when it is written as world-space vertices.
+		uint32_t slot{0};
+		/// Position in the unsorted list: makes the draw order total.
+		uint32_t order{0};
+		/// World-space vertices of an immediate item, and where they start in
+		/// the frame's stream.
 		uint32_t vertex_count{0};
 		uint32_t first_vertex{0};
+		/// Position among this frame's instance records, or kNoInstance when
+		/// the item draws nothing instanced.
+		uint32_t instance{0xFFFFFFFFu};
 	};
+	static constexpr uint32_t kNoInstance = 0xFFFFFFFFu;
 
 	std::string resolve_mesh_path(const MeshSource& source) const;
 
 	void sync_meshes();
 	void sync_lod();
 
-	/// Resolves the camera, culls, picks LOD levels and orders the survivors
-	/// into draw_items_ / draw_batches_ / frame_vertex_total_. No vertex is
-	/// generated yet.
+	/// Resolves the camera, culls, picks LOD levels and puts the survivors in
+	/// draw_items_, ordered by albedo and then by mesh so that the items of
+	/// one draw are adjacent. No vertex is generated and nothing is laid out
+	/// yet.
 	void build_frame(float aspect, const DepthPyramid* occlusion);
-	/// Writes the vertices and UVs of draw_items_ into arrays of at least
-	/// frame_vertex_total_ elements.
-	void emit_frame(GpuVertex* vertices, glm::vec2* uvs) const;
+	/// Writes the world-space vertices and UVs of \p item at its
+	/// first_vertex.
+	static void emit_item(const DrawItem& item, GpuVertex* vertices,
+	                      glm::vec2* uvs);
 
 	std::string name_;
 	Registry registry_;
 	uint32_t vertex_count_{0};
 	uint32_t draw_call_count_{0};
+	/// The last upload()'s draws.
 	std::vector<GpuDrawBatch> draw_batches_;
-	/// Per-frame UVs for build_vertices(). Only grows (to the high-water
-	/// mark), so a steady-state call neither allocates nor re-initialises it;
-	/// the live element count is frame_vertex_total_, not size().
-	std::vector<glm::vec2> frame_uvs_;
 	std::vector<DrawItem> draw_items_;
-	uint32_t frame_vertex_total_{0};
+	/// Slot of every mesh source seen drawn instanced (1-based; 0 is "not
+	/// instanced"). Only used to group and order items, so it is never
+	/// invalidated.
+	std::unordered_map<std::string, uint32_t> mesh_slots_;
+	/// The first mesh seen for each slot this frame. A later item of the same
+	/// source whose geometry differs in size is written as world-space
+	/// vertices instead of being drawn as a wrong instance.
+	std::vector<const Mesh*> slot_exemplar_;
 	uint32_t drawn_entities_{0};
 	uint32_t culled_entities_{0};
 	uint32_t occluded_entities_{0};

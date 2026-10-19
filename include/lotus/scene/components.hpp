@@ -93,7 +93,12 @@ struct Mesh {
 	std::vector<glm::vec3> normals;
 	std::vector<glm::vec2> uvs;
 	std::vector<std::uint32_t> indices;
-	/// Source this geometry was resolved from, used to detect changes.
+	/// Source this geometry was resolved from, used to detect changes. A
+	/// non-empty source also identifies the geometry to the renderer, which
+	/// keeps one GPU copy per source and draws every entity that has it as an
+	/// instance of that copy: the geometry must not change while the source
+	/// stays the same. Leave it empty for hand-built or dynamic geometry,
+	/// which is then uploaded as world-space vertices every frame.
 	std::string source;
 	/// Local-space bounds, filled in when the mesh is resolved.
 	BoundingSphere bounds;

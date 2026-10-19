@@ -45,6 +45,16 @@ Regenerate shaders (requires `glslangValidator`):
 ./shaders/build-shaders.sh
 ```
 
+### Rendering geometry
+
+Meshes resolved from a `MeshSource` are uploaded to the GPU once, in local
+space, and every entity using one is a single instance record (model matrix and
+material) of one indexed, instanced draw per albedo texture and mesh; the shadow
+pass replays the same draws. Sprites and hand-built meshes with an empty
+`Mesh::source` are written as world-space vertices every frame instead, so use
+an empty source for geometry that changes at runtime. Cached meshes that stop
+being drawn are released after `GpuRenderer::kMeshIdleFrames` frames.
+
 ### Render benchmark
 
 `lotus_render_bench` renders a fixed, seeded synthetic scene (~950 entities,

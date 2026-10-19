@@ -282,8 +282,9 @@ struct LightingSettings {
 ///
 /// Frame stages (all on one command buffer):
 ///   begin_frame()  -> acquire command buffer + swapchain (+ depth resize)
-///   upload_vertices(), or begin_vertex_upload() + commit_vertex_upload() to
-///                  generate in place -> copy pass (outside a render pass)
+///   acquire_mesh() per cached mesh the frame draws, then
+///   begin_geometry_upload() + commit_geometry_upload()
+///                  -> copy pass (outside a render pass)
 ///   begin_scene_pass() / draw() / end_scene_pass()
 ///   [UI layer may open its own pass here]
 ///   end_frame()    -> submit
@@ -328,40 +329,74 @@ public:
 	void begin_frame(SDL_Window* window, float clear_r, float clear_g,
 	                 float clear_b);
 
-	/// Uploads this frame's vertices (world-space, lit) and parallel UVs.
-	void upload_vertices(const GpuVertex* vertices, const glm::vec2* uvs,
-	                     uint32_t count);
+	// --- geometry ---
+	//
+	// A frame's geometry is a set of instanced draws of cached meshes plus,
+	// for what cannot be cached, one world-space vertex stream (the
+	// "immediate" stream). Cached meshes are uploaded once, in local space,
+	// and drawn through an index buffer; each frame uploads only the per
+	// instance records (model matrix and material), a few dozen bytes per
+	// entity instead of every vertex of every entity.
 
-	/// Staging memory for one frame's geometry; see begin_vertex_upload().
-	struct VertexStaging {
+	/// Idle frames after which a cached mesh is released (5 s at 60 fps).
+	/// Re-acquiring a released mesh uploads it again.
+	static constexpr uint32_t kMeshIdleFrames = 300;
+
+	/// Makes the geometry \p data resident on the GPU under \p key and returns
+	/// its handle, uploading it on first use (the copy is recorded by the next
+	/// commit_geometry_upload). A mesh is identified by \p key alone: asking
+	/// again with the same key and the same vertex and index counts returns
+	/// the cached mesh and ignores \p data, so a key must always name the same
+	/// geometry. Different counts replace the mesh. Returns kNoGpuMesh when
+	/// there is nothing to draw (no vertices, or no index naming one) or no
+	/// device. Handles stay valid until the mesh has been idle for
+	/// kMeshIdleFrames; that happens between frames, never during one.
+	GpuMeshId acquire_mesh(const std::string& key, const GpuMeshData& data);
+
+	/// Indices drawn per instance of \p mesh: the source indices that name an
+	/// existing vertex. 0 for a handle that is not valid.
+	uint32_t mesh_index_count(GpuMeshId mesh) const;
+
+	/// Meshes currently resident (diagnostics and tests).
+	uint32_t cached_mesh_count() const;
+
+	/// Staging memory for one frame's geometry; see begin_geometry_upload().
+	struct GeometryStaging {
+		/// Immediate world-space vertices and their UVs.
 		GpuVertex* vertices{nullptr};
 		glm::vec2* uvs{nullptr};
+		/// Instance records, indexed by GpuDrawBatch::first_instance.
+		GpuInstance* instances{nullptr};
 	};
 
-	/// Maps the upload staging memory for \p count vertices and UVs so the
-	/// caller can generate them in place, skipping the intermediate copy that
-	/// upload_vertices() makes. Write exactly \p count entries to each array,
-	/// sequentially: the memory may be write-combined, so never read it back.
-	/// Call commit_vertex_upload() before the scene pass. Both pointers are
-	/// null when no frame is in flight or \p count is zero.
-	VertexStaging begin_vertex_upload(uint32_t count);
+	/// Maps staging memory for this frame's geometry: \p immediate_vertices
+	/// world-space vertices (and as many UVs) and \p instance_count instance
+	/// records, so the caller generates them in place with no intermediate
+	/// copy. Write every entry, sequentially: the memory may be
+	/// write-combined, so never read it back. Returns all-null when no frame
+	/// is in flight or both counts are zero. Call commit_geometry_upload()
+	/// before the scene pass. Also starts a new draw list: the previous
+	/// frame's is dropped.
+	GeometryStaging begin_geometry_upload(uint32_t immediate_vertices,
+	                                      uint32_t instance_count);
 
-	/// Unmaps the staging memory and records the copy to the GPU. OUTSIDE a
-	/// render pass. No-op unless begin_vertex_upload() returned memory.
-	void commit_vertex_upload();
+	/// Unmaps the staging memory, records every copy the frame needs (the
+	/// staged vertices and instances, and the geometry of any mesh
+	/// acquire_mesh queued) and keeps \p batches as the draw list the shadow
+	/// pass replays. OUTSIDE a render pass.
+	void commit_geometry_upload(const GpuDrawBatch* batches,
+	                            uint32_t batch_count);
 
 	void begin_scene_pass();
 
-	/// Draws \p count vertices using the lit pipeline. \p view is uploaded
-	/// alongside \p view_projection because the vertex stage also writes
-	/// view-space depth for the occlusion pyramid.
+	/// Draws \p batches with the lit pipeline, binding each albedo texture
+	/// once per run of batches that share it. \p view is uploaded alongside
+	/// \p view_projection because the vertex stage also writes view-space
+	/// depth for the occlusion pyramid. The batches must refer to geometry
+	/// uploaded this frame.
 	void draw(const glm::mat4& view, const glm::mat4& view_projection,
 	          const glm::vec3& camera_position, const GpuDrawBatch* batches,
 	          uint32_t batch_count, const AssetRegistry* assets);
-	/// Single-range draw (tests and untextured paths).
-	void draw(const glm::mat4& view, const glm::mat4& view_projection,
-	          const glm::vec3& camera_position, uint32_t first_vertex,
-	          uint32_t vertex_count);
 
 	void end_scene_pass();
 	void end_frame();
@@ -436,10 +471,59 @@ public:
 	const glm::vec4* blob_spheres() const { return blob_spheres_; }
 
 private:
+	/// A mesh in the cache; see acquire_mesh().
+	struct CachedMesh {
+		SDL_GPUBuffer* vertex{nullptr};
+		SDL_GPUBuffer* uv{nullptr};
+		SDL_GPUBuffer* index{nullptr};
+		uint32_t vertex_count{0};       // vertices in the source geometry
+		uint32_t source_index_count{0}; // indices in the source geometry
+		uint32_t index_count{0};        // indices that name a vertex: drawn
+		uint64_t last_used{0};          // frames_rendered_ at the last acquire
+		std::string key;
+		bool live{false};
+	};
+	/// Geometry queued by acquire_mesh(), written to the GPU by the next
+	/// commit_geometry_upload().
+	struct PendingMeshUpload {
+		GpuMeshId id{kNoGpuMesh};
+		std::vector<GpuVertex> vertices;
+		std::vector<glm::vec2> uvs;
+		std::vector<uint32_t> indices;
+	};
+	/// One recorded draw of the frame's geometry: what the lit pass takes from
+	/// a GpuDrawBatch and the shadow pass replays.
+	struct GeometryDraw {
+		GpuMeshId mesh{kNoGpuMesh};
+		uint32_t first_vertex{0};
+		uint32_t vertex_count{0};
+		uint32_t first_instance{0};
+		uint32_t instance_count{0};
+	};
+
 	void create_pipeline();
+	/// Starts a frame's geometry bookkeeping: drops the previous frame's draw
+	/// list and staging, and lets meshes that stopped being drawn age out.
+	void begin_geometry_frame();
 	void ensure_vertex_capacity(uint32_t vertex_bytes, uint32_t uv_bytes);
 	void ensure_depth_target(uint32_t width, uint32_t height);
 	void destroy_buffers();
+	void ensure_instance_capacity(uint32_t bytes);
+	void destroy_instance_buffers();
+	bool mesh_live(GpuMeshId mesh) const;
+	void release_mesh(GpuMeshId mesh);
+	void evict_idle_meshes();
+	void destroy_meshes();
+	void upload_pending_meshes(SDL_GPUCopyPass* copy);
+	void abandon_geometry_staging();
+	/// Binds the vertex buffers of \p draw and records it on \p pass. The
+	/// pipeline must already be bound.
+	void record_geometry_draw(SDL_GPURenderPass* pass, const GeometryDraw& draw);
+	/// Pushes the lit uniforms and binds the lit pipeline with the shadow and
+	/// SSAO samplers: everything a lit draw needs except the albedo texture
+	/// and the geometry.
+	void bind_lit_state(const glm::mat4& view, const glm::mat4& view_projection,
+	                    const glm::vec3& camera_position);
 
 	bool create_occlusion_pipeline();
 	void destroy_occlusion();
@@ -528,6 +612,11 @@ private:
 	SDL_GPUTransferBuffer* uv_transfer_buffer_{nullptr};
 	uint32_t capacity_{0};
 	uint32_t uv_capacity_{0};
+	/// Per-instance records (slot 2 of the lit and shadow pipelines). Entry 0
+	/// is reserved for the identity the immediate stream draws with.
+	SDL_GPUBuffer* instance_buffer_{nullptr};
+	SDL_GPUTransferBuffer* instance_transfer_{nullptr};
+	uint32_t instance_capacity_{0};
 
 	SDL_GPUTexture* depth_texture_{nullptr};
 	uint32_t depth_width_{0};
@@ -591,8 +680,16 @@ private:
 	bool shadows_supported_{false};
 	bool shadow_rendered_{false};
 	glm::mat4 light_vp_{1.0f};
-	uint32_t uploaded_vertex_count_{0};
-	uint32_t staged_vertex_count_{0};
+	std::vector<CachedMesh> meshes_;
+	std::vector<GpuMeshId> free_mesh_ids_;
+	std::unordered_map<std::string, GpuMeshId> mesh_ids_;
+	std::vector<PendingMeshUpload> pending_meshes_;
+	/// This frame's draw list, kept for the shadow pass. Cleared when a frame
+	/// begins, so a frame that uploads nothing draws no shadows.
+	std::vector<GeometryDraw> geometry_draws_;
+	uint32_t staged_vertices_{0};
+	uint32_t staged_instances_{0};
+	bool geometry_mapped_{false};
 	uint32_t swapchain_width_{0};
 	uint32_t swapchain_height_{0};
 	// --- FXAA 3.11 console post pass (fullscreen triangle onto the target) ---

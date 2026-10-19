@@ -660,6 +660,7 @@ void Scene::build_frame(float aspect, const DepthPyramid* occlusion)
 	culled_entities_   = 0;
 	occluded_entities_ = 0;
 	draw_items_.clear();
+	std::fill(slot_exemplar_.begin(), slot_exemplar_.end(), nullptr);
 
 	// Frustum, then occlusion; counts the outcome either way.
 	const auto visible = [&](const BoundingSphere& world) {
@@ -676,18 +677,47 @@ void Scene::build_frame(float aspect, const DepthPyramid* occlusion)
 		return true;
 	};
 
+	// The slot of a mesh that is drawn instanced; 0 when it must be written
+	// as world-space vertices. A mesh with a source names immutable geometry
+	// (see upload()), unless this frame's first mesh of that source has a
+	// different size, which proves the source is being reused.
+	const auto instance_slot = [&](const Mesh& mesh) -> uint32_t {
+		if (mesh.source.empty()) {
+			return 0;
+		}
+		const uint32_t slot =
+		        mesh_slots_
+		                .try_emplace(mesh.source,
+		                             static_cast<uint32_t>(mesh_slots_.size() + 1))
+		                .first->second;
+		if (slot_exemplar_.size() <= slot) {
+			slot_exemplar_.resize(slot + 1, nullptr);
+		}
+		const Mesh*& exemplar = slot_exemplar_[slot];
+		if (exemplar == nullptr) {
+			exemplar = &mesh;
+			return slot;
+		}
+		const bool same = exemplar->positions.size() == mesh.positions.size() &&
+		                  exemplar->normals.size() == mesh.normals.size() &&
+		                  exemplar->uvs.size() == mesh.uvs.size() &&
+		                  exemplar->indices.size() == mesh.indices.size();
+		return same ? slot : 0;
+	};
+
 	// Albedo key of sprites and of entities without a Material.
 	static const std::string no_albedo;
 	const auto push_mesh = [&](Entity entity, const Transform& transform,
 	                           const Mesh& mesh) {
 		const Material* material = registry_.try_get<Material>(entity);
 		DrawItem item;
-		item.albedo       = material ? &material->albedo_id : &no_albedo;
-		item.color        = material ? material->base_color : glm::vec3{1.0f};
-		item.roughness    = material ? material->roughness : 0.5f;
-		item.transform    = &transform;
-		item.mesh         = &mesh;
-		item.vertex_count = count_valid_indices(mesh);
+		item.albedo    = material ? &material->albedo_id : &no_albedo;
+		item.color     = material ? material->base_color : glm::vec3{1.0f};
+		item.roughness = material ? material->roughness : 0.5f;
+		item.transform = &transform;
+		item.mesh      = &mesh;
+		item.slot      = instance_slot(mesh);
+		item.order     = static_cast<uint32_t>(draw_items_.size());
 		draw_items_.push_back(item);
 	};
 
@@ -699,10 +729,10 @@ void Scene::build_frame(float aspect, const DepthPyramid* occlusion)
 			return;
 		}
 		DrawItem item;
-		item.albedo       = &no_albedo;
-		item.transform    = &transform;
-		item.sprite       = &sprite;
-		item.vertex_count = 6;
+		item.albedo    = &no_albedo;
+		item.transform = &transform;
+		item.sprite    = &sprite;
+		item.order     = static_cast<uint32_t>(draw_items_.size());
 		draw_items_.push_back(item);
 	});
 
@@ -747,53 +777,32 @@ void Scene::build_frame(float aspect, const DepthPyramid* occlusion)
 		push_mesh(entity, transform, mesh);
 	});
 
-	// Group by albedo texture. Same std::sort and predicate over the same
-	// sequence (sprites, meshes, LODs) as the per-entity chunks it replaces:
-	// introsort's permutation depends only on comparison outcomes, never on
-	// element size, so equal-albedo entities keep exactly the draw order they
-	// always had. That order is observable (coplanar faces z-fight, and the
-	// later draw wins), so a stable or counting sort here would change pixels.
+	// Order by albedo texture, then by mesh, then as found: the items of one
+	// draw end up adjacent, and the order is total so a frame draws the same
+	// way every time (coplanar faces z-fight, and the later draw wins).
 	std::sort(draw_items_.begin(), draw_items_.end(),
 	          [](const DrawItem& a, const DrawItem& b) {
-		          return *a.albedo < *b.albedo;
+		          if (const int by_albedo = a.albedo->compare(*b.albedo);
+		              by_albedo != 0) {
+			          return by_albedo < 0;
+		          }
+		          if (a.slot != b.slot) {
+			          return a.slot < b.slot;
+		          }
+		          return a.order < b.order;
 	          });
-
-	draw_batches_.clear();
-	uint32_t total = 0;
-	for (DrawItem& item : draw_items_) {
-		item.first_vertex = total;
-		if (item.vertex_count == 0) {
-			continue;
-		}
-		if (!draw_batches_.empty() &&
-		    draw_batches_.back().albedo_id == *item.albedo) {
-			draw_batches_.back().vertex_count += item.vertex_count;
-		} else {
-			draw_batches_.push_back(
-			        GpuDrawBatch{*item.albedo, total, item.vertex_count});
-		}
-		total += item.vertex_count;
-	}
-	frame_vertex_total_ = total;
-	draw_call_count_    = total == 0 ? 0u
-	                                 : static_cast<std::uint32_t>(
-	                                           draw_batches_.size());
 }
 
-void Scene::emit_frame(GpuVertex* vertices, glm::vec2* uvs) const
+void Scene::emit_item(const DrawItem& item, GpuVertex* vertices,
+                      glm::vec2* uvs)
 {
-	for (const DrawItem& item : draw_items_) {
-		if (item.vertex_count == 0) {
-			continue;
-		}
-		GpuVertex* out    = vertices + item.first_vertex;
-		glm::vec2* uv_out = uvs + item.first_vertex;
-		if (item.mesh != nullptr) {
-			emit_mesh(out, uv_out, *item.transform, *item.mesh, item.color,
-			          item.roughness);
-		} else {
-			emit_sprite(out, uv_out, *item.transform, *item.sprite);
-		}
+	GpuVertex* out    = vertices + item.first_vertex;
+	glm::vec2* uv_out = uvs + item.first_vertex;
+	if (item.mesh != nullptr) {
+		emit_mesh(out, uv_out, *item.transform, *item.mesh, item.color,
+		          item.roughness);
+	} else {
+		emit_sprite(out, uv_out, *item.transform, *item.sprite);
 	}
 }
 
@@ -801,11 +810,33 @@ std::vector<GpuVertex> Scene::build_vertices(float aspect,
                                               const DepthPyramid* occlusion)
 {
 	build_frame(aspect, occlusion);
-	std::vector<GpuVertex> vertices(frame_vertex_total_);
-	if (frame_uvs_.size() < frame_vertex_total_) {
-		frame_uvs_.resize(frame_vertex_total_);
+
+	// Every item becomes world-space vertices here, instanced or not.
+	uint32_t total                  = 0;
+	uint32_t batches                = 0;
+	const std::string* batch_albedo = nullptr;
+	for (DrawItem& item : draw_items_) {
+		item.vertex_count =
+		        item.mesh != nullptr ? count_valid_indices(*item.mesh) : 6u;
+		item.first_vertex = total;
+		if (item.vertex_count == 0) {
+			continue;
+		}
+		if (batch_albedo == nullptr || *batch_albedo != *item.albedo) {
+			++batches;
+			batch_albedo = item.albedo;
+		}
+		total += item.vertex_count;
 	}
-	emit_frame(vertices.data(), frame_uvs_.data());
+	draw_call_count_ = batches;
+
+	std::vector<GpuVertex> vertices(total);
+	std::vector<glm::vec2> uvs(total);
+	for (const DrawItem& item : draw_items_) {
+		if (item.vertex_count != 0) {
+			emit_item(item, vertices.data(), uvs.data());
+		}
+	}
 	return vertices;
 }
 
@@ -815,19 +846,92 @@ void Scene::upload(GpuRenderer& gpu, float aspect)
 	        gpu.occlusion_pyramid(), gpu.occlusion_ready(),
 	        gpu.occlusion_aspect(), aspect);
 	build_frame(aspect, occlusion);
-	vertex_count_ = frame_vertex_total_;
-	if (vertex_count_ == 0) {
+
+	vertex_count_    = 0;
+	draw_call_count_ = 0;
+	draw_batches_.clear();
+	if (!gpu.has_frame() || draw_items_.empty()) {
 		return;
 	}
-	// Generate straight into the GPU staging memory: no intermediate host
-	// array, no second copy.
-	const GpuRenderer::VertexStaging staging =
-	        gpu.begin_vertex_upload(vertex_count_);
-	if (staging.vertices == nullptr) {
+
+	// Lay the frame out: one batch per run of items that share an albedo and
+	// a mesh slot. A run of instanced items is one instanced draw; a run of
+	// the others is one range of the world-space stream.
+	uint32_t immediate_vertices = 0;
+	uint32_t instances          = 0;
+	uint64_t submitted          = 0;
+	const std::size_t count     = draw_items_.size();
+	for (std::size_t begin = 0; begin < count;) {
+		const DrawItem& head = draw_items_[begin];
+		std::size_t end      = begin + 1;
+		while (end < count && draw_items_[end].slot == head.slot &&
+		       *draw_items_[end].albedo == *head.albedo) {
+			++end;
+		}
+		if (head.slot == 0) {
+			const uint32_t first = immediate_vertices;
+			for (std::size_t i = begin; i < end; ++i) {
+				DrawItem& item    = draw_items_[i];
+				item.vertex_count = item.mesh != nullptr
+				                            ? count_valid_indices(*item.mesh)
+				                            : 6u;
+				item.first_vertex = immediate_vertices;
+				immediate_vertices += item.vertex_count;
+			}
+			if (immediate_vertices != first) {
+				draw_batches_.push_back(GpuDrawBatch{
+				        *head.albedo, first, immediate_vertices - first});
+				submitted += immediate_vertices - first;
+			}
+		} else {
+			const Mesh& mesh = *head.mesh;
+			const GpuMeshData data{
+			        mesh.positions.data(), mesh.normals.data(),
+			        mesh.uvs.data(),       mesh.indices.data(),
+			        mesh.positions.size(), mesh.normals.size(),
+			        mesh.uvs.size(),       mesh.indices.size()};
+			const GpuMeshId id = gpu.acquire_mesh(mesh.source, data);
+			if (id != kNoGpuMesh) {
+				const uint32_t run = static_cast<uint32_t>(end - begin);
+				for (std::size_t i = begin; i < end; ++i) {
+					draw_items_[i].instance =
+					        instances + static_cast<uint32_t>(i - begin);
+				}
+				const uint32_t vertices = gpu.mesh_index_count(id) * run;
+				draw_batches_.push_back(GpuDrawBatch{
+				        *head.albedo, 0, vertices, id, instances, run});
+				instances += run;
+				submitted += vertices;
+			}
+		}
+		begin = end;
+	}
+	vertex_count_    = static_cast<uint32_t>(submitted);
+	draw_call_count_ = static_cast<uint32_t>(draw_batches_.size());
+	if (draw_batches_.empty()) {
+		return;
+	}
+
+	// Generate straight into the GPU staging memory: no host-side copy of
+	// the vertices, and for instanced geometry just one record per entity.
+	const GpuRenderer::GeometryStaging staging =
+	        gpu.begin_geometry_upload(immediate_vertices, instances);
+	if (staging.instances == nullptr) {
 		return; // no frame in flight
 	}
-	emit_frame(staging.vertices, staging.uvs);
-	gpu.commit_vertex_upload();
+	for (const DrawItem& item : draw_items_) {
+		if (item.slot != 0) {
+			if (item.instance != kNoInstance) {
+				staging.instances[item.instance] =
+				        GpuInstance{item.transform->world, item.color,
+				                    item.roughness};
+			}
+		} else if (item.vertex_count != 0) {
+			emit_item(item, staging.vertices, staging.uvs);
+		}
+	}
+	gpu.commit_geometry_upload(draw_batches_.data(),
+	                           static_cast<uint32_t>(draw_batches_.size()));
 }
 
 void Scene::draw(GpuRenderer& gpu)
