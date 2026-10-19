@@ -203,10 +203,9 @@ private:
 	uint32_t vertex_count_{0};
 	uint32_t draw_call_count_{0};
 	std::vector<GpuDrawBatch> draw_batches_;
-	/// Persistent per-frame buffers. They only grow (to the high-water mark),
-	/// so a steady-state frame neither allocates nor re-initialises them; the
-	/// live element count is frame_vertex_total_, not size().
-	std::vector<GpuVertex> frame_vertices_;
+	/// Per-frame UVs for build_vertices(). Only grows (to the high-water
+	/// mark), so a steady-state call neither allocates nor re-initialises it;
+	/// the live element count is frame_vertex_total_, not size().
 	std::vector<glm::vec2> frame_uvs_;
 	std::vector<DrawItem> draw_items_;
 	uint32_t frame_vertex_total_{0};

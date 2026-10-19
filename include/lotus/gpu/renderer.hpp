@@ -331,6 +331,24 @@ public:
 	void upload_vertices(const GpuVertex* vertices, const glm::vec2* uvs,
 	                     uint32_t count);
 
+	/// Staging memory for one frame's geometry; see begin_vertex_upload().
+	struct VertexStaging {
+		GpuVertex* vertices{nullptr};
+		glm::vec2* uvs{nullptr};
+	};
+
+	/// Maps the upload staging memory for \p count vertices and UVs so the
+	/// caller can generate them in place, skipping the intermediate copy that
+	/// upload_vertices() makes. Write exactly \p count entries to each array,
+	/// sequentially: the memory may be write-combined, so never read it back.
+	/// Call commit_vertex_upload() before the scene pass. Both pointers are
+	/// null when no frame is in flight or \p count is zero.
+	VertexStaging begin_vertex_upload(uint32_t count);
+
+	/// Unmaps the staging memory and records the copy to the GPU. OUTSIDE a
+	/// render pass. No-op unless begin_vertex_upload() returned memory.
+	void commit_vertex_upload();
+
 	void begin_scene_pass();
 
 	/// Draws \p count vertices using the lit pipeline. \p view is uploaded
@@ -573,6 +591,7 @@ private:
 	bool shadow_rendered_{false};
 	glm::mat4 light_vp_{1.0f};
 	uint32_t uploaded_vertex_count_{0};
+	uint32_t staged_vertex_count_{0};
 	uint32_t swapchain_width_{0};
 	uint32_t swapchain_height_{0};
 	// --- FXAA 3.11 console post pass (fullscreen triangle onto the target) ---

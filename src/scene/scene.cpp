@@ -819,15 +819,15 @@ void Scene::upload(GpuRenderer& gpu, float aspect)
 	if (vertex_count_ == 0) {
 		return;
 	}
-	if (frame_vertices_.size() < vertex_count_) {
-		frame_vertices_.resize(vertex_count_);
+	// Generate straight into the GPU staging memory: no intermediate host
+	// array, no second copy.
+	const GpuRenderer::VertexStaging staging =
+	        gpu.begin_vertex_upload(vertex_count_);
+	if (staging.vertices == nullptr) {
+		return; // no frame in flight
 	}
-	if (frame_uvs_.size() < vertex_count_) {
-		frame_uvs_.resize(vertex_count_);
-	}
-	emit_frame(frame_vertices_.data(), frame_uvs_.data());
-	gpu.upload_vertices(frame_vertices_.data(), frame_uvs_.data(),
-	                    vertex_count_);
+	emit_frame(staging.vertices, staging.uvs);
+	gpu.commit_vertex_upload();
 }
 
 void Scene::draw(GpuRenderer& gpu)

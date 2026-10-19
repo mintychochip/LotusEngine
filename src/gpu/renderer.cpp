@@ -2090,36 +2090,42 @@ void GpuRenderer::begin_frame(SDL_Window* window, float clear_r, float clear_g,
 	pass_destination_ = nullptr;
 }
 
-void GpuRenderer::upload_vertices(const GpuVertex* vertices,
-                                  const glm::vec2* uvs, uint32_t count)
+GpuRenderer::VertexStaging GpuRenderer::begin_vertex_upload(uint32_t count)
 {
-	if (!cmd_ || count == 0 || !vertices) {
+	staged_vertex_count_ = 0;
+	if (!cmd_ || count == 0) {
 		uploaded_vertex_count_ = 0;
-		return;
+		return {};
 	}
 	uploaded_vertex_count_ = count;
-	const uint32_t bytes =
-	        count * static_cast<uint32_t>(sizeof(GpuVertex));
-	const uint32_t uv_bytes =
-	        count * static_cast<uint32_t>(sizeof(glm::vec2));
-	ensure_vertex_capacity(bytes, uv_bytes);
+	ensure_vertex_capacity(count * static_cast<uint32_t>(sizeof(GpuVertex)),
+	                       count * static_cast<uint32_t>(sizeof(glm::vec2)));
 
 	void* mapped = SDL_MapGPUTransferBuffer(device_, transfer_buffer_, true);
 	if (!mapped) {
 		throw std::runtime_error(SDL_GetError());
 	}
-	std::memcpy(mapped, vertices, bytes);
-	SDL_UnmapGPUTransferBuffer(device_, transfer_buffer_);
-
 	void* uv_mapped = SDL_MapGPUTransferBuffer(device_, uv_transfer_buffer_, true);
 	if (!uv_mapped) {
+		SDL_UnmapGPUTransferBuffer(device_, transfer_buffer_);
 		throw std::runtime_error(SDL_GetError());
 	}
-	if (uvs != nullptr) {
-		std::memcpy(uv_mapped, uvs, uv_bytes);
-	} else {
-		std::memset(uv_mapped, 0, uv_bytes);
+	staged_vertex_count_ = count;
+	return {static_cast<GpuVertex*>(mapped), static_cast<glm::vec2*>(uv_mapped)};
+}
+
+void GpuRenderer::commit_vertex_upload()
+{
+	if (staged_vertex_count_ == 0) {
+		return;
 	}
+	const uint32_t count = staged_vertex_count_;
+	staged_vertex_count_ = 0;
+	const uint32_t bytes =
+	        count * static_cast<uint32_t>(sizeof(GpuVertex));
+	const uint32_t uv_bytes =
+	        count * static_cast<uint32_t>(sizeof(glm::vec2));
+	SDL_UnmapGPUTransferBuffer(device_, transfer_buffer_);
 	SDL_UnmapGPUTransferBuffer(device_, uv_transfer_buffer_);
 
 	SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(cmd_);
@@ -2141,6 +2147,29 @@ void GpuRenderer::upload_vertices(const GpuVertex* vertices,
 	uv_dst.size   = uv_bytes;
 	SDL_UploadToGPUBuffer(copy, &uv_src, &uv_dst, true);
 	SDL_EndGPUCopyPass(copy);
+}
+
+void GpuRenderer::upload_vertices(const GpuVertex* vertices,
+                                  const glm::vec2* uvs, uint32_t count)
+{
+	if (!vertices) {
+		uploaded_vertex_count_ = 0;
+		return;
+	}
+	const VertexStaging staging = begin_vertex_upload(count);
+	if (staging.vertices == nullptr) {
+		return;
+	}
+	std::memcpy(staging.vertices, vertices,
+	            count * static_cast<std::size_t>(sizeof(GpuVertex)));
+	if (uvs != nullptr) {
+		std::memcpy(staging.uvs, uvs,
+		            count * static_cast<std::size_t>(sizeof(glm::vec2)));
+	} else {
+		std::memset(staging.uvs, 0,
+		            count * static_cast<std::size_t>(sizeof(glm::vec2)));
+	}
+	commit_vertex_upload();
 }
 
 void GpuRenderer::begin_scene_pass()
