@@ -672,7 +672,10 @@ bool GpuRendererVulkan::begin_viewport_pass()
 	pass_width_         = viewport_width_;
 	pass_height_        = viewport_height_;
 	viewport_pass_open_ = true;
-	begin_rendering(cmd_);
+	// Rendering itself begins on the first geometry draw, as in
+	// begin_scene_pass; a pass that drew nothing is begun with a full
+	// clear in end_viewport_pass.
+	pass_rendering_begun_ = false;
 	return true;
 }
 
@@ -683,6 +686,12 @@ void GpuRendererVulkan::end_viewport_pass()
 	}
 	viewport_pass_open_ = false;
 	if (cmd_ != VK_NULL_HANDLE) {
+		// A pass that drew nothing never began rendering: begin it now
+		// with the full clear, exactly as before.
+		if (!pass_rendering_begun_) {
+			begin_rendering(cmd_, false);
+			pass_rendering_begun_ = true;
+		}
 		context_.api.CmdEndRendering(cmd_);
 		// FXAA resolve onto the viewport texture the UI samples. Skipped
 		// when the pass rendered directly.
@@ -711,7 +720,8 @@ std::vector<uint8_t> GpuRendererVulkan::capture_viewport_rgba(
 	                           width, height);
 }
 
-void GpuRendererVulkan::begin_rendering(VkCommandBuffer cmd)
+void GpuRendererVulkan::begin_rendering(VkCommandBuffer cmd,
+                                        bool skip_target1_clear)
 {
 	// The scene pass renders into the offscreen target and the pyramid; the
 	// viewport pass into its own colour, linear-depth and depth images. Both
@@ -734,13 +744,17 @@ void GpuRendererVulkan::begin_rendering(VkCommandBuffer cmd)
 	colors[0].storeOp     = VK_ATTACHMENT_STORE_OP_STORE;
 	colors[0].clearValue.color = VkClearColorValue{
 	        {clear_r_, clear_g_, clear_b_, 1.0f}};
-	// Unconditional, matching the pipeline's two declared colour targets.
-	// Load-bearing: an unwritten texel reads as ~0 and would poison any
-	// future min reduction, so the clear is the far sentinel.
+	// Cleared unless the caller proved the sky covers it: the sky writes
+	// DEPTH_FAR (== kDepthFar) to every pixel no geometry touched, and the
+	// geometry writes its own linear depth, so together they define every
+	// texel and the clear is redundant memory traffic. An unwritten texel
+	// would read as ~0 and poison the min reduction, so the proof matters.
 	colors[1].sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
 	colors[1].imageView   = linear_view;
 	colors[1].imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-	colors[1].loadOp      = VK_ATTACHMENT_LOAD_OP_CLEAR;
+	colors[1].loadOp      = skip_target1_clear
+	                                ? VK_ATTACHMENT_LOAD_OP_DONT_CARE
+	                                : VK_ATTACHMENT_LOAD_OP_CLEAR;
 	colors[1].storeOp     = VK_ATTACHMENT_STORE_OP_STORE;
 	const float far       = kDepthFar;
 	colors[1].clearValue.color = VkClearColorValue{{far, far, far, far}};

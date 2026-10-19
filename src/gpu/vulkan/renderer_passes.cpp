@@ -752,7 +752,11 @@ void GpuRendererVulkan::begin_scene_pass()
 		                          pyramid_states_[0]);
 		image_as_depth_attachment(*barriers_, cmd_, depth_, depth_state_);
 		barriers_->flush(cmd_);
-		begin_rendering(cmd_);
+	// Rendering itself begins on the first geometry draw (or with a full
+	// clear at the end of a pass that drew nothing): the first draw
+	// guarantees the sky runs, and the sky covers every pixel the geometry
+	// did not with the far sentinel, so target 1 needs no clear then.
+	pass_rendering_begun_ = false;
 		scene_pass_open_ = true;
 	}
 
@@ -779,6 +783,17 @@ void GpuRendererVulkan::draw(const glm::mat4& view, const glm::mat4& view_projec
 			continue;
 		}
 		if (!state_bound) {
+			if (!pass_rendering_begun_) {
+				// First geometry of the pass, so draw_sky() below is
+				// guaranteed to run: when the sky covers target 1 its
+				// clear is redundant. The availability check is pinned
+				// here (idempotent afterwards), so a first-failure frame
+				// still takes the clear path.
+				const bool skip = lighting_.sky_enabled &&
+				                  ensure_sky_pipeline();
+				begin_rendering(cmd_, skip);
+				pass_rendering_begun_ = true;
+			}
 			// Geometry takes the lower half of the depth range and the sky,
 			// below, the top of it (see kGeometryDepthMax).
 			set_viewport(cmd_, pass_width_, pass_height_,
@@ -817,6 +832,13 @@ void GpuRendererVulkan::end_scene_pass()
 		}
 		scene_pass_open_ = false;
 		if (cmd_ != VK_NULL_HANDLE) {
+			// A pass that drew nothing never began rendering: begin it now
+			// with the full clear, exactly as before. Colour and linear
+			// depth both keep the legacy clear values.
+			if (!pass_rendering_begun_) {
+				begin_rendering(cmd_, false);
+				pass_rendering_begun_ = true;
+			}
 			context_.api.CmdEndRendering(cmd_);
 			// FXAA resolve onto the real target. The pyramid reduction reads
 			// target 1, which is never redirected, so resolve order vs. the
@@ -869,11 +891,11 @@ bool GpuRendererVulkan::ensure_sky_pipeline()
 		sky.color_target_count  = 2;
 		sky.color_formats[0]    = kColorFormat;
 		sky.color_formats[1]    = kPyramidFormat;
-		// The sky leaves the linear-depth target alone. Every pass clears that
-		// target to kDepthFar, which is exactly what sky.frag writes, so the
-		// write changes nothing; masked off, it is memory traffic saved on every
-		// sky pixel.
-		sky.mask_target1   = true;
+		// The sky writes the linear-depth target: sky.frag emits DEPTH_FAR
+		// (== kDepthFar) on every pixel it covers, which is exactly the
+		// pixels no geometry touched, so a pass that draws the sky needs
+		// no target-1 clear. Passes without the sky keep the clear.
+		sky.mask_target1   = false;
 		sky.depth_format   = kDepthFormat;
 		sky.depth_test     = true;
 		sky.depth_write    = false;

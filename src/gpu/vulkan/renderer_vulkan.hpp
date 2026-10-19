@@ -383,6 +383,11 @@ private:
 	glm::mat4 light_vp_{1.0f};
 
 	// --- per-pass state -----------------------------------------------------
+	/// Whether BeginRendering has been recorded for the open pass. Rendering
+	/// begins on the first geometry draw (which then guarantees the sky runs
+	/// and covers target 1, so its clear is skipped), or with a full clear
+	/// at the end of a pass that drew nothing.
+	bool pass_rendering_begun_{false};
 	bool sky_drawn_{false};
 	uint32_t pass_width_{0};
 	uint32_t pass_height_{0};
@@ -466,7 +471,7 @@ private:
 	void set_viewport(VkCommandBuffer cmd, uint32_t width, uint32_t height,
 	                  float max_depth);
 	void set_scissor(VkCommandBuffer cmd, uint32_t width, uint32_t height);
-	void begin_rendering(VkCommandBuffer cmd);
+	void begin_rendering(VkCommandBuffer cmd, bool skip_target1_clear);
 	void destroy_pipelines();
 
 	// renderer_post.cpp (FXAA, SSAO, viewport pass, frame-ring retirement)
