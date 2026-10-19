@@ -60,7 +60,7 @@ constexpr const char* kUsage =
         "                          [--grid N] [--lods N] [--assets-dir DIR]\n"
         "                          [--golden PATH] [--write-golden PATH]\n"
         "                          [--ppm PATH] [--pipelined] [--seconds S]\n"
-        "                          [--no-occlusion]";
+        "                          [--no-occlusion] [--frame-hashes N]";
 
 constexpr int kTextureCount          = 16;
 constexpr uint32_t kTextureSize      = 512;
@@ -99,6 +99,9 @@ struct Options {
 	/// workload: with frames in flight the culling history a frame sees
 	/// depends on timing.
 	bool occlusion{true};
+	/// Per-frame verification: renders this many frames of the standard camera
+	/// loop, capturing and hashing each (see --frame-hashes).
+	int frame_hashes{0};
 };
 
 bool parse_int(const std::string& text, long long& out)
@@ -190,6 +193,11 @@ bool parse_options(int argc, char** argv, Options& options)
 				          << value << "'\n";
 				return false;
 			}
+		} else if (flag == "--frame-hashes") {
+			if (!need_number()) {
+				return false;
+			}
+			options.frame_hashes = static_cast<int>(number);
 		} else if (flag == "--assets-dir") {
 			options.assets_dir = value;
 		} else if (flag == "--golden") {
@@ -895,6 +903,24 @@ int run_gpu(const Options& options, Scene& scene, World& world)
 	if (!capture_fidelity(gpu, scene, world, aspect, options, device_name,
 	                      counters, fidelity, image_hash)) {
 		return 1;
+	}
+
+	// Per-frame hashes: the standard camera loop, synchronous, every frame
+	// captured and hashed, so two builds can be diffed frame by frame.
+	if (options.frame_hashes > 0) {
+		for (int frame = 0; frame < options.frame_hashes; ++frame) {
+			animate(scene, world,
+			        static_cast<float>(frame % options.frames) /
+			                static_cast<float>(options.frames));
+			render_frame(gpu, scene, aspect);
+			uint32_t width  = 0;
+			uint32_t height = 0;
+			const std::vector<uint8_t> pixels = gpu.capture_rgba(width, height);
+			std::printf("FRAMEHASH %d %s\n", frame,
+			            to_hex(fnv1a(pixels)).c_str());
+		}
+		print_identity(device_name, image_hash);
+		return 0;
 	}
 
 	if (options.pipelined) {

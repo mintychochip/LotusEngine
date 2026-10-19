@@ -135,18 +135,21 @@ void Context::create(const ContextOptions& options)
 		extensions.insert(extensions.end(), sdl, sdl + count);
 	}
 
-	VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
+	VkApplicationInfo app{};
+	app.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
 	app.pApplicationName = "lotus";
 	app.pEngineName      = "lotus";
 	app.apiVersion       = VK_API_VERSION_1_3;
 
 	const VkValidationFeatureEnableEXT enabled_features[] = {
 	        VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT};
-	VkValidationFeaturesEXT features{VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT};
+	VkValidationFeaturesEXT features{};
+	features.sType = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT;
 	features.enabledValidationFeatureCount = 1;
 	features.pEnabledValidationFeatures    = enabled_features;
 
-	VkInstanceCreateInfo instance_info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
+	VkInstanceCreateInfo instance_info{};
+	instance_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
 	instance_info.pNext                   = sync_validation ? &features : nullptr;
 	instance_info.pApplicationInfo        = &app;
 	instance_info.enabledLayerCount       = static_cast<uint32_t>(layers.size());
@@ -158,8 +161,8 @@ void Context::create(const ContextOptions& options)
 	api.load_instance(instance);
 
 	if (validation && api.CreateDebugUtilsMessengerEXT != nullptr) {
-		VkDebugUtilsMessengerCreateInfoEXT messenger{
-		        VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT};
+		VkDebugUtilsMessengerCreateInfoEXT messenger{};
+		messenger.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
 		messenger.messageSeverity =
 		        VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
 		        VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
@@ -182,17 +185,19 @@ void Context::create(const ContextOptions& options)
 	pick_physical_device(options.window != nullptr);
 
 	// Everything below was verified by pick_physical_device.
-	VkPhysicalDeviceVulkan13Features features13{
-	        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
+	VkPhysicalDeviceVulkan13Features features13{};
+	features13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
 	features13.dynamicRendering = VK_TRUE;
 	features13.synchronization2 = VK_TRUE;
-	VkPhysicalDeviceFeatures2 features2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+	VkPhysicalDeviceFeatures2 features2{};
+	features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
 	features2.pNext                       = &features13;
 	features2.features.depthClamp         = VK_TRUE;
 	features2.features.independentBlend   = VK_TRUE;
 
 	const float priority = 1.0f;
-	VkDeviceQueueCreateInfo queue_info{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
+	VkDeviceQueueCreateInfo queue_info{};
+	queue_info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
 	queue_info.queueFamilyIndex = queue_family;
 	queue_info.queueCount       = 1;
 	queue_info.pQueuePriorities = &priority;
@@ -201,7 +206,8 @@ void Context::create(const ContextOptions& options)
 	if (options.window != nullptr) {
 		device_extensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
 	}
-	VkDeviceCreateInfo device_info{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
+	VkDeviceCreateInfo device_info{};
+	device_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
 	device_info.pNext                   = &features2;
 	device_info.queueCreateInfoCount    = 1;
 	device_info.pQueueCreateInfos       = &queue_info;
@@ -212,12 +218,14 @@ void Context::create(const ContextOptions& options)
 	api.load_device(device);
 	api.GetDeviceQueue(device, queue_family, 0, &queue);
 
-	VkCommandPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+	VkCommandPoolCreateInfo pool_info{};
+	pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
 	pool_info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
 	pool_info.queueFamilyIndex = queue_family;
 	check(api.CreateCommandPool(device, &pool_info, nullptr, &one_shot_pool_),
 	      "vkCreateCommandPool");
-	VkFenceCreateInfo fence_info{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+	VkFenceCreateInfo fence_info{};
+	fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
 	check(api.CreateFence(device, &fence_info, nullptr, &one_shot_fence_),
 	      "vkCreateFence");
 }
@@ -234,7 +242,8 @@ void Context::pick_physical_device(bool windowed)
 	int best_rank = -1;
 	std::string rejected;
 	for (VkPhysicalDevice candidate : devices) {
-		VkPhysicalDeviceProperties2 props{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
+		VkPhysicalDeviceProperties2 props{};
+		props.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
 		api.GetPhysicalDeviceProperties2(candidate, &props);
 		const auto reject = [&](const char* why) {
 			rejected += std::string{"\n  "} + props.properties.deviceName + ": " + why;
@@ -244,9 +253,11 @@ void Context::pick_physical_device(bool windowed)
 			continue;
 		}
 
-		VkPhysicalDeviceVulkan13Features f13{
-		        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
-		VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &f13};
+		VkPhysicalDeviceVulkan13Features f13{};
+		f13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+		VkPhysicalDeviceFeatures2 f2{};
+		f2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+		f2.pNext = &f13;
 		api.GetPhysicalDeviceFeatures2(candidate, &f2);
 		if (!f13.dynamicRendering || !f13.synchronization2 ||
 		    !f2.features.depthClamp || !f2.features.independentBlend) {
@@ -314,9 +325,11 @@ void Context::pick_physical_device(bool windowed)
 		throw std::runtime_error("no suitable Vulkan device" + rejected);
 	}
 
-	VkPhysicalDeviceDriverProperties driver{
-	        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
-	VkPhysicalDeviceProperties2 props{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &driver};
+	VkPhysicalDeviceDriverProperties driver{};
+	driver.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES;
+	VkPhysicalDeviceProperties2 props{};
+	props.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+	props.pNext = &driver;
 	api.GetPhysicalDeviceProperties2(physical_device, &props);
 	properties  = props.properties;
 	driver_name = driver.driverName;
@@ -360,7 +373,8 @@ void Context::shutdown()
 
 void Context::submit_and_wait(const std::function<void(VkCommandBuffer)>& record)
 {
-	VkCommandBufferAllocateInfo allocate{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+	VkCommandBufferAllocateInfo allocate{};
+	allocate.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
 	allocate.commandPool        = one_shot_pool_;
 	allocate.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
 	allocate.commandBufferCount = 1;
@@ -368,15 +382,18 @@ void Context::submit_and_wait(const std::function<void(VkCommandBuffer)>& record
 	check(api.AllocateCommandBuffers(device, &allocate, &cmd),
 	      "vkAllocateCommandBuffers");
 	try {
-		VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+		VkCommandBufferBeginInfo begin{};
+		begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
 		begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 		check(api.BeginCommandBuffer(cmd, &begin), "vkBeginCommandBuffer");
 		record(cmd);
 		check(api.EndCommandBuffer(cmd), "vkEndCommandBuffer");
 
-		VkCommandBufferSubmitInfo cmd_info{VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO};
+		VkCommandBufferSubmitInfo cmd_info{};
+		cmd_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
 		cmd_info.commandBuffer = cmd;
-		VkSubmitInfo2 submit{VK_STRUCTURE_TYPE_SUBMIT_INFO_2};
+		VkSubmitInfo2 submit{};
+		submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
 		submit.commandBufferInfoCount = 1;
 		submit.pCommandBufferInfos    = &cmd_info;
 		check(api.QueueSubmit2(queue, 1, &submit, one_shot_fence_), "vkQueueSubmit2");

@@ -56,6 +56,26 @@ a `cbuffer` per block laid out like the std140 ones), compiled to DXBC SM 5.1 bl
 `shaders/build-shaders-d3d.sh` (vkd3d-compiler on Linux; fxc/dxc on Windows) and
 committed as headers, exactly like the SPIR-V ones.
 
+### The seam
+
+`include/lotus/gpu/renderer.hpp` declares an abstract `GpuRenderer`: the API only, no backend types.
+`create_gpu_renderer()` returns the backend the build selected — `LOTUS_GPU_BACKEND=sdlgpu|vulkan|d3d12|d3d11`,
+default `sdlgpu` until the Vulkan backend passes per-frame verification, then `vulkan`. Each backend is
+a concrete class in its own directory (`src/gpu/sdlgpu/`, `src/gpu/vulkan/`, `src/gpu/d3d12/`,
+`src/gpu/d3d11/`) implementing that interface; nothing else in the engine names a backend type. While
+more than one backend exists, every caller keeps compiling unchanged: it holds a `GpuRenderer&` from the
+factory. SDL_GPU is removed only after the Vulkan backend is verified (the user's explicit sequencing),
+so the tree keeps a working backend throughout.
+
+### Verification: per frame
+
+A port is proven on every frame, not only on the last one. `lotus_render_bench --frame-hashes N` renders
+the standard camera loop synchronously, captures each frame and prints `FRAMEHASH <index> <hash>`;
+`ab_frames.sh N A B` diffs two builds' sequences and reports the first divergence. History-dependent
+state — the Hi-Z pyramid's one-frame lag, SSAO's one-frame lag, frames in flight — breaks specific frames
+and nothing else, so this is the acceptance test between SDL_GPU and Vulkan on each device. Timing keeps
+its own per-frame distribution (`frame_ms`, `frame_ms_p90`, per-round medians).
+
 ## What SDL_GPU does today (so the port can match it)
 
 SDL's Vulkan backend (`SDL_gpu_vulkan.c`, SDL 3.4.0) is Vulkan 1.0 core + `KHR_maintenance1`:
@@ -128,7 +148,14 @@ queue order, so every earlier use has finished). No `vkDeviceWaitIdle` except in
 - `Readback`: prefers `HOST_CACHED` (Intel, lavapipe, 3080 host heap) with `vkInvalidateMappedMemoryRanges`;
   only when no cached type exists does the existing MOVNTDQA streaming-load copy apply.
 
-### Descriptors (shader sets are re-laid-out; the arithmetic is untouched)
+### Descriptors (the first port keeps the shaders' existing set numbers)
+
+The committed SPIR-V declares its uniforms at the set numbers SDL_GPU's Vulkan backend imposes
+(set 1 vertex uniforms, set 2 fragment samplers, set 3 fragment uniforms; compute uses set 1 for
+read-write storage images). **The first Vulkan port keeps those numbers**, so the shader headers
+stay byte-identical to the ones the SDL build rendered with and image identity is easier to argue.
+The layout below is the *later* re-layout, measured as its own Phase 3 optimisation once the port
+works:
 
 | set | content | lifetime |
 |---|---|---|
@@ -137,7 +164,9 @@ queue order, so every earlier use has finished). No `vkDeviceWaitIdle` except in
 | compute set 0 | b0 `r32f` src, b1 `r32f` dst | persistent per Hi-Z level pair |
 
 lit: b0/b1 UBOs, b2 shadow, b3 ssao; shadow: b0; sky: b0, b1; fxaa: b1, b2 source; ssao: b1, b2 depth.
-No push constants. Draws bind a material set only when the albedo changes.
+No push constants. Draws bind a material set only when the albedo changes. Until the re-layout, the
+port binds three sets per pass (vertex uniforms / three samplers / fragment uniforms) and caches one
+descriptor set per albedo for the sampler set.
 
 ### Passes (dynamic rendering, sync2)
 

@@ -54,7 +54,9 @@ export VVL='VK_ADD_LAYER_PATH=/tmp/vvl/root/usr/share/vulkan/explicit_layer.d LD
       Verify: lit frame with fxaa/ssao off equals the SDL build's bytes.
 - [ ] **V5** FXAA, SSAO, Hi-Z compute + readback + adopt (cached readback, streaming-load fallback), `capture_rgba`,
       `resize_offscreen`, viewport pass + `capture_viewport_rgba`, all degradation flags/messages.
-- [ ] **V6** Callers on the final API; full suite + validation clean on 3 devices; hashes identical.
+- [ ] **V6** Callers on the final API; full suite + validation clean on 3 devices; per-frame hashes
+      identical to the SDL build (`ab_frames.sh 60 bench_sdl_v3 <vulkan bench>` on 3080, Intel,
+      lavapipe) and the bench frame hash equal to the golden on lavapipe.
 - [ ] **V7** **A/B checkpoint**: sync + pipelined, 3 devices, report. (Decision point for stage 2.)
 
 ## Phase 2 — Stage 2: window, editor, cleanup
@@ -79,8 +81,11 @@ both behind the same seam; SDL_GPU is not retained. Toolchain on this machine:
 `/tmp/vkd3d/root/usr/bin/vkd3d-compiler` (needs `LD_LIBRARY_PATH=/tmp/vkd3d/root/usr/lib64`;
 target type is `dxbc-tpf`, source type `hlsl`).
 
-- [ ] **D1** Seam: `LOTUS_GPU_BACKEND=vulkan|d3d12|d3d11` selects the implementation files for
-      `GpuRenderer`; the public header stays the only interface; Vulkan keeps building.
+- [ ] **D1** Seam: `include/lotus/gpu/renderer.hpp` becomes an abstract `GpuRenderer` (API only, no
+      backend types) plus `create_gpu_renderer()`; the SDL implementation becomes
+      `src/gpu/sdlgpu/` (class renamed, members unchanged), the Vulkan one lives in
+      `src/gpu/vulkan/`; `LOTUS_GPU_BACKEND` picks which is compiled (default `sdlgpu` until Vulkan
+      passes per-frame verification, then `vulkan`). Callers take a `GpuRenderer&` from the factory.
 - [ ] **D2** `scripts/compile-check-d3d.sh`: extracts the MinGW toolchain if missing and compiles
       every `src/gpu/d3d*/` translation unit; kept in the loop while writing D3D code.
 - [ ] **D3** HLSL ports (lit.vert/frag, shadow.vert, sky.vert/frag, fxaa.vert/frag, ssao.vert/frag,
