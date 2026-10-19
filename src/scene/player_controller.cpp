@@ -72,7 +72,6 @@ void apply_character_movement_input(Scene& scene, PhysicsWorld& physics,
 	}
 
 	if (!enable_input) {
-		physics.set_character_velocity(scene, player, glm::vec3{0.0f});
 		return;
 	}
 
@@ -114,6 +113,9 @@ void update_follow_camera(Scene& scene, const FollowCameraSettings& settings)
 	if (player == NullEntity || !camera) {
 		return;
 	}
+	if (!camera->follow) {
+		return;
+	}
 	const Transform* transform = scene.registry().try_get<Transform>(player);
 	if (!transform) {
 		return;
@@ -123,7 +125,7 @@ void update_follow_camera(Scene& scene, const FollowCameraSettings& settings)
 	const glm::vec3 focus =
 	        feet + glm::vec3{0.0f, settings.look_at_height, 0.0f};
 	camera->target   = focus;
-	camera->position = focus - settings.offset;
+	camera->position = feet + settings.offset;
 }
 
 } // namespace lotus

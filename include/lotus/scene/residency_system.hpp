@@ -21,6 +21,10 @@ public:
 	void update(Scene& scene, const glm::vec3& viewer);
 
 	const std::vector<std::string>& resident() const { return resident_; }
+
+	/// Forgets which regions are loaded. The catalog stays. Call when the scene
+	/// registry is replaced so the next update merges regions again.
+	void clear_resident() { resident_.clear(); }
 	const std::vector<StreamRegion>& regions() const { return regions_; }
 
 	void set_load_margin(float margin) { load_margin_ = margin; }

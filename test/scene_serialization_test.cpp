@@ -462,7 +462,7 @@ TEST(SceneSerialization, AssetIdRoundTripsAndIsOptional)
 	const Entity a = source.create("keyed");
 	source.registry().emplace<MeshSource>(a, MeshSource{"assets/moved.glb", "hero"});
 	const Entity b = source.create("bare");
-	source.registry().emplace<MeshSource>(b, MeshSource{"builtin:cube"});
+	source.registry().emplace<MeshSource>(b, MeshSource{"builtin:cube", ""});
 
 	const std::string text = to_json_string(source);
 	// The id is written when set and omitted when not, so a v2-shaped document

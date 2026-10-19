@@ -5,6 +5,7 @@
 #include <fstream>
 #include <sstream>
 #include <utility>
+#include <vector>
 
 #include "lotus/scene/scene.hpp"
 #include "lotus/script/script.hpp"
@@ -202,6 +203,7 @@ void to_json(nlohmann::json& j, const Material& m)
 	}
 }
 
+
 void to_json(nlohmann::json& j, const RigidBody& body)
 {
 	const char* motion = "dynamic";
@@ -348,7 +350,8 @@ void to_json(nlohmann::json& j, const Camera3D& c)
 	        {"target", arr3(c.target.x, c.target.y, c.target.z)},
 	        {"fov_degrees", tidy(c.fov_degrees)},
 	        {"near_plane", tidy(c.near_plane)},
-	        {"far_plane", tidy(c.far_plane)}};
+	        {"far_plane", tidy(c.far_plane)},
+	        {"follow", c.follow}};
 }
 
 void from_json(const nlohmann::json& j, Camera3D& c)
@@ -370,6 +373,9 @@ void from_json(const nlohmann::json& j, Camera3D& c)
 	}
 	if (j.contains("far_plane") && j.at("far_plane").is_number()) {
 		c.far_plane = j.at("far_plane").get<float>();
+	}
+	if (j.contains("follow") && j.at("follow").is_boolean()) {
+		c.follow = j.at("follow").get<bool>();
 	}
 }
 

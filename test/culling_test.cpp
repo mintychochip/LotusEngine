@@ -82,10 +82,10 @@ TEST(SceneCullingTest, CullsEntitiesBehindTheCamera)
 	scene.registry().emplace<Camera3D>(camera); // (3, 2.5, 4) looking at origin
 
 	const Entity visible = scene.create("visible");
-	scene.registry().emplace<MeshSource>(visible, MeshSource{"builtin:cube"});
+	scene.registry().emplace<MeshSource>(visible, MeshSource{"builtin:cube", ""});
 
 	const Entity behind = scene.create("behind");
-	scene.registry().emplace<MeshSource>(behind, MeshSource{"builtin:cube"});
+	scene.registry().emplace<MeshSource>(behind, MeshSource{"builtin:cube", ""});
 	scene.registry().get<Transform>(behind).position = {0.0f, 0.0f, 60.0f};
 
 	scene.update(0.0f);
@@ -164,7 +164,7 @@ TEST(SceneLodTest, LodTakesPrecedenceOverPlainMesh)
 	scene.registry().emplace<Camera3D>(camera);
 
 	const Entity ball = scene.create("ball");
-	scene.registry().emplace<MeshSource>(ball, MeshSource{"builtin:cube"});
+	scene.registry().emplace<MeshSource>(ball, MeshSource{"builtin:cube", ""});
 	Lod lod;
 	lod.levels.push_back(LodLevel{"builtin:sphere:8:6", 50.0f});
 	scene.registry().emplace<Lod>(ball, lod);

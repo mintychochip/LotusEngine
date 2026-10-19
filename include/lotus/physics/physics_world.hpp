@@ -30,6 +30,11 @@ public:
 
 	void step(Scene& scene, float dt);
 
+	/// Drops every body and character. Call when the scene registry is replaced:
+	/// entity ids restart, and a surviving body would be treated as the new
+	/// entity that reused the id.
+	void clear();
+
 	/// Casts a ray in world space. Returns false when nothing is hit.
 	bool raycast(const glm::vec3& origin, const glm::vec3& direction,
 	             float max_distance, PhysicsRaycastHit& hit) const;

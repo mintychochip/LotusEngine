@@ -119,6 +119,14 @@ public:
 	/// occlusion because the previous frame's fence is still outstanding.
 	bool occlusion_ready() const { return occlusion_ready_; }
 
+	/// Aspect (width / height) of the depth image currently in
+	/// occlusion_pyramid(). Zero when no image has been adopted.
+	float occlusion_aspect() const { return occlusion_aspect_; }
+
+	/// The next end_scene_pass closes the pass without downloading a pyramid.
+	/// Used when the pass only clears the window behind the editor.
+	void suppress_occlusion_record() { record_occlusion_ = false; }
+
 	uint32_t vertex_capacity() const { return capacity_; }
 	/// True when the viewport texture is ready to be sampled by ImGui.
 	bool viewport_ready() const { return viewport_texture_ != nullptr; }
@@ -243,6 +251,8 @@ private:
 	SDL_GPUComputePipeline* hiz_pipeline_{nullptr};
 	bool occlusion_enabled_{false};
 	bool occlusion_ready_{false};
+	bool record_occlusion_{true};
+	float occlusion_aspect_{0.0f};
 
 	DepthPyramid occlusion_pyramid_;
 

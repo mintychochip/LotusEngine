@@ -148,6 +148,7 @@ struct Camera3D {
 	float fov_degrees{55.0f};
 	float near_plane{0.1f};
 	float far_plane{100.0f};
+	bool follow{true};
 
 	glm::mat4 view() const
 	{
@@ -196,6 +197,15 @@ struct SphereCollider {
 /// Convex hull collider built from the entity's \c Mesh positions (local
 /// space, scaled by \c Transform::scale). Requires \c Mesh + \c RigidBody.
 struct MeshCollider {};
+
+/// Height field collider built from the entity's \c Mesh when it is a regular
+/// \f$(n \times n)\f$ grid (row-major X then Z, as \c mesh::terrain). Heights
+/// are taken from vertex Y in local space, scaled by \c Transform::scale, then
+/// clamped to \c min_height and \c max_height. Requires \c Mesh + \c RigidBody.
+struct HeightFieldCollider {
+	float min_height{0.0f};
+	float max_height{1.0f};
+};
 
 /// Capsule character driven by Jolt CharacterVirtual. \p Transform::position
 /// is the feet; \p desired_velocity is in world space (m/s). Gravity is applied

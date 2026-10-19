@@ -76,6 +76,15 @@ AsyncSceneLoad::State AsyncSceneLoad::poll()
 	return State::Ready;
 }
 
+void AsyncSceneLoad::dismiss_failure()
+{
+	if (state_.load() != State::Failed) {
+		return;
+	}
+	error_.clear();
+	state_.store(State::Idle);
+}
+
 bool AsyncSceneLoad::take(Scene& target)
 {
 	if (state_.load() != State::Ready) {

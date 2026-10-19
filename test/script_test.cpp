@@ -33,7 +33,7 @@ TEST(ScriptEngineTest, UpdateMutatesComponents)
 {
 	Scene scene{"s"};
 	const Entity e = scene.create("e");
-	scene.registry().emplace<Script>(e, Script{"rotate.lua"});
+	scene.registry().emplace<Script>(e, Script{"rotate.lua", ""});
 	write_script("rotate.lua", R"(
 		local s = {}
 		function s.on_update(entity, dt)
@@ -57,7 +57,7 @@ TEST(ScriptEngineTest, OnStartRunsOnSync)
 {
 	Scene scene{"s"};
 	const Entity e = scene.create("e");
-	scene.registry().emplace<Script>(e, Script{"start.lua"});
+	scene.registry().emplace<Script>(e, Script{"start.lua", ""});
 	write_script("start.lua", R"(
 		local s = {}
 		function s.on_start(entity)
@@ -80,7 +80,7 @@ TEST(ScriptEngineTest, ScriptCanFindAndMoveOtherEntities)
 	Scene scene{"s"};
 	const Entity target = scene.create("target");
 	const Entity driver = scene.create("driver");
-	scene.registry().emplace<Script>(driver, Script{"driver.lua"});
+	scene.registry().emplace<Script>(driver, Script{"driver.lua", ""});
 	write_script("driver.lua", R"(
 		local s = {}
 		function s.on_update(entity, dt)
@@ -107,7 +107,7 @@ TEST(ScriptEngineTest, BrokenScriptIsReportedAndNotLoaded)
 {
 	Scene scene{"s"};
 	const Entity e = scene.create("e");
-	scene.registry().emplace<Script>(e, Script{"broken.lua"});
+	scene.registry().emplace<Script>(e, Script{"broken.lua", ""});
 	write_script("broken.lua", "this is not lua !!!");
 
 	ScriptEngine engine;
@@ -124,7 +124,7 @@ TEST(ScriptEngineTest, RuntimeErrorIsCaughtAndReported)
 {
 	Scene scene{"s"};
 	const Entity e = scene.create("e");
-	scene.registry().emplace<Script>(e, Script{"boom.lua"});
+	scene.registry().emplace<Script>(e, Script{"boom.lua", ""});
 	write_script("boom.lua", R"(
 		local s = {}
 		function s.on_update(entity, dt)
@@ -144,7 +144,7 @@ TEST(ScriptEngineTest, HotSwapReplacesBehaviour)
 {
 	Scene scene{"s"};
 	const Entity e = scene.create("e");
-	scene.registry().emplace<Script>(e, Script{"swap.lua"});
+	scene.registry().emplace<Script>(e, Script{"swap.lua", ""});
 	const fs::path path = write_script("swap.lua", R"(
 		local s = {}
 		function s.on_update(entity, dt)
@@ -178,7 +178,7 @@ TEST(ScriptEngineTest, BrokenHotSwapKeepsPreviousVersion)
 {
 	Scene scene{"s"};
 	const Entity e = scene.create("e");
-	scene.registry().emplace<Script>(e, Script{"keep.lua"});
+	scene.registry().emplace<Script>(e, Script{"keep.lua", ""});
 	const fs::path path = write_script("keep.lua", R"(
 		local s = {}
 		function s.on_update(entity, dt)

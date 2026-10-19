@@ -154,7 +154,7 @@ TEST(PrefabTest, CapturesASubtreeFromAScene)
 	const Entity root  = scene.create("root");
 	const Entity child = scene.create("child");
 	scene.set_parent(child, root);
-	scene.registry().emplace<Material>(root, Material{{0.25f, 0.5f, 0.75f}});
+	scene.registry().emplace<Material>(root, Material{{0.25f, 0.5f, 0.75f}, "", 0.5f});
 
 	const Prefab prefab = prefab_from_scene(scene, root);
 	ASSERT_TRUE(prefab.document.contains("entities"));

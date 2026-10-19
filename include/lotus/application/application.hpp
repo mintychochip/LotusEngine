@@ -14,6 +14,7 @@
 #include "lotus/scene/async_load.hpp"
 #include "lotus/scene/residency_system.hpp"
 #include "lotus/scene/scene_manager.hpp"
+#include "lotus/scene/scene_pass.hpp"
 #include "lotus/script/script_engine.hpp"
 #include "lotus/ui/editor.hpp"
 
@@ -38,6 +39,7 @@ public:
 	SceneManager& scenes() { return scenes_; }
 	Editor& editor() { return editor_; }
 	ScriptEngine& scripts() { return scripts_; }
+	PhysicsWorld& physics() { return physics_; }
 	Console& console() { return console_; }
 	Keybinds& keybinds() { return keybinds_; }
 
@@ -91,12 +93,23 @@ public:
 	/// Requests the main loop to stop (used by the `quit` console command).
 	void request_quit() { quit_requested_ = true; }
 
+	/// One simulation step for the active scene: input, animation, scene
+	/// update, physics, scripts, a world-matrix publish, the follow camera,
+	/// and residency. No-op when no scene is active.
+	void tick_simulation(float dt, bool game_input_enabled);
+
 protected:
 	void on_start();
 	/// Called once after the GPU device and editor exist.
 	virtual void on_ready(Window& window, GpuRenderer& gpu) = 0;
 	virtual void on_update(float dt)                       = 0;
-	virtual void on_shutdown()                             = 0;
+	/// Called after physics and scripts have published Transform::world, and
+	/// inside the ImGui frame, so a game HUD can draw.
+	virtual void on_ui(float /*dt*/) {}
+	/// Called after a scene replace rebinds assets and drops physics and
+	/// residency state. Cached entity handles must be resolved again here.
+	virtual void on_scene_committed(Scene& /*scene*/) {}
+	virtual void on_shutdown() = 0;
 
 	GpuSettings settings_;
 
@@ -105,8 +118,11 @@ private:
 	void handle_action(const std::string& action);
 	void poll_hot_reload();
 	void poll_async_scene_load();
+protected:
 	std::string scene_file_for(const std::string& name) const;
 	void adopt_scene_path(const std::string& path);
+	void bind_active_scene();
+private:
 	void wire_assets();
 
 	SceneManager scenes_;

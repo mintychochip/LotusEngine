@@ -52,7 +52,7 @@ Two small, independent fixes. Both block later tasks: identity needs a serialize
 **Interfaces:**
 - Produces: `SceneManager::names()` returns sorted order; `bool lotus::migrate_scene_json(nlohmann::json&, int from, int to)`; `kSceneFormatVersion == 2`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `test/scene_test.cpp`, add to `SceneManagerTest`:
 
@@ -103,12 +103,12 @@ TEST(SceneSerialization, FutureVersionIsRejected)
 }
 ```
 
-- [ ] **Step 2: Run the tests to confirm they fail**
+- [x] **Step 2: Run the tests to confirm they fail**
 
 Run: `cd build && cmake --build . -j"$(nproc)" && ./bin/lotus_tests --gtest_filter='SceneManagerTest.NamesAreSortedAndStable:SceneSerialization.Version1DocumentMigratesToCurrent'`
 Expected: `NamesAreSortedAndStable` fails (unordered order); the migration test fails if version 1 is currently rejected for a changed format — otherwise it passes and only guards the path.
 
-- [ ] **Step 3: Sort `names()`**
+- [x] **Step 3: Sort `names()`**
 
 In `src/scene/scene_manager.cpp`, add `#include <algorithm>` and sort before returning:
 
@@ -127,7 +127,7 @@ std::vector<std::string> SceneManager::names() const
 }
 ```
 
-- [ ] **Step 4: Add the migration hook and bump the version**
+- [x] **Step 4: Add the migration hook and bump the version**
 
 In `include/lotus/scene/serialization.hpp`, bump the version and declare the hook:
 
@@ -182,12 +182,12 @@ Change the version check in `scene_from_json`:
 	}
 ```
 
-- [ ] **Step 5: Build and run the full suite**
+- [x] **Step 5: Build and run the full suite**
 
 Run: `cd build && cmake --build . -j"$(nproc)" && ./bin/lotus_tests`
 Expected: all tests pass, count ≥ 148.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A && git commit -m "Sort SceneManager::names and add a scene-format migration hook"
@@ -205,7 +205,7 @@ git add -A && git commit -m "Sort SceneManager::names and add a scene-format mig
 - Consumes: the migration hook and version 2 from Task 0.
 - Produces: `SceneGuid { uint64_t value; }`, `EntityRef { SceneGuid target; }`, `Scene::guid_of(Entity)`, `Scene::resolve_refs()`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```cpp
 TEST(SceneSerialization, GuidRoundTripsThroughSaveLoad)
@@ -242,12 +242,12 @@ TEST(SceneSerialization, UnresolvedReferenceIsReportedNotFatal)
 }
 ```
 
-- [ ] **Step 2: Run the tests to confirm they fail**
+- [x] **Step 2: Run the tests to confirm they fail**
 
 Run: `./bin/lotus_tests --gtest_filter='SceneSerialization.GuidRoundTrips*:SceneSerialization.UnresolvedReference*'`
 Expected: compile error (types do not exist yet).
 
-- [ ] **Step 3: Add the types**
+- [x] **Step 3: Add the types**
 
 In `include/lotus/scene/components.hpp`:
 
@@ -265,20 +265,20 @@ struct EntityRef {
 };
 ```
 
-- [ ] **Step 4: Assign and resolve GUIDs**
+- [x] **Step 4: Assign and resolve GUIDs**
 
 In `src/scene/scene.cpp`, add a GUID map and the accessors. `create()` assigns `SceneGuid{++next_guid_}` and stores it; `resolve_refs()` walks `EntityRef` components and fills `last_mesh_error_` for any target with no match. Call `resolve_refs()` at the end of a successful `scene_from_json`.
 
-- [ ] **Step 5: Serialize both components**
+- [x] **Step 5: Serialize both components**
 
 Register `SceneGuid` (hex string) and `EntityRef` (hex string) in `default_component_codecs()`. Derived/regenerated fields stay out where applicable.
 
-- [ ] **Step 6: Build, run the full suite, verify in the app**
+- [x] **Step 6: Build, run the full suite, verify in the app**
 
 Run: `cd build && cmake --build . -j"$(nproc)" && ./bin/lotus_tests`
 Then: `./bin/lotus`, confirm `scenes/main.json` round-trips with GUIDs present and no unresolved-reference warnings in the F2 console.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add -A && git commit -m "Add SceneGuid and EntityRef with atomic reference resolution"
@@ -297,7 +297,7 @@ git add -A && git commit -m "Add SceneGuid and EntityRef with atomic reference r
 - Consumes: `SceneGuid`, `EntityRef`, `resolve_refs()` from Task 1; the codec and atomic loader.
 - Produces: `Prefab`, `load_prefab(path)`, `Entity instantiate(const Prefab&, Scene&, Entity parent = NullEntity)`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```cpp
 TEST(PrefabTest, TwoInstancesAreIndependent)
@@ -333,25 +333,25 @@ TEST(PrefabTest, MissingAssetReportsWithoutCorruption)
 }
 ```
 
-- [ ] **Step 2: Run to confirm failure**
+- [x] **Step 2: Run to confirm failure**
 
 Run: `./bin/lotus_tests --gtest_filter='PrefabTest.*'`
 Expected: compile error (no prefab API).
 
-- [ ] **Step 3: Implement `Prefab` and `instantiate`**
+- [x] **Step 3: Implement `Prefab` and `instantiate`**
 
 `Prefab` holds the parsed fragment. `instantiate` clones entities and components into the target scene through the codec path, assigns fresh GUIDs, remaps internal `EntityRef`s, and calls `resolve_refs()`. Atomic: build the clone fully, then attach.
 
-- [ ] **Step 4: Editor entries**
+- [x] **Step 4: Editor entries**
 
 Add "Create prefab from selection" and an instantiate entry in the Hierarchy panel, matching the existing button style.
 
-- [ ] **Step 5: Build, run the full suite, verify in the app**
+- [x] **Step 5: Build, run the full suite, verify in the app**
 
 Run: `cd build && cmake --build . -j"$(nproc)" && ./bin/lotus_tests`
 Then: `./bin/lotus`, create a prefab, instantiate it twice, move one instance, confirm the other is unaffected and the F2 console is clean.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A && git commit -m "Add prefabs and instantiation over the scene codec"

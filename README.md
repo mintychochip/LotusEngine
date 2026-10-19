@@ -56,3 +56,52 @@ Regenerate shaders (requires `glslangValidator`):
 ## Docs
 
 Design specs live under `docs/superpowers/specs/`.
+
+## RPG Game
+
+A full 3D RPG built on the engine: real-time combat, NPCs with dialogue,
+inventory, quests, loot, and a demo scene.
+
+```bash
+cd build && ./bin/lotus_rpg
+```
+
+### Play Mode
+
+- **Play button** in the editor hierarchy panel (or press the button in the
+  top-left) to enter play mode.
+- **WASD** — move (camera-relative).
+- **E** — interact with NPCs, chests, and items.
+- **Space** — attack nearest enemy.
+- **I** — toggle inventory.
+- **Q** — toggle quest log.
+- **C** — toggle character stats.
+- **Quick slots** — click a consumable in the bar (e.g. Health Potion) to drink
+  it (30 HP heal).
+- **F1** — return to editor mode.
+
+### Demo Scene (`scenes/rpg_demo.json`)
+
+`scenes/rpg_demo.json` is generated on first run (not committed); fresh clones
+create it automatically.
+
+- **Player** — visible green cylinder avatar; starts with iron sword, potions,
+  and 100 gold.
+- **NPCs** — elder (quest giver), merchant, guard, villager.
+- **Enemies** — 3 goblins and 1 orc with AI chase/attack behavior.
+- **Quests** — "Goblin Threat" is completable: kill 3 goblins for XP, gold, and
+  the Goblin Slayer Blade.
+- **Loot** — chests with gold and potions, quest item (ancient amulet).
+
+### RPG Components
+
+All RPG components are serializable and editable in the editor:
+`Stats`, `Health`, `Mana`, `Inventory`, `Combat`, `NPC`, `Loot`,
+`Interactable`, `AI`, `Dialogue`, `Quest`.
+
+### Mesh Primitives
+
+New builtin meshes: `builtin:cylinder`, `builtin:cone`, `builtin:plane`,
+`builtin:pyramid`, `builtin:torus`, `builtin:terrain` (50 m extent, 64×64 grid,
+8 m peaks; collidable heightfield) (in addition to `builtin:cube` and
+`builtin:sphere`).

@@ -795,8 +795,10 @@ std::vector<GpuVertex> Scene::build_vertices(float aspect,
 
 void Scene::upload(GpuRenderer& gpu, float aspect)
 {
-	const std::vector<GpuVertex> vertices =
-	        build_vertices(aspect, &gpu.occlusion_pyramid());
+	const DepthPyramid* occlusion = occlusion_for_pass(
+	        gpu.occlusion_pyramid(), gpu.occlusion_ready(),
+	        gpu.occlusion_aspect(), aspect);
+	const std::vector<GpuVertex> vertices = build_vertices(aspect, occlusion);
 	vertex_count_ = static_cast<std::uint32_t>(vertices.size());
 	if (vertex_count_ != 0) {
 		gpu.upload_vertices(vertices.data(), frame_uvs_.data(), vertex_count_);

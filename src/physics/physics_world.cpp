@@ -13,6 +13,7 @@
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
+#include <Jolt/Physics/Collision/Shape/HeightFieldShape.h>
 #include <Jolt/Physics/Character/CharacterVirtual.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/RegisterTypes.h>
@@ -20,6 +21,7 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/matrix_decompose.hpp>
 
+#include <cmath>
 #include <memory>
 #include <unordered_map>
 
@@ -73,6 +75,7 @@ public:
 		return object_to_broad_phase_[layer];
 	}
 
+#if defined(JPH_EXTERNAL_PROFILE) || defined(JPH_PROFILE_ENABLED)
 	const char* GetBroadPhaseLayerName(
 	        JPH::BroadPhaseLayer layer) const override
 	{
@@ -85,6 +88,8 @@ public:
 			return "INVALID";
 		}
 	}
+#endif
+
 
 private:
 	JPH::BroadPhaseLayer object_to_broad_phase_[Layers::kNumLayers];
@@ -179,7 +184,38 @@ bool has_collider(const Registry& registry, Entity entity)
 {
 	return registry.all_of<BoxCollider>(entity) ||
 	       registry.all_of<SphereCollider>(entity) ||
-	       registry.all_of<MeshCollider>(entity);
+	       registry.all_of<MeshCollider>(entity) ||
+	       registry.all_of<HeightFieldCollider>(entity);
+}
+
+/// Validates that \p mesh is a uniform (columns x columns) grid in the XZ
+/// plane, so column/row indices map linearly onto sample coordinates. The Y
+/// values are the height samples themselves and are deliberately not required
+/// to follow any formula.
+bool is_regular_height_grid(const Mesh& mesh, std::size_t columns)
+{
+	if (columns < 2 || mesh.positions.size() != columns * columns) {
+		return false;
+	}
+	const glm::vec3& origin = mesh.positions[0];
+	const float step_x      = mesh.positions[1].x - origin.x;
+	const float step_z      = mesh.positions[columns].z - origin.z;
+	constexpr float kEpsilon = 1e-3f;
+	if (std::abs(step_x) < kEpsilon || std::abs(step_z) < kEpsilon) {
+		return false;
+	}
+	for (std::size_t row = 0; row < columns; ++row) {
+		for (std::size_t col = 0; col < columns; ++col) {
+			const glm::vec3& position = mesh.positions[row * columns + col];
+			const float expected_x    = origin.x + step_x * static_cast<float>(col);
+			const float expected_z    = origin.z + step_z * static_cast<float>(row);
+			if (std::abs(position.x - expected_x) > kEpsilon ||
+			    std::abs(position.z - expected_z) > kEpsilon) {
+				return false;
+			}
+		}
+	}
+	return true;
 }
 
 bool scene_has_rigid_physics(const Registry& registry)
@@ -249,13 +285,57 @@ JPH::RefConst<JPH::Shape> make_shape(const Registry& registry, Entity entity)
 		}
 		return result.Get();
 	}
+	if (const auto* heightfield = registry.try_get<HeightFieldCollider>(entity)) {
+		const Mesh* mesh = registry.try_get<Mesh>(entity);
+		const Transform* transform = registry.try_get<Transform>(entity);
+		if (mesh == nullptr || mesh->positions.empty() || transform == nullptr) {
+			return nullptr;
+		}
+		const std::size_t columns = static_cast<std::size_t>(
+		        std::sqrt(static_cast<float>(mesh->positions.size())));
+		if (!is_regular_height_grid(*mesh, columns)) {
+			return nullptr;
+		}
+		const glm::vec3 scaled_origin = mesh->positions[0] * transform->scale;
+		const glm::vec3 scaled_step_x =
+		        (mesh->positions[1] - mesh->positions[0]) * transform->scale;
+		const glm::vec3 scaled_step_z =
+		        (mesh->positions[columns] - mesh->positions[0]) *
+		        transform->scale;
+
+		JPH::Array<float> samples;
+		samples.resize(columns * columns);
+		for (std::size_t row = 0; row < columns; ++row) {
+			for (std::size_t col = 0; col < columns; ++col) {
+				const float y =
+				        mesh->positions[row * columns + col].y *
+				        transform->scale.y;
+				samples[row * columns + col] = glm::clamp(
+				        y, heightfield->min_height, heightfield->max_height);
+			}
+		}
+
+		JPH::HeightFieldShapeSettings settings;
+		settings.mOffset = JPH::Vec3{scaled_origin.x, 0.0f, scaled_origin.z};
+		settings.mScale  = JPH::Vec3{scaled_step_x.x, 1.0f, scaled_step_z.z};
+		settings.mSampleCount =
+		        static_cast<JPH::uint32>(columns);
+		settings.mMinHeightValue = heightfield->min_height;
+		settings.mMaxHeightValue = heightfield->max_height;
+		settings.mHeightSamples  = std::move(samples);
+		const JPH::Shape::ShapeResult result = settings.Create();
+		if (!result.IsValid()) {
+			return nullptr;
+		}
+		return result.Get();
+	}
 	return nullptr;
 }
 
 } // namespace
 
 struct PhysicsWorld::Impl {
-	enum class ColliderKind : std::uint8_t { None, Box, Sphere, Mesh };
+	enum class ColliderKind : std::uint8_t { None, Box, Sphere, Mesh, HeightField };
 
 	struct BodySyncKey {
 		PhysicsMotionType motion{PhysicsMotionType::Dynamic};
@@ -264,6 +344,8 @@ struct PhysicsWorld::Impl {
 		float sphere_radius{0.0f};
 		std::size_t mesh_vertices{0};
 		glm::vec3 mesh_scale{1.0f};
+		float heightfield_min{0.0f};
+		float heightfield_max{0.0f};
 
 		bool operator==(const BodySyncKey& other) const
 		{
@@ -271,7 +353,9 @@ struct PhysicsWorld::Impl {
 			       box_extents == other.box_extents &&
 			       sphere_radius == other.sphere_radius &&
 			       mesh_vertices == other.mesh_vertices &&
-			       mesh_scale == other.mesh_scale;
+			       mesh_scale == other.mesh_scale &&
+			       heightfield_min == other.heightfield_min &&
+			       heightfield_max == other.heightfield_max;
 		}
 	};
 
@@ -351,6 +435,19 @@ PhysicsWorld::Impl::BodySyncKey PhysicsWorld::Impl::body_sync_key(
 		}
 		if (const Transform* transform = registry.try_get<Transform>(entity)) {
 			key.mesh_scale = transform->scale;
+		}
+	} else if (registry.all_of<HeightFieldCollider>(entity)) {
+		key.kind = ColliderKind::HeightField;
+		if (const Mesh* mesh = registry.try_get<Mesh>(entity)) {
+			key.mesh_vertices = mesh->positions.size();
+		}
+		if (const Transform* transform = registry.try_get<Transform>(entity)) {
+			key.mesh_scale = transform->scale;
+		}
+		if (const auto* heightfield =
+		            registry.try_get<HeightFieldCollider>(entity)) {
+			key.heightfield_min = heightfield->min_height;
+			key.heightfield_max = heightfield->max_height;
 		}
 	}
 	return key;
@@ -463,6 +560,25 @@ PhysicsWorld::~PhysicsWorld()
 {
 	delete impl_;
 	impl_ = nullptr;
+}
+
+void PhysicsWorld::clear()
+{
+	if (!impl_) {
+		return;
+	}
+	JPH::BodyInterface& body_interface = impl_->physics.GetBodyInterface();
+	for (const auto& [entity, body] : impl_->bodies) {
+		if (!body.IsInvalid()) {
+			body_interface.RemoveBody(body);
+			body_interface.DestroyBody(body);
+		}
+		(void)entity;
+	}
+	impl_->bodies.clear();
+	impl_->body_keys.clear();
+	impl_->characters.clear();
+	impl_->accumulator = 0.0f;
 }
 
 void PhysicsWorld::step(Scene& scene, float dt)

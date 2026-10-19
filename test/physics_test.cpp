@@ -36,6 +36,42 @@ TEST(PhysicsTest, DynamicSphereFallsOntoStaticFloor)
 	EXPECT_GT(end_y, 0.0f);
 }
 
+TEST(PhysicsTest, ClearDropsDynamicBodySoReloadUsesTheNewTransform)
+{
+	auto make_ball = [](Scene& scene, float y) {
+		const Entity floor = scene.create("floor");
+		scene.registry().emplace<RigidBody>(
+		        floor, RigidBody{PhysicsMotionType::Static});
+		scene.registry().emplace<BoxCollider>(
+		        floor, BoxCollider{{20.0f, 0.5f, 20.0f}});
+		scene.registry().get<Transform>(floor).position = {0.0f, -0.5f, 0.0f};
+
+		const Entity ball = scene.create("ball");
+		scene.registry().emplace<RigidBody>(
+		        ball, RigidBody{PhysicsMotionType::Dynamic, 1.0f});
+		scene.registry().emplace<SphereCollider>(ball, SphereCollider{0.5f});
+		scene.registry().get<Transform>(ball).position = {0.0f, y, 0.0f};
+		return ball;
+	};
+
+	Scene first{"first"};
+	PhysicsWorld world;
+	make_ball(first, 3.0f);
+	first.update(0.0f);
+	for (int i = 0; i < 90; ++i) {
+		world.step(first, 1.0f / 60.0f);
+	}
+
+	Scene reloaded{"reloaded"};
+	const Entity ball = make_ball(reloaded, 10.0f);
+	reloaded.update(0.0f);
+	world.clear();
+	world.step(reloaded, 1.0f / 60.0f);
+
+	const float y = reloaded.registry().get<Transform>(ball).position.y;
+	EXPECT_GT(y, 9.0f);
+}
+
 TEST(PhysicsTest, RaycastHitsFloor)
 {
 	Scene scene{"ray"};

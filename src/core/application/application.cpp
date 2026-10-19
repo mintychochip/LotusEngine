@@ -5,6 +5,7 @@
 #include "lotus/scene/components.hpp"
 #include "lotus/scene/game_save.hpp"
 #include "lotus/scene/player_controller.hpp"
+#include "lotus/scene/scene_pass.hpp"
 #include "lotus/scene/prefab.hpp"
 #include "lotus/scene/serialization.hpp"
 #include "lotus/script/script.hpp"
@@ -527,9 +528,9 @@ bool Application::load_scene_by_name(const std::string& name, std::string* error
 	Scene& scene = scenes_.create(name);
 	scene = std::move(scratch);
 	scene.resolve_refs();
-	scene.set_assets(&assets_, assets_dir_);
 	scenes_.activate(name);
 	adopt_scene_path(path);
+	bind_active_scene();
 	return true;
 }
 
@@ -540,6 +541,7 @@ bool Application::switch_scene(const std::string& name, std::string* error)
 		// changes in the scene being left stay in memory.
 		scenes_.activate(name);
 		adopt_scene_path(scene_file_for(name));
+		bind_active_scene();
 		return true;
 	}
 	return load_scene_by_name(name, error);
@@ -648,6 +650,7 @@ bool Application::reload_scene_now(std::string* error)
 	scene_status_ = "reloaded " + scene_path_;
 	// The scene was replaced wholesale; undo history no longer applies.
 	editor_.reset_history();
+	bind_active_scene();
 	scripts_.sync(*scene);
 	return true;
 }
@@ -663,9 +666,9 @@ void Application::poll_async_scene_load()
 		if (async_scene_load_.take(loaded)) {
 			Scene& scene = scenes_.create(pending_async_scene_);
 			scene = std::move(loaded);
-			scene.set_assets(&assets_, assets_dir_);
 			scenes_.activate(pending_async_scene_);
 			adopt_scene_path(scene_file_for(pending_async_scene_));
+			bind_active_scene();
 			scripts_.sync(scene);
 			console_.info("async load ready: " + pending_async_scene_);
 		}
@@ -673,6 +676,7 @@ void Application::poll_async_scene_load()
 	} else if (state == AsyncSceneLoad::State::Failed) {
 		console_.warn("async load failed: " + async_scene_load_.error());
 		pending_async_scene_.clear();
+		async_scene_load_.dismiss_failure();
 	}
 }
 
@@ -693,6 +697,42 @@ void Application::poll_hot_reload()
 			              std::to_string(count) + " entities)");
 		}
 	}
+}
+
+void Application::bind_active_scene()
+{
+	Scene* scene = scenes_.active();
+	if (scene == nullptr) {
+		return;
+	}
+	scene->set_assets(&assets_, assets_dir_);
+	physics_.clear();
+	residency_.clear_resident();
+	on_scene_committed(*scene);
+}
+
+void Application::tick_simulation(float dt, bool game_input_enabled)
+{
+	Scene* scene = scenes_.active();
+	if (scene == nullptr) {
+		return;
+	}
+	apply_character_movement_input(*scene, physics_, game_input_enabled);
+	animation_system_update(*scene, animations_, &assets_, dt);
+	scene->update(dt);
+	physics_.step(*scene, dt);
+	scripts_.update(*scene, dt);
+	update_world_transforms(*scene);
+	update_follow_camera(*scene);
+	scripts_.poll(*scene);
+
+	glm::vec3 viewer{0.0f};
+	if (const Camera3D* camera = scene->active_camera3d()) {
+		viewer = camera->position;
+	} else if (const Camera2D* camera = scene->active_camera()) {
+		viewer = glm::vec3{camera->position, 0.0f};
+	}
+	residency_.update(*scene, viewer);
 }
 
 void Application::run(int width, int height, const std::string& title)
@@ -875,24 +915,7 @@ void Application::run(int width, int height, const std::string& title)
 			on_update(dt);
 			poll_hot_reload();
 			poll_async_scene_load();
-			if (Scene* scene = scenes_.active()) {
-				apply_character_movement_input(*scene, physics_,
-				                               game_input_enabled);
-				animation_system_update(*scene, animations_, &assets_, dt);
-				scene->update(dt);
-				physics_.step(*scene, dt);
-				update_follow_camera(*scene);
-				scripts_.update(*scene, dt);
-				scripts_.poll(*scene);
-
-				glm::vec3 viewer{0.0f};
-				if (const Camera3D* camera = scene->active_camera3d()) {
-					viewer = camera->position;
-				} else if (const Camera2D* camera = scene->active_camera()) {
-					viewer = glm::vec3{camera->position, 0.0f};
-				}
-				residency_.update(*scene, viewer);
-			}
+			tick_simulation(dt, game_input_enabled);
 
 			int pixel_w = width, pixel_h = height;
 			window.pixel_size(pixel_w, pixel_h);
@@ -913,31 +936,40 @@ void Application::run(int width, int height, const std::string& title)
 			gpu.begin_frame(window.handle(), 0.05f, 0.05f, 0.08f);
 			if (gpu.has_frame()) {
 				if (Scene* scene = scenes_.active()) {
-					// Viewport pass: render scene to offscreen texture for the editor
 					const auto vs = editor_.viewport_size();
-					if (vs.width > 0 && vs.height > 0 &&
-					    (vs.width != gpu.viewport_width() ||
-					     vs.height != gpu.viewport_height())) {
-						if (gpu.resize_viewport(vs.width, vs.height)) {
-							console_.info("viewport: " + std::to_string(vs.width) +
-							              "x" + std::to_string(vs.height));
+					const SceneDrawTarget target = select_scene_draw_target(
+					        editor_.visible(), static_cast<int>(vs.width),
+					        static_cast<int>(vs.height));
+					if (target == SceneDrawTarget::Viewport) {
+						if (vs.width != gpu.viewport_width() ||
+						    vs.height != gpu.viewport_height()) {
+							if (gpu.resize_viewport(vs.width, vs.height)) {
+								console_.info(
+								        "viewport: " + std::to_string(vs.width) +
+								        "x" + std::to_string(vs.height));
+							}
 						}
-					}
-					if (gpu.viewport_ready()) {
-						const float viewport_aspect =
-						        static_cast<float>(vs.width) /
-						        static_cast<float>(vs.height);
-						scene->upload(gpu, viewport_aspect);
-						if (gpu.begin_viewport_pass()) {
-							scene->draw(gpu);
-							gpu.end_viewport_pass();
+						if (gpu.viewport_ready()) {
+							const float viewport_aspect =
+							        static_cast<float>(vs.width) /
+							        static_cast<float>(vs.height);
+							scene->upload(gpu, viewport_aspect);
+							if (gpu.begin_viewport_pass()) {
+								scene->draw(gpu);
+								gpu.end_viewport_pass();
+							}
 						}
+						// The editor covers the window. Clear it without a
+						// second mesh upload or a pyramid download.
+						gpu.suppress_occlusion_record();
+						gpu.begin_scene_pass();
+						gpu.end_scene_pass();
+					} else {
+						scene->upload(gpu, aspect);
+						gpu.begin_scene_pass();
+						scene->draw(gpu);
+						gpu.end_scene_pass();
 					}
-
-					scene->upload(gpu, aspect);
-					gpu.begin_scene_pass();
-					scene->draw(gpu);
-					gpu.end_scene_pass();
 				} else {
 					gpu.begin_scene_pass();
 					gpu.end_scene_pass();
@@ -945,6 +977,7 @@ void Application::run(int width, int height, const std::string& title)
 
 				editor_.begin_frame();
 				editor_.draw(scenes_, dt);
+				on_ui(dt);
 				editor_.render(gpu);
 
 				gpu.end_frame();

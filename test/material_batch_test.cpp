@@ -10,8 +10,8 @@ TEST(MaterialBatchTest, DistinctAlbedoIdsProduceSeparateDrawCalls)
 	Scene scene{"test"};
 	const Entity a = scene.create("a");
 	const Entity b = scene.create("b");
-	scene.registry().emplace<MeshSource>(a, MeshSource{"builtin:cube"});
-	scene.registry().emplace<MeshSource>(b, MeshSource{"builtin:cube"});
+	scene.registry().emplace<MeshSource>(a, MeshSource{"builtin:cube", ""});
+	scene.registry().emplace<MeshSource>(b, MeshSource{"builtin:cube", ""});
 	scene.registry().emplace<Material>(a, Material{{1.0f, 1.0f, 1.0f}, "tex_a"});
 	scene.registry().emplace<Material>(b, Material{{1.0f, 1.0f, 1.0f}, "tex_b"});
 
@@ -26,8 +26,8 @@ TEST(MaterialBatchTest, SameAlbedoIdMergesIntoOneDrawCall)
 	Scene scene{"test"};
 	const Entity a = scene.create("a");
 	const Entity b = scene.create("b");
-	scene.registry().emplace<MeshSource>(a, MeshSource{"builtin:cube"});
-	scene.registry().emplace<MeshSource>(b, MeshSource{"builtin:sphere"});
+	scene.registry().emplace<MeshSource>(a, MeshSource{"builtin:cube", ""});
+	scene.registry().emplace<MeshSource>(b, MeshSource{"builtin:sphere", ""});
 	scene.registry().emplace<Material>(a, Material{{1.0f, 1.0f, 1.0f}, "shared"});
 	scene.registry().emplace<Material>(b, Material{{1.0f, 1.0f, 1.0f}, "shared"});
 

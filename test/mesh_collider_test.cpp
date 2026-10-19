@@ -13,7 +13,7 @@ TEST(MeshColliderTest, StaticMeshGetsPhysicsBody)
 	PhysicsWorld world;
 
 	const Entity prop = scene.create("crate");
-	scene.registry().emplace<MeshSource>(prop, MeshSource{"builtin:cube"});
+	scene.registry().emplace<MeshSource>(prop, MeshSource{"builtin:cube", ""});
 	scene.registry().emplace<RigidBody>(
 	        prop, RigidBody{PhysicsMotionType::Static});
 	scene.registry().emplace<MeshCollider>(prop);

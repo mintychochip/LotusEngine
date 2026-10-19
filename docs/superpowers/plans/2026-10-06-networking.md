@@ -68,7 +68,7 @@
 **Interfaces:**
 - Produces: `ByteWriter` (u8/u16/u32/u64/i16/i32/varint/f32/bytes/string/position/rotation/data/size/clear/patch_u16), `ByteReader` (u8/u16/u32/u64/i16/i32/varint/f32/bytes/string/position/rotation/ok/remaining)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```cpp
 // test/net_byte_buffer_test.cpp
@@ -186,12 +186,12 @@ TEST(ByteBufferTest, PatchU16) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd build && cmake --build . -j"$(nproc)" --target lotus_tests 2>&1 | tail -5`
 Expected: compile error — `lotus/net/byte_buffer.hpp` not found.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```cpp
 // include/lotus/net/byte_buffer.hpp
@@ -487,12 +487,12 @@ bool ByteReader::ok() const { return ok_; }
 std::size_t ByteReader::remaining() const { return ok_ ? data_.size() - pos_ : 0; }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd build && cmake --build . -j"$(nproc)" --target lotus_tests 2>&1 | tail -5 && ./bin/lotus_tests --gtest_filter='ByteBufferTest.*'`
 Expected: all 10 tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add include/lotus/net/byte_buffer.hpp src/net/byte_buffer.cpp test/net_byte_buffer_test.cpp
@@ -509,7 +509,7 @@ git commit -m "feat(net): add ByteWriter and ByteReader wire primitives"
 **Interfaces:**
 - Consumes: `ByteWriter::position/rotation`, `ByteReader::position/rotation` (Task 1)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```cpp
 // test/net_quantisation_test.cpp
@@ -579,12 +579,12 @@ TEST(QuantisationTest, ZeroQuaternionNoNaN) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd build && cmake --build . -j"$(nproc)" --target lotus_tests 2>&1 | tail -5 && ./bin/lotus_tests --gtest_filter='QuantisationTest.*'`
 Expected: `ZeroQuaternionNoNaN` fails (NaN from sqrt of negative).
 
-- [ ] **Step 3: Fix the implementation**
+- [x] **Step 3: Fix the implementation**
 
 In `src/net/byte_buffer.cpp`, `ByteReader::rotation`, change the largest component reconstruction to handle the zero quaternion:
 
@@ -597,12 +597,12 @@ In `src/net/byte_buffer.cpp`, `ByteReader::rotation`, change the largest compone
     comps[largest] = largest_val;
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd build && cmake --build . -j"$(nproc)" --target lotus_tests 2>&1 | tail -5 && ./bin/lotus_tests --gtest_filter='QuantisationTest.*'`
 Expected: all 5 tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/net/byte_buffer.cpp test/net_quantisation_test.cpp
@@ -623,7 +623,7 @@ git commit -m "fix(net): handle zero quaternion in rotation quantisation"
 **Interfaces:**
 - Produces: `Endpoint`, `Datagram`, `Transport` interface, `LoopbackTransport`, `LoopbackPolicy`, `LoopbackPair`, `make_loopback_pair()`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```cpp
 // test/net_loopback_test.cpp
@@ -697,12 +697,12 @@ TEST(LoopbackTest, Name) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd build && cmake --build . -j"$(nproc)" --target lotus_tests 2>&1 | tail -5`
 Expected: compile error — `lotus/net/transport.hpp` not found.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```cpp
 // include/lotus/net/transport.hpp
@@ -844,12 +844,12 @@ void LoopbackTransport::deliver() {
 
 Note: The `deliver()` implementation needs to apply the policy and move datagrams to the peer. The exact mechanism is internal — the test only checks that after `deliver()`, `poll()` on the peer returns the expected datagrams.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd build && cmake --build . -j"$(nproc)" --target lotus_tests 2>&1 | tail -5 && ./bin/lotus_tests --gtest_filter='LoopbackTest.*'`
 Expected: all 6 tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add include/lotus/net/transport.hpp src/net/transport.cpp include/lotus/net/loopback_transport.hpp src/net/loopback_transport.cpp test/net_loopback_test.cpp
@@ -869,7 +869,7 @@ git commit -m "feat(net): add Transport interface and LoopbackTransport"
 - Consumes: `Transport` interface (Task 3)
 - Produces: `UdpTransport` (send/poll/local_endpoint/name)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```cpp
 // test/net_udp_test.cpp
@@ -914,12 +914,12 @@ TEST(UdpTest, Name) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd build && cmake --build . -j"$(nproc)" --target lotus_tests 2>&1 | tail -5`
 Expected: compile error — `lotus/net/udp_transport.hpp` not found.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```cpp
 // include/lotus/net/udp_transport.hpp
@@ -1047,12 +1047,12 @@ std::optional<Endpoint> UdpTransport::local_endpoint() const {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd build && cmake --build . -j"$(nproc)" --target lotus_tests 2>&1 | tail -5 && ./bin/lotus_tests --gtest_filter='UdpTest.*'`
 Expected: all 3 tests pass (or skipped if no sockets).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add include/lotus/net/udp_transport.hpp src/net/udp_transport.cpp test/net_udp_test.cpp
@@ -1074,7 +1074,7 @@ git commit -m "feat(net): add UdpTransport with POSIX sockets"
 - Consumes: `Transport` interface (Task 3), `ByteWriter/ByteReader` (Task 1)
 - Produces: `Channel` enum, `SessionState` enum, `Session` class, `kProtocolVersion`, `kMtu`, `kMaxFragment`, `kResendInterval`, `kMaxResends`, `kConnectionTimeout`, `kFragmentTimeout`, `kMaxClients`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```cpp
 // test/net_session_test.cpp
@@ -1216,12 +1216,12 @@ TEST(SessionTest, ConnectionTimeout) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd build && cmake --build . -j"$(nproc)" --target lotus_tests 2>&1 | tail -5`
 Expected: compile error — `lotus/net/session.hpp` not found.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 This is the largest task. The Session class implements:
 - Handshake state machine (ConnectRequest → ConnectAccept → ConnectComplete)
@@ -1395,12 +1395,12 @@ The `src/net/session.cpp` implementation is ~300 lines. Key methods:
 - `handle_fragment()`: reassembles, delivers complete messages
 - `flush()`: builds and sends one datagram with all outbound messages + acks
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd build && cmake --build . -j"$(nproc)" --target lotus_tests 2>&1 | tail -5 && ./bin/lotus_tests --gtest_filter='SessionTest.*'`
 Expected: all 5 tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add include/lotus/net/protocol.hpp src/net/protocol.cpp include/lotus/net/session.hpp src/net/session.cpp test/net_session_test.cpp

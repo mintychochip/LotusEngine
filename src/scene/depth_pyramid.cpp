@@ -81,7 +81,6 @@ void DepthPyramid::build(const float* depth, uint32_t width, uint32_t height)
 
 	for (uint32_t level = 1; level < count; ++level) {
 		const uint32_t src_w = level_width(level - 1);
-		const uint32_t src_h = level_height(level - 1);
 		const uint32_t dst_w = level_width(level);
 		const uint32_t dst_h = level_height(level);
 

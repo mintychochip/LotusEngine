@@ -109,7 +109,7 @@ public:
 		bits_[index / 64] |= uint64_t{1} << (index % 64);
 		++live_;
 #ifndef NDEBUG
-		std::memset(slot, 0xCD, kStride);
+		std::memset(static_cast<void*>(slot), 0xCD, kStride);
 #endif
 		return slot;
 	}
@@ -184,10 +184,10 @@ private:
 		bits_[index / 64] &= ~(uint64_t{1} << (index % 64));
 		--live_;
 #ifndef NDEBUG
-		std::memset(ptr, 0xDD, kStride);
+		std::memset(static_cast<void*>(ptr), 0xDD, kStride);
 #endif
 		FreeNode node{head_};
-		std::memcpy(ptr, &node, sizeof(node));
+		std::memcpy(static_cast<void*>(ptr), &node, sizeof(node));
 		head_ = reinterpret_cast<FreeNode*>(ptr);
 	}
 

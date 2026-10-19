@@ -80,7 +80,7 @@ TEST(MeshTest, SceneResolvesMeshSourceIntoGeometry)
 {
 	Scene scene{"s"};
 	const Entity e = scene.create("cube");
-	scene.registry().emplace<MeshSource>(e, MeshSource{"builtin:cube"});
+	scene.registry().emplace<MeshSource>(e, MeshSource{"builtin:cube", ""});
 	EXPECT_FALSE(scene.registry().all_of<Mesh>(e));
 
 	scene.update(0.0f);
@@ -96,7 +96,7 @@ TEST(MeshTest, SceneReportsUnknownMeshSource)
 {
 	Scene scene{"s"};
 	const Entity e = scene.create("bad");
-	scene.registry().emplace<MeshSource>(e, MeshSource{"builtin:missing"});
+	scene.registry().emplace<MeshSource>(e, MeshSource{"builtin:missing", ""});
 
 	scene.update(0.0f);
 
@@ -108,7 +108,7 @@ TEST(MeshTest, SceneReResolvesWhenSourceChanges)
 {
 	Scene scene{"s"};
 	const Entity e = scene.create("thing");
-	scene.registry().emplace<MeshSource>(e, MeshSource{"builtin:cube"});
+	scene.registry().emplace<MeshSource>(e, MeshSource{"builtin:cube", ""});
 	scene.update(0.0f);
 	const std::size_t cube_indices = scene.registry().get<Mesh>(e).indices.size();
 

@@ -143,7 +143,7 @@ TEST(SceneAssetTest, GlbSyncAppliesMaterialAlbedoKey)
 	Scene scene{"test"};
 	scene.set_assets(&registry, assets.string());
 	const Entity entity = scene.create("prop");
-	scene.registry().emplace<MeshSource>(entity, MeshSource{glb_path.string()});
+	scene.registry().emplace<MeshSource>(entity, MeshSource{glb_path.string(), ""});
 
 	scene.update(0.0f);
 

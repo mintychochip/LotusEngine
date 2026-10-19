@@ -15,6 +15,19 @@
 
 using namespace lotus;
 
+TEST(OcclusionTest, PassRejectsStaleOrMismatchedPyramid)
+{
+	DepthPyramid pyramid;
+	const std::vector<float> image(16 * 16, 1.0f);
+	pyramid.build(image.data(), 16, 16);
+	ASSERT_FALSE(pyramid.empty());
+
+	EXPECT_EQ(occlusion_for_pass(pyramid, false, 1.5f, 1.5f), nullptr);
+	EXPECT_EQ(occlusion_for_pass(pyramid, true, 16.0f / 9.0f, 4.0f / 3.0f),
+	          nullptr);
+	EXPECT_EQ(occlusion_for_pass(pyramid, true, 1.5f, 1.5f), &pyramid);
+}
+
 namespace {
 
 /// Fills a w*h image with one value.
@@ -964,7 +977,7 @@ TEST(SceneOcclusionTest, OccludedEntityLeavesTheVertexBuffer)
 	                                                    60.0f, 0.1f, 100.0f});
 
 	const Entity cube = scene.create("cube");
-	scene.registry().emplace<MeshSource>(cube, MeshSource{"builtin:cube"});
+	scene.registry().emplace<MeshSource>(cube, MeshSource{"builtin:cube", ""});
 	scene.update(0.0f);
 
 	// A wall covering the whole screen at linear depth 5.
@@ -988,7 +1001,7 @@ TEST(SceneOcclusionTest, VisibleEntitySurvivesTheSamePyramid)
 	                                                    60.0f, 0.1f, 100.0f});
 
 	const Entity cube = scene.create("cube");
-	scene.registry().emplace<MeshSource>(cube, MeshSource{"builtin:cube"});
+	scene.registry().emplace<MeshSource>(cube, MeshSource{"builtin:cube", ""});
 	// In front of the depth-5 wall.
 	scene.registry().get<Transform>(cube).position = {0.0f, 0.0f, 8.0f};
 	scene.update(0.0f);
@@ -1020,7 +1033,7 @@ TEST(SceneOcclusionTest, NullPyramidMatchesTodayExactly)
 	                                                    {0.0f, 1.0f, 0.0f},
 	                                                    60.0f, 0.1f, 100.0f});
 	const Entity cube = scene.create("cube");
-	scene.registry().emplace<MeshSource>(cube, MeshSource{"builtin:cube"});
+	scene.registry().emplace<MeshSource>(cube, MeshSource{"builtin:cube", ""});
 	scene.update(0.0f);
 
 	// Control: a wall at depth 5 does cull this cube, so this is a scene where
@@ -1060,7 +1073,7 @@ TEST(SceneOcclusionTest, EmptyPyramidCullsNothing)
 	scene.registry().emplace<Camera3D>(camera);
 
 	const Entity cube = scene.create("cube");
-	scene.registry().emplace<MeshSource>(cube, MeshSource{"builtin:cube"});
+	scene.registry().emplace<MeshSource>(cube, MeshSource{"builtin:cube", ""});
 	scene.update(0.0f);
 
 	const DepthPyramid empty;

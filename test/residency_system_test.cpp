@@ -36,6 +36,11 @@ TEST(ResidencySystemTest, LoadsAndUnloadsByOriginName)
 	EXPECT_EQ(scene.registry().view<Name>().size(), 1u);
 	EXPECT_EQ(system.resident().size(), 1u);
 
+	system.clear_resident();
+	EXPECT_TRUE(system.resident().empty());
+	system.update(scene, glm::vec3{0.0f, 0.0f, 0.0f});
+	EXPECT_EQ(system.resident().size(), 1u);
+
 	system.update(scene, glm::vec3{200.0f, 0.0f, 0.0f});
 	EXPECT_EQ(scene.registry().view<Name>().size(), 0u);
 	EXPECT_TRUE(system.resident().empty());

@@ -8,6 +8,10 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+function(lotus_apply_warning_flags target)
+    target_compile_options(${target} PRIVATE -Wall -Wextra)
+endfunction()
+
 # Add EnTT (entity-component-system, header-only, submodule)
 add_subdirectory(dependencies/entt)
 
@@ -78,6 +82,7 @@ target_link_libraries(lotus_engine
     imgui
     Jolt
 )
+lotus_apply_warning_flags(lotus_engine)
 
 # === Main Executable ===
 
@@ -86,8 +91,22 @@ add_executable(lotus app/main.cpp)
 target_link_libraries(lotus
     lotus_engine
 )
+lotus_apply_warning_flags(lotus)
 
 set_target_properties(lotus PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+)
+
+# === RPG Executable ===
+
+add_executable(lotus_rpg app/rpg_main.cpp)
+
+target_link_libraries(lotus_rpg
+    lotus_engine
+)
+lotus_apply_warning_flags(lotus_rpg)
+
+set_target_properties(lotus_rpg PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
 
@@ -127,6 +146,8 @@ if (LOTUS_TEST_SOURCES)
     set_target_properties(lotus_tests PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
     )
+
+    lotus_apply_warning_flags(lotus_tests)
 
     add_test(NAME LotusTests COMMAND lotus_tests)
 

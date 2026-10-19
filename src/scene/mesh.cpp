@@ -108,6 +108,380 @@ Mesh sphere(float radius, int segments, int rings)
 	return result;
 }
 
+Mesh cylinder(float radius, float height, int segments)
+{
+	if (segments < 3) {
+		segments = 3;
+	}
+	const float half_h = height * 0.5f;
+
+	Mesh result;
+	result.positions.reserve(static_cast<std::size_t>((segments + 1) * 2));
+	result.normals.reserve(result.positions.capacity());
+	result.uvs.reserve(result.positions.capacity());
+	result.indices.reserve(static_cast<std::size_t>(segments) * 6);
+
+	// Side vertices: top ring and bottom ring
+	for (int i = 0; i <= segments; ++i) {
+		const float u     = static_cast<float>(i) / static_cast<float>(segments);
+		const float theta = u * 2.0f * kPi;
+		const float c     = std::cos(theta);
+		const float s     = std::sin(theta);
+		// Top ring
+		result.positions.push_back({radius * c, half_h, radius * s});
+		result.normals.push_back({c, 0.0f, s});
+		result.uvs.push_back({u, 0.0f});
+		// Bottom ring
+		result.positions.push_back({radius * c, -half_h, radius * s});
+		result.normals.push_back({c, 0.0f, s});
+		result.uvs.push_back({u, 1.0f});
+	}
+	// Side indices
+	for (int i = 0; i < segments; ++i) {
+		const std::uint32_t a = static_cast<std::uint32_t>(i * 2);
+		const std::uint32_t b = a + 2;
+		result.indices.push_back(a);
+		result.indices.push_back(b);
+		result.indices.push_back(a + 1);
+		result.indices.push_back(a + 1);
+		result.indices.push_back(b);
+		result.indices.push_back(b + 1);
+	}
+	// Top cap
+	const std::uint32_t top_center = static_cast<std::uint32_t>(result.positions.size());
+	result.positions.push_back({0.0f, half_h, 0.0f});
+	result.normals.push_back({0.0f, 1.0f, 0.0f});
+	result.uvs.push_back({0.5f, 0.5f});
+	for (int i = 0; i <= segments; ++i) {
+		const float theta = (static_cast<float>(i) / static_cast<float>(segments)) * 2.0f * kPi;
+		result.positions.push_back({radius * std::cos(theta), half_h, radius * std::sin(theta)});
+		result.normals.push_back({0.0f, 1.0f, 0.0f});
+		result.uvs.push_back({0.5f + 0.5f * std::cos(theta), 0.5f + 0.5f * std::sin(theta)});
+	}
+	for (int i = 0; i < segments; ++i) {
+		result.indices.push_back(top_center);
+		result.indices.push_back(top_center + 1 + static_cast<std::uint32_t>(i));
+		result.indices.push_back(top_center + 2 + static_cast<std::uint32_t>(i));
+	}
+	// Bottom cap
+	const std::uint32_t bot_center = static_cast<std::uint32_t>(result.positions.size());
+	result.positions.push_back({0.0f, -half_h, 0.0f});
+	result.normals.push_back({0.0f, -1.0f, 0.0f});
+	result.uvs.push_back({0.5f, 0.5f});
+	for (int i = 0; i <= segments; ++i) {
+		const float theta = (static_cast<float>(i) / static_cast<float>(segments)) * 2.0f * kPi;
+		result.positions.push_back({radius * std::cos(theta), -half_h, radius * std::sin(theta)});
+		result.normals.push_back({0.0f, -1.0f, 0.0f});
+	result.uvs.push_back({0.5f + 0.5f * std::cos(theta), 0.5f + 0.5f * std::sin(theta)});
+	}
+	for (int i = 0; i < segments; ++i) {
+		result.indices.push_back(bot_center);
+		result.indices.push_back(bot_center + 2 + static_cast<std::uint32_t>(i));
+		result.indices.push_back(bot_center + 1 + static_cast<std::uint32_t>(i));
+	}
+	return result;
+}
+
+Mesh cone(float radius, float height, int segments)
+{
+	if (segments < 3) {
+		segments = 3;
+	}
+	const float half_h = height * 0.5f;
+
+	Mesh result;
+	result.positions.reserve(static_cast<std::size_t>(segments + 2));
+	result.normals.reserve(result.positions.capacity());
+	result.uvs.reserve(result.positions.capacity());
+	result.indices.reserve(static_cast<std::size_t>(segments) * 6);
+
+	// Apex
+	result.positions.push_back({0.0f, half_h, 0.0f});
+	result.normals.push_back({0.0f, 1.0f, 0.0f});
+	result.uvs.push_back({0.5f, 0.0f});
+	// Base ring
+	for (int i = 0; i <= segments; ++i) {
+		const float u     = static_cast<float>(i) / static_cast<float>(segments);
+		const float theta = u * 2.0f * kPi;
+		const float c     = std::cos(theta);
+		const float s     = std::sin(theta);
+		result.positions.push_back({radius * c, -half_h, radius * s});
+		// Normal for cone side: tilted
+		const float slope = radius / height;
+		const float inv   = 1.0f / std::sqrt(1.0f + slope * slope);
+		result.normals.push_back({c * inv, slope * inv, s * inv});
+		result.uvs.push_back({u, 1.0f});
+	}
+	// Side indices
+	for (int i = 0; i < segments; ++i) {
+		result.indices.push_back(0);
+		result.indices.push_back(1 + static_cast<std::uint32_t>(i));
+		result.indices.push_back(2 + static_cast<std::uint32_t>(i));
+	}
+	// Base cap
+	const std::uint32_t bot_center = static_cast<std::uint32_t>(result.positions.size());
+	result.positions.push_back({0.0f, -half_h, 0.0f});
+	result.normals.push_back({0.0f, -1.0f, 0.0f});
+	result.uvs.push_back({0.5f, 0.5f});
+	for (int i = 0; i <= segments; ++i) {
+		const float theta = (static_cast<float>(i) / static_cast<float>(segments)) * 2.0f * kPi;
+		result.positions.push_back({radius * std::cos(theta), -half_h, radius * std::sin(theta)});
+		result.normals.push_back({0.0f, -1.0f, 0.0f});
+		result.uvs.push_back({0.5f + 0.5f * std::cos(theta), 0.5f + 0.5f * std::sin(theta)});
+	}
+	for (int i = 0; i < segments; ++i) {
+		result.indices.push_back(bot_center);
+		result.indices.push_back(bot_center + 2 + static_cast<std::uint32_t>(i));
+		result.indices.push_back(bot_center + 1 + static_cast<std::uint32_t>(i));
+	}
+	return result;
+}
+
+Mesh plane(float size)
+{
+	const float h = size * 0.5f;
+	Mesh result;
+	result.positions = {
+	        {-h, 0.0f, -h}, {h, 0.0f, -h}, {h, 0.0f, h}, {-h, 0.0f, h}};
+	result.normals = {
+	        {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f, 0.0f},
+	        {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f, 0.0f}};
+	result.uvs = {{0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 1.0f}};
+	result.indices = {0, 1, 2, 0, 2, 3};
+	return result;
+}
+
+Mesh pyramid(float base_size, float height)
+{
+	const float hb = base_size * 0.5f;
+	const float hh = height * 0.5f;
+	Mesh result;
+	// 4 base corners + 1 apex
+	result.positions = {
+	        {-hb, -hh, -hb}, {hb, -hh, -hb}, {hb, -hh, hb}, {-hb, -hh, hb},
+	        {0.0f, hh, 0.0f}};
+	// Base normal
+	result.normals = {
+	        {0.0f, -1.0f, 0.0f}, {0.0f, -1.0f, 0.0f},
+	        {0.0f, -1.0f, 0.0f}, {0.0f, -1.0f, 0.0f},
+	        {0.0f, 1.0f, 0.0f}};
+	result.uvs = {{0, 0}, {1, 0}, {1, 1}, {0, 1}, {0.5f, 0.5f}};
+	// Base (two triangles, facing down)
+	result.indices = {0, 2, 1, 0, 3, 2};
+	// Sides
+	result.indices.insert(result.indices.end(), {0, 1, 4}); // front
+	result.indices.insert(result.indices.end(), {1, 2, 4}); // right
+	result.indices.insert(result.indices.end(), {2, 3, 4}); // back
+	result.indices.insert(result.indices.end(), {3, 0, 4}); // left
+	return result;
+}
+
+Mesh torus(float major_radius, float minor_radius, int major_segments, int minor_segments)
+{
+	if (major_segments < 3) {
+		major_segments = 3;
+	}
+	if (minor_segments < 3) {
+		minor_segments = 3;
+	}
+	Mesh result;
+	result.positions.reserve(static_cast<std::size_t>((major_segments + 1) * (minor_segments + 1)));
+	result.normals.reserve(result.positions.capacity());
+	result.uvs.reserve(result.positions.capacity());
+	result.indices.reserve(static_cast<std::size_t>(major_segments) * static_cast<std::size_t>(minor_segments) * 6);
+
+	for (int i = 0; i <= major_segments; ++i) {
+		const float u     = static_cast<float>(i) / static_cast<float>(major_segments);
+		const float theta = u * 2.0f * kPi;
+		const float ct    = std::cos(theta);
+		const float st    = std::sin(theta);
+		for (int j = 0; j <= minor_segments; ++j) {
+			const float v     = static_cast<float>(j) / static_cast<float>(minor_segments);
+			const float phi   = v * 2.0f * kPi;
+			const float cp    = std::cos(phi);
+			const float sp    = std::sin(phi);
+			const glm::vec3 normal{cp * ct, sp, cp * st};
+			result.normals.push_back(normal);
+			result.positions.push_back({(major_radius + minor_radius * cp) * ct,
+			                            minor_radius * sp,
+			                            (major_radius + minor_radius * cp) * st});
+			result.uvs.push_back({u, v});
+		}
+	}
+	const std::uint32_t stride = static_cast<std::uint32_t>(minor_segments + 1);
+	for (int i = 0; i < major_segments; ++i) {
+		for (int j = 0; j < minor_segments; ++j) {
+			const std::uint32_t a = static_cast<std::uint32_t>(i) * stride + static_cast<std::uint32_t>(j);
+			const std::uint32_t b = a + stride;
+			result.indices.push_back(a);
+			result.indices.push_back(b);
+			result.indices.push_back(a + 1);
+			result.indices.push_back(a + 1);
+			result.indices.push_back(b);
+			result.indices.push_back(b + 1);
+		}
+	}
+	return result;
+}
+
+Mesh terrain(float size, int segments, float height, int seed)
+{
+	if (segments < 2) {
+		segments = 2;
+	}
+	if (height < 0.0f) {
+		height = 0.0f;
+	}
+
+	// Simple value-noise hash for deterministic terrain
+	auto hash = [](int x, int z, int s) -> float {
+		uint32_t h = static_cast<uint32_t>(x) * 374761393u +
+		             static_cast<uint32_t>(z) * 668265263u +
+		             static_cast<uint32_t>(s) * 2147483647u;
+		h = (h ^ (h >> 13)) * 1274126177u;
+		h = h ^ (h >> 16);
+		return static_cast<float>(h & 0xFFFFFF) / float(0xFFFFFF);
+	};
+
+	// Smooth interpolation between grid points
+	auto smooth = [](float t) -> float {
+		return t * t * (3.0f - 2.0f * t);
+	};
+
+	// 2D value noise with bilinear interpolation
+	auto noise = [&](float x, float z) -> float {
+		const int ix = static_cast<int>(std::floor(x));
+		const int iz = static_cast<int>(std::floor(z));
+		const float fx = x - static_cast<float>(ix);
+		const float fz = z - static_cast<float>(iz);
+		const float a = hash(ix, iz, seed);
+		const float b = hash(ix + 1, iz, seed);
+		const float c = hash(ix, iz + 1, seed);
+		const float d = hash(ix + 1, iz + 1, seed);
+		const float u = smooth(fx);
+		const float v = smooth(fz);
+		return a * (1.0f - u) * (1.0f - v) + b * u * (1.0f - v) +
+		       c * (1.0f - u) * v + d * u * v;
+	};
+
+	// Multi-octave noise for mountainous look
+	auto fbm = [&](float x, float z) -> float {
+		float value = 0.0f;
+		float amplitude = 1.0f;
+		float frequency = 1.0f;
+		float total = 0.0f;
+		for (int octave = 0; octave < 4; ++octave) {
+			value += noise(x * frequency, z * frequency) * amplitude;
+			total += amplitude;
+			amplitude *= 0.5f;
+			frequency *= 2.0f;
+		}
+		return value / total;
+	};
+
+	Mesh result;
+	const int verts_per_side = segments + 1;
+	result.positions.reserve(static_cast<std::size_t>(verts_per_side) * verts_per_side);
+	result.normals.reserve(result.positions.capacity());
+	result.uvs.reserve(result.positions.capacity());
+	result.indices.reserve(static_cast<std::size_t>(segments) * segments * 6);
+
+	const float half_size = size * 0.5f;
+	const float step = size / static_cast<float>(segments);
+
+	// Generate vertices
+	for (int z = 0; z <= segments; ++z) {
+		for (int x = 0; x <= segments; ++x) {
+			const float wx = -half_size + static_cast<float>(x) * step;
+			const float wz = -half_size + static_cast<float>(z) * step;
+			// Scale noise to get mountains
+			const float nx = static_cast<float>(x) / static_cast<float>(segments) * 4.0f;
+			const float nz = static_cast<float>(z) / static_cast<float>(segments) * 4.0f;
+			const float h = fbm(nx, nz) * height;
+			result.positions.push_back({wx, h, wz});
+			result.uvs.push_back({
+			        static_cast<float>(x) / static_cast<float>(segments),
+			        static_cast<float>(z) / static_cast<float>(segments)});
+		}
+	}
+
+	// Compute normals from heightfield
+	for (int z = 0; z <= segments; ++z) {
+		for (int x = 0; x <= segments; ++x) {
+			const int idx = z * verts_per_side + x;
+			const float hL = (x > 0) ? result.positions[idx - 1].y : result.positions[idx].y;
+			const float hR = (x < segments) ? result.positions[idx + 1].y : result.positions[idx].y;
+			const float hD = (z > 0) ? result.positions[idx - verts_per_side].y : result.positions[idx].y;
+			const float hU = (z < segments) ? result.positions[idx + verts_per_side].y : result.positions[idx].y;
+			const glm::vec3 normal = glm::normalize(glm::vec3{hL - hR, 2.0f * step, hD - hU});
+			result.normals.push_back(normal);
+		}
+	}
+
+	// Generate indices
+	for (int z = 0; z < segments; ++z) {
+		for (int x = 0; x < segments; ++x) {
+			const int a = z * verts_per_side + x;
+			const int b = a + 1;
+			const int c = a + verts_per_side;
+			const int d = c + 1;
+			result.indices.push_back(a);
+			result.indices.push_back(c);
+			result.indices.push_back(b);
+			result.indices.push_back(b);
+			result.indices.push_back(c);
+			result.indices.push_back(d);
+		}
+	}
+	return result;
+}
+
+float terrain_height_at(float x, float z, float size, float height, int seed)
+{
+	auto hash = [](int xi, int zi, int s) -> float {
+		uint32_t h = static_cast<uint32_t>(xi) * 374761393u +
+		             static_cast<uint32_t>(zi) * 668265263u +
+		             static_cast<uint32_t>(s) * 2147483647u;
+		h = (h ^ (h >> 13)) * 1274126177u;
+		h = h ^ (h >> 16);
+		return static_cast<float>(h & 0xFFFFFF) / float(0xFFFFFF);
+	};
+	auto smooth = [](float t) -> float {
+		return t * t * (3.0f - 2.0f * t);
+	};
+	auto noise = [&](float nx, float nz) -> float {
+		const int ix = static_cast<int>(std::floor(nx));
+		const int iz = static_cast<int>(std::floor(nz));
+		const float fx = nx - static_cast<float>(ix);
+		const float fz = nz - static_cast<float>(iz);
+		const float a = hash(ix, iz, seed);
+		const float b = hash(ix + 1, iz, seed);
+		const float c = hash(ix, iz + 1, seed);
+		const float d = hash(ix + 1, iz + 1, seed);
+		const float u = smooth(fx);
+		const float v = smooth(fz);
+		return a * (1.0f - u) * (1.0f - v) + b * u * (1.0f - v) +
+		       c * (1.0f - u) * v + d * u * v;
+	};
+	auto fbm = [&](float nx, float nz) -> float {
+		float value = 0.0f;
+		float amplitude = 1.0f;
+		float frequency = 1.0f;
+		float total = 0.0f;
+		for (int octave = 0; octave < 4; ++octave) {
+			value += noise(nx * frequency, nz * frequency) * amplitude;
+			total += amplitude;
+			amplitude *= 0.5f;
+			frequency *= 2.0f;
+		}
+		return value / total;
+	};
+	const float half_size = size * 0.5f;
+	const float nx = (x + half_size) / size * 4.0f;
+	const float nz = (z + half_size) / size * 4.0f;
+	return fbm(nx, nz) * height;
+}
+
 BoundingSphere compute_mesh_bounds(const Mesh& mesh)
 {
 	if (mesh.positions.empty()) {
@@ -135,6 +509,30 @@ bool resolve_mesh(const std::string& source, Mesh& out, std::string* error)
 	}
 	if (source == "builtin:sphere") {
 		out = sphere();
+		return true;
+	}
+	if (source == "builtin:cylinder") {
+		out = cylinder();
+		return true;
+	}
+	if (source == "builtin:cone") {
+		out = cone();
+		return true;
+	}
+	if (source == "builtin:plane") {
+		out = plane();
+		return true;
+	}
+	if (source == "builtin:pyramid") {
+		out = pyramid();
+		return true;
+	}
+	if (source == "builtin:torus") {
+		out = torus();
+		return true;
+	}
+	if (source == "builtin:terrain") {
+		out = terrain();
 		return true;
 	}
 	// "builtin:sphere:<segments>:<rings>" lets LOD levels differ in tessellation.

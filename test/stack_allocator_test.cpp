@@ -70,6 +70,7 @@ TEST_F(StackAllocatorTest, PopDeallocatesLast)
 {
 	void* p1    = allocator->alloc(128, 8);
 	void* p2    = allocator->alloc(128, 8);
+	EXPECT_NE(p1, p2);
 	size_t used = allocator->allocated();
 	allocator->pop();
 	EXPECT_LT(allocator->allocated(), used);

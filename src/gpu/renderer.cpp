@@ -802,6 +802,11 @@ void GpuRenderer::poll_pyramid_fence()
 	occlusion_pyramid_.adopt(pyramid_width_, pyramid_height_, pyramid_levels_,
 	                         mips);
 	occlusion_ready_ = !occlusion_pyramid_.empty();
+	occlusion_aspect_ =
+	        occlusion_ready_ && occlusion_pyramid_.height() > 0
+	                ? static_cast<float>(occlusion_pyramid_.width()) /
+	                          static_cast<float>(occlusion_pyramid_.height())
+	                : 0.0f;
 }
 
 void GpuRenderer::record_pyramid()
@@ -1426,8 +1431,13 @@ void GpuRenderer::end_scene_pass()
 		SDL_EndGPURenderPass(pass_);
 		pass_ = nullptr;
 		// The reduction reads the colour target this pass just wrote, so it can
-		// only be recorded after the render pass has ended.
-		record_pyramid();
+		// only be recorded after the render pass has ended. A clear-only pass
+		// behind the editor suppresses this so it does not replace the pyramid
+		// with an empty window-sized image.
+		if (record_occlusion_) {
+			record_pyramid();
+		}
+		record_occlusion_ = true;
 	}
 }
 

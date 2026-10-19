@@ -54,6 +54,9 @@ public:
 	/// because the whole scene was built before this point.
 	bool take(Scene& target);
 
+	/// Returns a failed load to Idle so the next poll does not report it again.
+	void dismiss_failure();
+
 	State state() const { return state_.load(); }
 	const std::string& error() const { return error_; }
 	const std::string& path() const { return path_; }

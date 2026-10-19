@@ -48,13 +48,4 @@ public:
 
 	virtual ~Allocator() = default;
 };
-
-class Allocation {
-public:
-	virtual ~Allocation() = default;
-
-private:
-	void* memory_;
-	size_t size_;
-};
 } // namespace lotus

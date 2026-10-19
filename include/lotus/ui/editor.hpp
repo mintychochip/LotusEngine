@@ -63,6 +63,13 @@ public:
 		std::function<Entity(const std::string& name, Entity parent)> instantiate;
 	};
 
+	/// Pull-based controls for the play mode button.
+	struct PlayControls {
+		std::function<bool()> is_play_mode;
+		std::function<void()> on_enter_play;
+		std::function<void()> on_exit_play;
+	};
+
 	bool init(SDL_Window* window, GpuRenderer& gpu);
 	void shutdown();
 
@@ -75,6 +82,15 @@ public:
 	{
 		asset_controls_ = std::move(controls);
 	}
+	void set_play_controls(PlayControls controls)
+	{
+		play_controls_ = std::move(controls);
+	}
+	/// Names appended to the inspector's Add-component list. \p add emplaces
+	/// the named component. The editor does not know the component types.
+	void set_extra_components(
+	        std::vector<std::string> names,
+	        std::function<void(Registry&, Entity, const std::string&)> add);
 	/// Optional physics backend for viewport picking (raycast vs colliders).
 	void set_physics(PhysicsWorld* physics) { physics_ = physics; }
 	void set_console(Console* console) { console_ = console; }
@@ -130,14 +146,14 @@ private:
 	void draw_stats(SceneManager& scenes, float dt);
 	void draw_scene_panel();
 	void draw_console();
-	void draw_keybinds();
 	void draw_prefabs(Scene& scene);
 	void draw_assets(Scene* scene);
-	void draw_viewport();
-
 
 	bool initialized_{false};
+	bool frame_open_{false};
 	bool visible_{true};
+	std::vector<std::string> extra_component_names_;
+	std::function<void(Registry&, Entity, const std::string&)> extra_component_add_;
 	bool dirty_{false};
 	bool auto_save_{false};
 	bool edited_{false};
@@ -147,6 +163,7 @@ private:
 	SceneControls scene_controls_;
 	AssetControls asset_controls_;
 	PrefabControls prefab_controls_;
+	PlayControls play_controls_;
 	char prefab_name_[64]{"prefab"};
 	std::string prefab_error_;
 

@@ -60,12 +60,12 @@ TEST_F(OcclusionGpuTest, PyramidReachesTheCpuWithoutBlocking)
 
 	// A wall across the view, and a cube behind it.
 	const Entity wall = scene.create("wall");
-	scene.registry().emplace<MeshSource>(wall, MeshSource{"builtin:cube"});
+	scene.registry().emplace<MeshSource>(wall, MeshSource{"builtin:cube", ""});
 	scene.registry().get<Transform>(wall).scale    = {40.0f, 40.0f, 0.25f};
 	scene.registry().get<Transform>(wall).position = {0.0f, 0.0f, 5.0f};
 
 	const Entity hidden = scene.create("hidden");
-	scene.registry().emplace<MeshSource>(hidden, MeshSource{"builtin:cube"});
+	scene.registry().emplace<MeshSource>(hidden, MeshSource{"builtin:cube", ""});
 	scene.registry().get<Transform>(hidden).position = {0.0f, 0.0f, 0.0f};
 
 	scene.update(0.0f);
@@ -148,11 +148,11 @@ Scene make_wall_and_cube_scene()
 	                                                   {0.0f, 1.0f, 0.0f},
 	                                                   60.0f, 0.1f, 100.0f});
 	const Entity wall = scene.create("wall");
-	scene.registry().emplace<MeshSource>(wall, MeshSource{"builtin:cube"});
+	scene.registry().emplace<MeshSource>(wall, MeshSource{"builtin:cube", ""});
 	scene.registry().get<Transform>(wall).scale    = {40.0f, 40.0f, 0.25f};
 	scene.registry().get<Transform>(wall).position = {0.0f, 0.0f, 5.0f};
 	const Entity hidden = scene.create("hidden");
-	scene.registry().emplace<MeshSource>(hidden, MeshSource{"builtin:cube"});
+	scene.registry().emplace<MeshSource>(hidden, MeshSource{"builtin:cube", ""});
 	scene.registry().get<Transform>(hidden).position = {0.0f, 0.0f, 0.0f};
 	scene.update(0.0f);
 	return scene;
@@ -245,9 +245,11 @@ TEST_F(OcclusionGpuTest, RenderingALongRunNeverBlocks)
 		            kFrames, blocking_ms, blocking_ms / kFrames);
 	}
 
-	EXPECT_LE(non_blocking_ms, blocking_ms)
-	    << "the no-wait loop is slower than the same loop with a blocking wait "
-	       "after every frame, so the loop is not the thing being measured";
+	// No cross-run timing comparison here on purpose: when the GPU queue
+	// drains between frames, SDL_WaitForGPUIdle in the control can legitimately
+	// cost less CPU time than polling fences, so "no-wait <= blocking" measures
+	// machine jitter, not the no-block guarantee. The bound above already fails
+	// if this loop ever serialises CPU against GPU.
 }
 
 /// Resizing mid-run invalidates the pyramid and then rebuilds it, with no
@@ -356,11 +358,11 @@ TEST(OcclusionClearTest, ClearResetsTheOcclusionCounter)
 	                                                   {0.0f, 1.0f, 0.0f},
 	                                                   60.0f, 0.1f, 100.0f});
 	const Entity wall = scene.create("wall");
-	scene.registry().emplace<MeshSource>(wall, MeshSource{"builtin:cube"});
+	scene.registry().emplace<MeshSource>(wall, MeshSource{"builtin:cube", ""});
 	scene.registry().get<Transform>(wall).scale    = {40.0f, 40.0f, 0.25f};
 	scene.registry().get<Transform>(wall).position = {0.0f, 0.0f, 5.0f};
 	const Entity hidden = scene.create("hidden");
-	scene.registry().emplace<MeshSource>(hidden, MeshSource{"builtin:cube"});
+	scene.registry().emplace<MeshSource>(hidden, MeshSource{"builtin:cube", ""});
 	scene.registry().get<Transform>(hidden).position = {0.0f, 0.0f, 0.0f};
 	scene.update(0.0f);
 

@@ -94,4 +94,23 @@ private:
 	uint32_t height_{0};
 };
 
+/// Pyramid to use for this pass, or null when occlusion must be skipped.
+/// A pyramid that is not ready, empty, or built for a different aspect would
+/// sample the wrong texels, so the pass draws everything instead.
+inline const DepthPyramid* occlusion_for_pass(const DepthPyramid& pyramid,
+                                              bool ready, float pyramid_aspect,
+                                              float pass_aspect)
+{
+	if (!ready || pyramid.empty() || pyramid_aspect <= 0.0f ||
+	    pass_aspect <= 0.0f) {
+		return nullptr;
+	}
+	const float ratio = pyramid_aspect > pass_aspect ? pyramid_aspect / pass_aspect
+	                                                  : pass_aspect / pyramid_aspect;
+	if (ratio > 1.001f) {
+		return nullptr;
+	}
+	return &pyramid;
+}
+
 } // namespace lotus

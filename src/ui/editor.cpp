@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 #include <cstdio>
 #include <cstring>
 #include <utility>
@@ -112,10 +113,18 @@ void Editor::set_scene_controls(SceneControls controls)
 
 void Editor::process_event(const SDL_Event& event)
 {
-	if (!initialized_) {
+	if (!initialized_ || !visible_) {
 		return;
 	}
-	ImGui_ImplSDL3_ProcessEvent(&event);
+ImGui_ImplSDL3_ProcessEvent(&event);
+}
+
+void Editor::set_extra_components(
+        std::vector<std::string> names,
+        std::function<void(Registry&, Entity, const std::string&)> add)
+{
+	extra_component_names_ = std::move(names);
+	extra_component_add_   = std::move(add);
 }
 
 bool Editor::captures_keyboard() const
@@ -134,12 +143,13 @@ void Editor::set_keybinds(Keybinds* keybinds, std::function<void()> on_save)
 
 void Editor::begin_frame()
 {
-	if (!initialized_ || !visible_) {
+	if (!initialized_) {
 		return;
 	}
 	ImGui_ImplSDL3_NewFrame();
 	ImGui_ImplSDLGPU3_NewFrame();
 	ImGui::NewFrame();
+	frame_open_ = true;
 }
 
 void Editor::draw(SceneManager& scenes, float dt)
@@ -595,65 +605,67 @@ void Editor::draw_console()
 	}
 }
 
-void Editor::draw_keybinds()
-{
-	if (!keybinds_) {
-		return;
-	}
-	if (ImGui::Button("Save keybinds") && save_keybinds_) {
-		save_keybinds_();
-	}
-	ImGui::SameLine();
-	if (ImGui::Button("Reset to defaults")) {
-		keybinds_->reset_to_defaults();
-	}
-	ImGui::Separator();
-	for (const auto& [action, chord] : keybinds_->bindings()) {
-		ImGui::Text("%s", action.c_str());
-		ImGui::SameLine(170.0f);
-		ImGui::TextDisabled("%s", chord.to_string().c_str());
-	}
-}
-
 void Editor::draw_hierarchy(Scene& scene)
 {
+	// Play mode button at the top — large and obvious
+	if (play_controls_.is_play_mode) {
+		const bool in_play = play_controls_.is_play_mode();
+		if (in_play) {
+		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
+			if (ImGui::Button("■ STOP (F1)")) {
+				if (play_controls_.on_exit_play) {
+					play_controls_.on_exit_play();
+				}
+			}
+		 ImGui::PopStyleColor();
+		} else {
+		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.7f, 0.2f, 1.0f));
+			if (ImGui::Button("▶ PLAY")) {
+				if (play_controls_.on_enter_play) {
+					play_controls_.on_enter_play();
+				}
+			}
+		 ImGui::PopStyleColor();
+		}
+	}
+
 	if (ImGui::Button("Add root")) {
 		selected_ = scene.create("entity");
 		edited_   = true;
 	}
 	const bool has_selection = selected_ != NullEntity &&
 	                           scene.registry().valid(selected_);
-	ImGui::SameLine();
+ ImGui::SameLine();
 	if (ImGui::Button("Add child") && has_selection) {
 		const Entity child = scene.create("entity");
 		scene.set_parent(child, selected_);
 		selected_ = child;
 		edited_   = true;
 	}
-	ImGui::SameLine();
+ ImGui::SameLine();
 	if (ImGui::Button("Destroy") && has_selection) {
 		scene.destroy(selected_);
 		selected_ = NullEntity;
 		edited_   = true;
 	}
-	ImGui::SameLine();
+ ImGui::SameLine();
 	if (ImGui::Button("Unparent") && has_selection) {
 		scene.detach(selected_);
 		edited_ = true;
 	}
-	ImGui::SameLine();
-	ImGui::BeginDisabled(!history_.can_undo());
+ ImGui::SameLine();
+ImGui::BeginDisabled(!history_.can_undo());
 	if (ImGui::Button("Undo")) {
 		undo_requested_ = true;
 	}
-	ImGui::EndDisabled();
-	ImGui::SameLine();
-	ImGui::BeginDisabled(!history_.can_redo());
+ImGui::EndDisabled();
+ImGui::SameLine();
+ImGui::BeginDisabled(!history_.can_redo());
 	if (ImGui::Button("Redo")) {
 		redo_requested_ = true;
 	}
-	ImGui::EndDisabled();
-	ImGui::Separator();
+ImGui::EndDisabled();
+ImGui::Separator();
 	for (const Entity root : scene.roots()) {
 		draw_entity_node(scene, root);
 	}
@@ -852,21 +864,39 @@ void Editor::draw_inspector(Scene& scene)
 		}
 	}
 
-	ImGui::SeparatorText("Components");
-	static const char* kAddable[] = {"Sprite",
-	                                 "Camera2D",
-	                                 "Camera3D",
-	                                 "MeshSource",
-	                                 "Material",
-	                                 "CharacterController",
-	                                 "RigidBody + Box",
-	                                 "Animator"};
-	static int choice             = 0;
+ImGui::SeparatorText("Components");
+	static const char* kBuiltins[] = {"Sprite",
+	                                  "Camera2D",
+	                                  "Camera3D",
+	                                  "MeshSource",
+	                                  "Material",
+	                                  "CharacterController",
+	                                  "RigidBody + Box",
+	                                  "Animator"};
+	constexpr int kBuiltinCount    = 8;
+	std::vector<const char*> labels(kBuiltins, kBuiltins + kBuiltinCount);
+	for (const std::string& name : extra_component_names_) {
+		labels.push_back(name.c_str());
+	}
+	static int choice = 0;
+	if (choice >= static_cast<int>(labels.size())) {
+		choice = 0;
+	}
 	ImGui::SetNextItemWidth(160);
-	ImGui::Combo("##add", &choice, kAddable, 8);
+	ImGui::Combo("##add", &choice, labels.data(),
+	             static_cast<int>(labels.size()));
 	ImGui::SameLine();
 	if (ImGui::Button("Add component")) {
-		switch (choice) {
+		if (choice >= kBuiltinCount) {
+			const std::size_t index =
+			        static_cast<std::size_t>(choice - kBuiltinCount);
+			if (extra_component_add_ &&
+			    index < extra_component_names_.size()) {
+				extra_component_add_(registry, selected_,
+				                     extra_component_names_[index]);
+			}
+			edited_ = true;
+		} else switch (choice) {
 		case 0:
 			if (!registry.all_of<Sprite>(selected_)) {
 				registry.emplace<Sprite>(selected_);
@@ -885,7 +915,7 @@ void Editor::draw_inspector(Scene& scene)
 		case 3:
 			if (!registry.all_of<MeshSource>(selected_)) {
 				registry.emplace<MeshSource>(
-				        selected_, MeshSource{"builtin:cube"});
+				        selected_, MeshSource{"builtin:cube", ""});
 			}
 			break;
 		case 4:
@@ -1103,12 +1133,14 @@ void Editor::draw_prefabs(Scene& scene)
 
 void Editor::render(GpuRenderer& gpu)
 {
-	if (!initialized_ || !visible_) {
+	if (!initialized_ || !frame_open_) {
 		return;
 	}
+	frame_open_ = false;
 	ImGui::Render();
 	ImDrawData* draw_data = ImGui::GetDrawData();
-	if (!draw_data || !gpu.command_buffer() || !gpu.swapchain_texture()) {
+	if (!draw_data || draw_data->CmdListsCount == 0 || !gpu.command_buffer() ||
+	    !gpu.swapchain_texture()) {
 		return;
 	}
 	ImGui_ImplSDLGPU3_PrepareDrawData(draw_data, gpu.command_buffer());
