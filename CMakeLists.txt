@@ -110,6 +110,20 @@ set_target_properties(lotus_rpg PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
 
+# === Render Benchmark ===
+# Deterministic offscreen frame-time benchmark; see autoresearch.sh.
+
+add_executable(lotus_render_bench bench/render_bench.cpp)
+
+target_link_libraries(lotus_render_bench
+    lotus_engine
+)
+lotus_apply_warning_flags(lotus_render_bench)
+
+set_target_properties(lotus_render_bench PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+)
+
 # === Runtime Assets ===
 file(COPY ${CMAKE_SOURCE_DIR}/shaders DESTINATION ${CMAKE_BINARY_DIR})
 file(COPY ${CMAKE_SOURCE_DIR}/assets DESTINATION ${CMAKE_BINARY_DIR})

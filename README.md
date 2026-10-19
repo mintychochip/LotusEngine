@@ -45,6 +45,23 @@ Regenerate shaders (requires `glslangValidator`):
 ./shaders/build-shaders.sh
 ```
 
+### Render benchmark
+
+`lotus_render_bench` renders a fixed, seeded synthetic scene (~950 entities,
+shadows, SSAO, FXAA, sky, fog, Hi-Z occlusion) through the offscreen pipeline
+one synchronous frame at a time and reports per-phase times (begin, build,
+record, submit, GPU wait) plus a fidelity check of the final frame against
+`bench/golden/render_bench.png`. `./autoresearch.sh` builds it and runs it on
+the system's Vulkan device and on lavapipe; the metrics are documented in its
+header.
+
+```bash
+./autoresearch.sh
+```
+
+After an intentional visual change, regenerate the golden (lavapipe only; the
+command is in the script header).
+
 ### Environment
 
 | Variable | Effect |

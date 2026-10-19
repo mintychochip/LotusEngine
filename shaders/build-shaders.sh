@@ -9,11 +9,14 @@
 #
 #   GLSLANG=/tmp/shadertools/usr/bin/glslangValidator ./shaders/build-shaders.sh
 #
+# OUT_DIR redirects the generated headers (default: include/lotus/gpu), e.g. to
+# diff them against the committed ones without touching the tree.
+#
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(dirname "$here")"
-out_dir="$root/include/lotus/gpu"
+out_dir="${OUT_DIR:-$root/include/lotus/gpu}"
 glslang="${GLSLANG:-glslangValidator}"
 
 if ! command -v "$glslang" >/dev/null 2>&1; then
@@ -34,7 +37,13 @@ for pair in "vert lit" "frag lit" "comp depth" "vert shadow" "frag shadow" \
     header="$out_dir/$base.$stage.spv.h"
     name="${base}_${stage}_spv"
 
-    "$glslang" -V "$source" -o "$spv" >/dev/null
+    # glslang reports compile errors on stdout: show them, or a typo in a
+    # shader fails with no explanation.
+    if ! compile_log="$("$glslang" -V "$source" -o "$spv" 2>&1)"; then
+        echo "$compile_log" >&2
+        echo "error: $base.$stage failed to compile" >&2
+        exit 1
+    fi
 
     python3 - "$spv" "$name" "$header" "$base.$stage" <<'PY'
 import sys
