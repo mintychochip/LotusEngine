@@ -25,16 +25,27 @@ Entity find_named(Scene& scene, const char* name)
 	return entity;
 }
 
-Camera3D* find_follow_camera(Scene& scene)
+/// Entity carrying the gameplay camera: \c "camera" when present, else the
+/// first \c Camera3D. May lack a \c Camera3D; callers check.
+Entity find_follow_camera_entity(Scene& scene)
 {
 	if (const Entity named = scene.find("camera");
 	    named != NullEntity) {
-		return scene.registry().try_get<Camera3D>(named);
+		return named;
 	}
 	for (const Entity entity : scene.registry().view<Camera3D>()) {
-		return scene.registry().try_get<Camera3D>(entity);
+		return entity;
 	}
-	return nullptr;
+	return NullEntity;
+}
+
+Camera3D* find_follow_camera(Scene& scene)
+{
+	const Entity entity = find_follow_camera_entity(scene);
+	if (entity == NullEntity) {
+		return nullptr;
+	}
+	return scene.registry().try_get<Camera3D>(entity);
 }
 
 glm::vec3 movement_direction_on_xz(glm::vec3 horizontal)
@@ -128,6 +139,15 @@ void update_follow_camera(Scene& scene, const FollowCameraSettings& settings)
 	if (!camera->follow) {
 		return;
 	}
+	// First follow frame: remember the authored pose before overwriting it,
+	// so leaving third person can restore the fixed wide shot exactly. The
+	// stash is written once; later frames must not move it.
+	if (const Entity entity = find_follow_camera_entity(scene);
+	    entity != NullEntity &&
+	    !scene.registry().all_of<CameraHome>(entity)) {
+		scene.registry().emplace<CameraHome>(entity, camera->position,
+		                                     camera->target);
+	}
 	const Transform* transform = scene.registry().try_get<Transform>(player);
 	if (!transform) {
 		return;
@@ -138,6 +158,46 @@ void update_follow_camera(Scene& scene, const FollowCameraSettings& settings)
 	        feet + glm::vec3{0.0f, settings.look_at_height, 0.0f};
 	camera->target   = focus;
 	camera->position = feet + settings.offset;
+}
+
+bool camera_third_person(Scene& scene)
+{
+	const Camera3D* camera = find_follow_camera(scene);
+	return camera != nullptr && camera->follow;
+}
+
+void set_camera_third_person(Scene& scene, bool enabled)
+{
+	const Entity entity = find_follow_camera_entity(scene);
+	if (entity == NullEntity) {
+		return;
+	}
+	Camera3D* camera = scene.registry().try_get<Camera3D>(entity);
+	if (!camera) {
+		return;
+	}
+	if (enabled) {
+		camera->follow = true;
+		return;
+	}
+	if (!scene.registry().all_of<CameraHome>(entity)) {
+		scene.registry().emplace<CameraHome>(entity, camera->position,
+		                                     camera->target);
+	}
+	camera->follow   = false;
+	const CameraHome& home = scene.registry().get<CameraHome>(entity);
+	camera->position = home.position;
+	camera->target   = home.target;
+}
+
+bool toggle_camera_third_person(Scene& scene)
+{
+	if (find_follow_camera(scene) == nullptr) {
+		return false;
+	}
+	const bool enabled = !camera_third_person(scene);
+	set_camera_third_person(scene, enabled);
+	return enabled;
 }
 
 } // namespace lotus

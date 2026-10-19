@@ -58,6 +58,12 @@ public:
 	bool load(const std::string& path, std::string* error = nullptr);
 	bool save(const std::string& path, std::string* error = nullptr) const;
 
+	/// Rewrites the file when it lacks any defined action (an older file
+	/// predating a new default), preserving the rebinds it does carry.
+	/// Returns true when the file was rewritten, false when it was already
+	/// complete or could not be read.
+	bool backfill(const std::string& path, std::string* error = nullptr) const;
+
 private:
 	std::map<std::string, KeyChord> defaults_;
 	std::map<std::string, KeyChord> bindings_;

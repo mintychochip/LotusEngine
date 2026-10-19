@@ -30,4 +30,20 @@ void apply_character_movement_input(Scene& scene, PhysicsWorld& physics,
 void update_follow_camera(Scene& scene,
                           const FollowCameraSettings& settings = {});
 
+/// True when the gameplay camera follows \c "player" (the third-person
+/// chase view). False when it holds the scene's fixed wide shot, or when
+/// there is no camera at all.
+bool camera_third_person(Scene& scene);
+
+/// Switches the gameplay camera between the third-person chase view and the
+/// scene's fixed wide shot. Disabling stashes nothing new: the authored pose
+/// was captured before the first follow overwrite, so it comes back exactly;
+/// re-enabling resumes the follow, which recomputes its pose every frame.
+/// No-op without a camera.
+void set_camera_third_person(Scene& scene, bool enabled);
+
+/// Flips the third-person view and reports the new state. No-op (false)
+/// without a camera.
+bool toggle_camera_third_person(Scene& scene);
+
 } // namespace lotus

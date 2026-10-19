@@ -181,3 +181,45 @@ TEST(KeybindsTest, MissingFileReportsError)
 	EXPECT_FALSE(keybinds.load("definitely_missing_keybinds.json", &error));
 	EXPECT_FALSE(error.empty());
 }
+
+TEST(KeybindsTest, ThirdPersonToggleDefaultIsF5)
+{
+	Keybinds keybinds = default_keybinds();
+	EXPECT_TRUE(keybinds.is_bound("camera.toggle_third_person"));
+	EXPECT_EQ(keybinds.action_for(key_event(SDLK_F5, SDL_KMOD_NONE)),
+	          "camera.toggle_third_person");
+	// The new default leaves the established chords alone.
+	EXPECT_EQ(keybinds.action_for(key_event(SDLK_F1, SDL_KMOD_NONE)),
+	          "editor.toggle");
+	EXPECT_EQ(keybinds.action_for(key_event(SDLK_F2, SDL_KMOD_NONE)),
+	          "console.toggle");
+	EXPECT_TRUE(
+	        keybinds.action_for(key_event(SDLK_W, SDL_KMOD_NONE)).empty());
+	EXPECT_TRUE(keybinds.action_for(key_event(SDLK_SPACE, SDL_KMOD_NONE))
+	                    .empty());
+}
+
+TEST(KeybindsTest, BackfillCompletesStaleFileKeepingRebinds)
+{
+	const std::string path =
+	        (fs::temp_directory_path() / "lotus_keybinds_backfill.json").string();
+	{
+		std::ofstream out(path);
+		out << R"({"version":1,"bindings":{"undo":"Ctrl+U"}})";
+	}
+
+	Keybinds keybinds = default_keybinds();
+	std::string error;
+	ASSERT_TRUE(keybinds.load(path, &error)) << error;
+	EXPECT_TRUE(keybinds.backfill(path, &error)) << error;
+
+	Keybinds reloaded = default_keybinds();
+	ASSERT_TRUE(reloaded.load(path, &error)) << error;
+	EXPECT_EQ(reloaded.action_for(key_event(SDLK_U, SDL_KMOD_CTRL)), "undo");
+	EXPECT_EQ(reloaded.action_for(key_event(SDLK_F5, SDL_KMOD_NONE)),
+	          "camera.toggle_third_person");
+	// A complete file is left alone.
+	EXPECT_FALSE(reloaded.backfill(path, &error)) << error;
+
+	std::remove(path.c_str());
+}

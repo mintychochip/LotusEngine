@@ -707,6 +707,10 @@ void Application::handle_action(const std::string& action)
 		editor_.toggle();
 	} else if (action == "console.toggle") {
 		editor_.toggle_console();
+	} else if (action == "camera.toggle_third_person") {
+		if (Scene* scene = scenes_.active()) {
+			toggle_camera_third_person(*scene);
+		}
 	} else if (action == "scene.save") {
 		std::string error;
 		if (!save_scene_now(&error)) {
@@ -720,7 +724,7 @@ void Application::handle_action(const std::string& action)
 	} else if (action == "quit") {
 		quit_requested_ = true;
 	}
-}
+	}
 
 void Application::watch_scene(const std::string& path)
 {
@@ -1009,8 +1013,20 @@ void Application::run(int width, int height, const std::string& title)
 		if (!keybinds_.load(keybinds_path_, &keybind_error)) {
 			keybinds_.save(keybinds_path_, nullptr);
 			console_.info("wrote default keybinds to " + keybinds_path_);
-		} else if (!keybind_error.empty()) {
-			console_.warn(keybind_error);
+		} else {
+			if (!keybind_error.empty()) {
+				console_.warn(keybind_error);
+			}
+			// Files written before a new default existed lack its key but
+			// still load; append the missing keys (keeping the user's
+			// rebinds) so the file stays complete and remappable.
+			std::string backfill_error;
+			if (keybinds_.backfill(keybinds_path_, &backfill_error)) {
+				console_.info(
+				        "added new default keybinds to " + keybinds_path_);
+			} else if (!backfill_error.empty()) {
+				console_.warn(backfill_error);
+			}
 		}
 
 		editor_.set_console(&console_);

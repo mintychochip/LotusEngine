@@ -65,3 +65,59 @@ TEST(PlayerMovementTest, NeutralInputYieldsZero)
 	        movement_direction_from_camera(camera, 0.0f, 0.0f);
 	EXPECT_NEAR(glm::length(dir), 0.0f, 1e-4f);
 }
+
+TEST(PlayerMovementTest, ThirdPersonIsOnByDefault)
+{
+	Scene scene{"default"};
+	const Entity player = scene.create("player");
+	const Entity camera_entity = scene.create("camera");
+	scene.registry().emplace<Camera3D>(camera_entity);
+	(void)player;
+	EXPECT_TRUE(camera_third_person(scene));
+}
+
+TEST(PlayerMovementTest, ThirdPersonToggleRestoresAuthoredPose)
+{
+	Scene scene{"toggle"};
+	const Entity player = scene.create("player");
+	scene.registry().get<Transform>(player).position = {1.0f, 0.0f, 2.0f};
+	const Entity camera_entity = scene.create("camera");
+	auto& authored             = scene.registry().emplace<Camera3D>(camera_entity);
+	authored.position          = {7.5f, 4.5f, 10.5f};
+	authored.target            = {0.0f, 1.0f, 0.0f};
+
+	update_follow_camera(scene);
+	const Camera3D& chase = scene.registry().get<Camera3D>(camera_entity);
+	EXPECT_NEAR(chase.position.z, 7.0f, 1e-4f);
+
+	EXPECT_FALSE(toggle_camera_third_person(scene));
+	const Camera3D& fixed = scene.registry().get<Camera3D>(camera_entity);
+	EXPECT_FALSE(camera_third_person(scene));
+	EXPECT_NEAR(fixed.position.x, 7.5f, 1e-4f);
+	EXPECT_NEAR(fixed.position.y, 4.5f, 1e-4f);
+	EXPECT_NEAR(fixed.position.z, 10.5f, 1e-4f);
+	EXPECT_NEAR(fixed.target.x, 0.0f, 1e-4f);
+	EXPECT_NEAR(fixed.target.y, 1.0f, 1e-4f);
+	EXPECT_NEAR(fixed.target.z, 0.0f, 1e-4f);
+
+	// Follow frames while fixed leave the wide shot alone.
+	update_follow_camera(scene);
+	const Camera3D& still = scene.registry().get<Camera3D>(camera_entity);
+	EXPECT_NEAR(still.position.x, 7.5f, 1e-4f);
+
+	EXPECT_TRUE(toggle_camera_third_person(scene));
+	update_follow_camera(scene);
+	const Camera3D& resumed = scene.registry().get<Camera3D>(camera_entity);
+	EXPECT_NEAR(resumed.position.x, 1.0f, 1e-4f);
+	EXPECT_NEAR(resumed.position.y, 2.2f, 1e-4f);
+	EXPECT_NEAR(resumed.position.z, 7.0f, 1e-4f);
+	EXPECT_NEAR(resumed.target.y, 1.4f, 1e-4f);
+}
+
+TEST(PlayerMovementTest, ThirdPersonToggleWithoutCameraIsNoOp)
+{
+	Scene scene{"nocamera"};
+	scene.create("player");
+	EXPECT_FALSE(camera_third_person(scene));
+	EXPECT_FALSE(toggle_camera_third_person(scene));
+}
