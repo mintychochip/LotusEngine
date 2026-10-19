@@ -26,6 +26,7 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -130,7 +131,18 @@ struct FrameSlot {
 	VkCommandBuffer cmd{VK_NULL_HANDLE};
 	VkFence fence{VK_NULL_HANDLE};
 	/// Transient pass/material descriptor sets; reset when the slot is reused.
+	/// Only the fallback path below still allocates from here (see the
+	/// descriptor cache); the steady state allocates nothing per frame.
 	VkDescriptorPool descriptors{VK_NULL_HANDLE};
+	/// Cached uniform-buffer sets. Their update writes buffer + range only
+	/// (the offset is dynamic at bind), so one set serves every uniform
+	/// block and is rewritten only when the slot's uniform ring regrows.
+	/// They live in the never-reset cache pool, so they survive pool resets
+	/// and slot reuse; the buffer handle tracks the generation they name.
+	VkDescriptorSet cached_vertex_set{VK_NULL_HANDLE};
+	VkBuffer cached_vertex_buffer{VK_NULL_HANDLE};
+	VkDescriptorSet cached_fragment_set{VK_NULL_HANDLE};
+	VkBuffer cached_fragment_buffer{VK_NULL_HANDLE};
 
 	/// Instance records for this frame; entry 0 is the reserved identity the
 	/// immediate stream draws with.
@@ -252,6 +264,20 @@ private:
 	std::unique_ptr<vk::BarrierBatch> barriers_;
 
 	// --- pipelines ----------------------------------------------------------
+	/// Never-reset pool for cached descriptor sets (rewritten only when
+	/// their contents change). Steady-state frames allocate and update
+	/// nothing; sets for retired images/samplers are dropped from the maps
+	/// below and their pool space is left alone (recreates are rare).
+	VkDescriptorPool cached_descriptors_{VK_NULL_HANDLE};
+	/// Sampler sets by (albedo, shadow, ao) view + sampler handles.
+	std::map<std::array<uint64_t, 6>, VkDescriptorSet> sampler_cache_;
+	/// Hi-Z storage sets by (src, dst) view pair; at most K pairs exist.
+	struct StorageCacheEntry {
+		VkImageView src{VK_NULL_HANDLE};
+		VkImageView dst{VK_NULL_HANDLE};
+		VkDescriptorSet set{VK_NULL_HANDLE};
+	};
+	std::vector<StorageCacheEntry> storage_cache_;
 	DescriptorLayouts layouts_;
 	VkPipelineLayout lit_layout_{VK_NULL_HANDLE};
 	VkPipelineLayout shadow_layout_{VK_NULL_HANDLE};
@@ -484,6 +510,16 @@ private:
 	VkDescriptorSet alloc_sampler_set(VkImageView albedo, VkSampler albedo_sampler,
 	                                  VkImageView shadow, VkSampler shadow_sampler,
 	                                  VkImageView ao, VkSampler ao_sampler);
+	/// Creates cached_descriptors_ on first use (init() also calls it
+	/// directly, so mid-frame callers never branch on init order).
+	void ensure_descriptor_cache();
+	void create_descriptor_cache();
+	void destroy_descriptor_cache();
+	/// Drops the content-keyed sampler/storage entries: call after any
+	/// image view or sampler they may name is destroyed. The sets themselves
+	/// stay alive in the cache pool (frames in flight may still read them);
+	/// only their pool space is left behind.
+	void clear_descriptor_caches();
 	// renderer_occlusion.cpp
 	bool create_occlusion_pipeline();
 	void destroy_occlusion();

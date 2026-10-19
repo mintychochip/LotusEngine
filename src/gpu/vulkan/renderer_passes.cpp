@@ -281,19 +281,86 @@ void GpuRendererVulkan::create_pipelines()
 	api.DestroyShaderModule(device, lit_vert, nullptr);
 }
 
+void GpuRendererVulkan::ensure_descriptor_cache()
+{
+	if (cached_descriptors_ == VK_NULL_HANDLE) {
+		create_descriptor_cache();
+	}
+}
+
+void GpuRendererVulkan::create_descriptor_cache()
+{
+	if (!device_valid_ || cached_descriptors_ != VK_NULL_HANDLE) {
+		return;
+	}
+	// Never reset: entries are rewritten only when their contents change,
+	// so steady-state frames allocate and update nothing. Sized for the
+	// live combinations (a handful) plus headroom for retired epochs.
+	const VkDescriptorPoolSize sizes[3] = {
+	        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 16},
+	        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 6144},
+	        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 64},
+	};
+	VkDescriptorPoolCreateInfo pool_create{};
+	pool_create.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+	pool_create.maxSets       = 2048;
+	pool_create.poolSizeCount = 3;
+	pool_create.pPoolSizes    = sizes;
+	vk::check(context_.api.CreateDescriptorPool(context_.device,
+	                                            &pool_create, nullptr,
+	                                            &cached_descriptors_),
+	          "vkCreateDescriptorPool");
+}
+
+void GpuRendererVulkan::destroy_descriptor_cache()
+{
+	sampler_cache_.clear();
+	storage_cache_.clear();
+	for (FrameSlot& slot : slots_) {
+		slot.cached_vertex_set     = VK_NULL_HANDLE;
+		slot.cached_vertex_buffer  = VK_NULL_HANDLE;
+		slot.cached_fragment_set   = VK_NULL_HANDLE;
+		slot.cached_fragment_buffer = VK_NULL_HANDLE;
+	}
+	if (cached_descriptors_ != VK_NULL_HANDLE) {
+		context_.api.DestroyDescriptorPool(context_.device,
+		                                   cached_descriptors_, nullptr);
+		cached_descriptors_ = VK_NULL_HANDLE;
+	}
+}
+
+void GpuRendererVulkan::clear_descriptor_caches()
+{
+	// Views/samplers the entries name are being destroyed (possibly
+	// recreated under recycled handles). The sets stay alive in the pool
+	// for frames still in flight; only the lookups are dropped.
+	sampler_cache_.clear();
+	storage_cache_.clear();
+}
+
 VkDescriptorSet GpuRendererVulkan::alloc_vertex_set(uint64_t offset)
 {
-	VkDescriptorSetAllocateInfo alloc{};
-	alloc.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-	alloc.descriptorPool     = slot_->descriptors;
-	alloc.descriptorSetCount = 1;
-	alloc.pSetLayouts        = &layouts_.vertex;
-	VkDescriptorSet set{VK_NULL_HANDLE};
-	vk::check(context_.api.AllocateDescriptorSets(context_.device, &alloc,
-	                                              &set),
-	          "vkAllocateDescriptorSets");
+	(void)offset;
+	FrameSlot& slot = *slot_;
+	if (slot.cached_vertex_set != VK_NULL_HANDLE &&
+	    slot.cached_vertex_buffer == slot.uniforms.handle) {
+		return slot.cached_vertex_set;
+	}
+	ensure_descriptor_cache();
+	VkDescriptorSet set = slot.cached_vertex_set;
+	if (set == VK_NULL_HANDLE) {
+		VkDescriptorSetAllocateInfo alloc{};
+		alloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+		alloc.descriptorPool     = cached_descriptors_;
+		alloc.descriptorSetCount = 1;
+		alloc.pSetLayouts        = &layouts_.vertex;
+		vk::check(context_.api.AllocateDescriptorSets(context_.device,
+		                                              &alloc, &set),
+		          "vkAllocateDescriptorSets");
+		slot.cached_vertex_set = set;
+	}
 	VkDescriptorBufferInfo buffer{};
-	buffer.buffer = slot_->uniforms.handle;
+	buffer.buffer = slot.uniforms.handle;
 	buffer.offset = 0;
 	buffer.range  = sizeof(VertexUniforms);
 	VkWriteDescriptorSet write{};
@@ -303,24 +370,35 @@ VkDescriptorSet GpuRendererVulkan::alloc_vertex_set(uint64_t offset)
 	write.descriptorCount = 1;
 	write.descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
 	write.pBufferInfo     = &buffer;
-	context_.api.UpdateDescriptorSets(context_.device, 1, &write, 0, nullptr);
-	(void)offset;
+	context_.api.UpdateDescriptorSets(context_.device, 1, &write, 0,
+	                                  nullptr);
+	slot.cached_vertex_buffer = slot.uniforms.handle;
 	return set;
 }
 
 VkDescriptorSet GpuRendererVulkan::alloc_fragment_set(uint64_t offset)
 {
-	VkDescriptorSetAllocateInfo alloc{};
-	alloc.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-	alloc.descriptorPool     = slot_->descriptors;
-	alloc.descriptorSetCount = 1;
-	alloc.pSetLayouts        = &layouts_.fragment;
-	VkDescriptorSet set{VK_NULL_HANDLE};
-	vk::check(context_.api.AllocateDescriptorSets(context_.device, &alloc,
-	                                              &set),
-	          "vkAllocateDescriptorSets");
+	(void)offset;
+	FrameSlot& slot = *slot_;
+	if (slot.cached_fragment_set != VK_NULL_HANDLE &&
+	    slot.cached_fragment_buffer == slot.uniforms.handle) {
+		return slot.cached_fragment_set;
+	}
+	ensure_descriptor_cache();
+	VkDescriptorSet set = slot.cached_fragment_set;
+	if (set == VK_NULL_HANDLE) {
+		VkDescriptorSetAllocateInfo alloc{};
+		alloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+		alloc.descriptorPool     = cached_descriptors_;
+		alloc.descriptorSetCount = 1;
+		alloc.pSetLayouts        = &layouts_.fragment;
+		vk::check(context_.api.AllocateDescriptorSets(context_.device,
+		                                              &alloc, &set),
+		          "vkAllocateDescriptorSets");
+		slot.cached_fragment_set = set;
+	}
 	VkDescriptorBufferInfo buffer{};
-	buffer.buffer = slot_->uniforms.handle;
+	buffer.buffer = slot.uniforms.handle;
 	buffer.offset = 0;
 	buffer.range  = sizeof(FragmentUniforms);
 	VkWriteDescriptorSet write{};
@@ -330,18 +408,38 @@ VkDescriptorSet GpuRendererVulkan::alloc_fragment_set(uint64_t offset)
 	write.descriptorCount = 1;
 	write.descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
 	write.pBufferInfo     = &buffer;
-	context_.api.UpdateDescriptorSets(context_.device, 1, &write, 0, nullptr);
-	(void)offset;
+	context_.api.UpdateDescriptorSets(context_.device, 1, &write, 0,
+	                                  nullptr);
+	slot.cached_fragment_buffer = slot.uniforms.handle;
 	return set;
 }
+
+namespace {
+
+uint64_t cache_handle_key(const void* handle)
+{
+	return static_cast<uint64_t>(reinterpret_cast<uintptr_t>(handle));
+}
+
+} // namespace
 
 VkDescriptorSet GpuRendererVulkan::alloc_sampler_set(
         VkImageView albedo, VkSampler albedo_sampler, VkImageView shadow,
         VkSampler shadow_sampler, VkImageView ao, VkSampler ao_sampler)
 {
+	ensure_descriptor_cache();
+	const std::array<uint64_t, 6> key{
+	        cache_handle_key(albedo),         cache_handle_key(albedo_sampler),
+	        cache_handle_key(shadow),         cache_handle_key(shadow_sampler),
+	        cache_handle_key(ao),             cache_handle_key(ao_sampler),
+	};
+	const auto found = sampler_cache_.find(key);
+	if (found != sampler_cache_.end()) {
+		return found->second;
+	}
 	VkDescriptorSetAllocateInfo alloc{};
 	alloc.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-	alloc.descriptorPool     = slot_->descriptors;
+	alloc.descriptorPool     = cached_descriptors_;
 	alloc.descriptorSetCount = 1;
 	alloc.pSetLayouts        = &layouts_.samplers;
 	VkDescriptorSet set{VK_NULL_HANDLE};
@@ -363,6 +461,7 @@ VkDescriptorSet GpuRendererVulkan::alloc_sampler_set(
 		writes[i].pImageInfo      = &images[i];
 	}
 	context_.api.UpdateDescriptorSets(context_.device, 3, writes, 0, nullptr);
+	sampler_cache_[key] = set;
 	return set;
 }
 
@@ -447,6 +546,7 @@ void GpuRendererVulkan::ensure_shadow_resources()
 
 void GpuRendererVulkan::destroy_shadows()
 {
+	clear_descriptor_caches();
 	if (shadow_map_.handle != VK_NULL_HANDLE) {
 		memory_.destroy_image(shadow_map_);
 		shadow_map_ = vk::Image{};

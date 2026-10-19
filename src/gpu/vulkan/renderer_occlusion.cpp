@@ -74,6 +74,7 @@ void GpuRendererVulkan::destroy_occlusion()
 
 void GpuRendererVulkan::destroy_pyramid()
 {
+	clear_descriptor_caches();
 	// A pyramid download still in flight is simply forgotten: its commands
 	// belong to a submitted frame whose slot fence still guards the readback
 	// buffer, which dies with the slot teardown or the next ensure.
@@ -192,9 +193,15 @@ void GpuRendererVulkan::ensure_pyramid(uint32_t width, uint32_t height)
 VkDescriptorSet GpuRendererVulkan::alloc_storage_set(VkImageView src,
                                                      VkImageView dst)
 {
+	ensure_descriptor_cache();
+	for (const StorageCacheEntry& entry : storage_cache_) {
+		if (entry.src == src && entry.dst == dst) {
+			return entry.set;
+		}
+	}
 	VkDescriptorSetAllocateInfo alloc{};
 	alloc.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-	alloc.descriptorPool     = slot_->descriptors;
+	alloc.descriptorPool     = cached_descriptors_;
 	alloc.descriptorSetCount = 1;
 	alloc.pSetLayouts        = &layouts_.storage;
 	VkDescriptorSet set{VK_NULL_HANDLE};
@@ -215,6 +222,7 @@ VkDescriptorSet GpuRendererVulkan::alloc_storage_set(VkImageView src,
 		writes[i].pImageInfo      = &images[i];
 	}
 	context_.api.UpdateDescriptorSets(context_.device, 2, writes, 0, nullptr);
+	storage_cache_.push_back(StorageCacheEntry{src, dst, set});
 	return set;
 }
 

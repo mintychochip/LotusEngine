@@ -54,6 +54,7 @@ void GpuRendererVulkan::init(SDL_Window* window, bool debug_device)
 	create_samplers();
 	create_white_texture();
 	layouts_.create(context_);
+	create_descriptor_cache();
 	create_pipelines();
 	for (FrameSlot& slot : slots_) {
 		create_slot(slot);
@@ -91,6 +92,7 @@ void GpuRendererVulkan::shutdown()
 	retired_targets_.clear();
 	destroy_pipelines();
 	layouts_.destroy(context_);
+	destroy_descriptor_cache();
 	destroy_samplers();
 	destroy_targets();
 	for (FrameSlot& slot : slots_) {
@@ -456,6 +458,7 @@ void GpuRendererVulkan::ensure_pyramid_stand_in(uint32_t width, uint32_t height)
 
 void GpuRendererVulkan::destroy_targets()
 {
+	clear_descriptor_caches();
 	if (offscreen_color_.handle != VK_NULL_HANDLE) {
 		memory_.destroy_image(offscreen_color_);
 		offscreen_color_ = vk::Image{};

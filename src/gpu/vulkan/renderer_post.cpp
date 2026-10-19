@@ -60,6 +60,11 @@ VkSampler make_sampler(const vk::Api& api, VkDevice device, VkFilter min,
 
 void GpuRendererVulkan::retire_image(vk::Image image)
 {
+	// The retired view may be recreated under a recycled handle; drop the
+	// content-keyed entries so a later frame cannot hit on a dead image.
+	// Unconditional (even when null): recreates that keep the old image
+	// still replace samplers elsewhere, and clearing is nearly free.
+	clear_descriptor_caches();
 	if (image.handle == VK_NULL_HANDLE) {
 		return;
 	}
@@ -70,6 +75,7 @@ void GpuRendererVulkan::retire_image(vk::Image image)
 
 void GpuRendererVulkan::retire_pyramid_gpu()
 {
+	clear_descriptor_caches();
 	if (pyramid_.handle != VK_NULL_HANDLE) {
 		vk::Image image = pyramid_;
 		pyramid_        = vk::Image{};
