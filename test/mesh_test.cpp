@@ -119,3 +119,60 @@ TEST(MeshTest, SceneReResolvesWhenSourceChanges)
 	EXPECT_EQ(mesh.source, "builtin:sphere");
 	EXPECT_NE(mesh.indices.size(), cube_indices);
 }
+
+TEST(MeshTest, TerrainMatchesHeightAt)
+{
+	// terrain() vertices and terrain_height_at() share one noise code path,
+	// so sampled heights must be bit-identical.
+	constexpr float kSize = 20.0f;
+	constexpr int kSegments = 16;
+	constexpr float kHeight = 4.0f;
+	constexpr int kSeed = 7;
+	const Mesh ground = mesh::terrain(kSize, kSegments, kHeight, kSeed);
+	const int verts_per_side = kSegments + 1;
+	ASSERT_EQ(ground.positions.size(),
+	          static_cast<std::size_t>(verts_per_side * verts_per_side));
+	for (int z = 0; z <= kSegments; ++z) {
+		for (int x = 0; x <= kSegments; ++x) {
+			const int idx = z * verts_per_side + x;
+			const glm::vec3& p = ground.positions[idx];
+			EXPECT_FLOAT_EQ(p.y, mesh::terrain_height_at(p.x, p.z, kSize,
+			                                             kHeight, kSeed));
+		}
+	}
+}
+
+TEST(MeshTest, TerrainHeightsAreDeterministic)
+{
+	const Mesh first = mesh::terrain(20.0f, 16, 4.0f, 7);
+	const Mesh second = mesh::terrain(20.0f, 16, 4.0f, 7);
+	ASSERT_EQ(first.positions.size(), second.positions.size());
+	for (std::size_t i = 0; i < first.positions.size(); ++i) {
+		EXPECT_FLOAT_EQ(first.positions[i].y, second.positions[i].y);
+	}
+	EXPECT_FLOAT_EQ(mesh::terrain_height_at(1.0f, 2.0f, 20.0f, 4.0f, 7),
+	                mesh::terrain_height_at(1.0f, 2.0f, 20.0f, 4.0f, 7));
+	// A different seed must perturb the surface.
+	EXPECT_NE(mesh::terrain_height_at(1.0f, 2.0f, 20.0f, 4.0f, 7),
+	          mesh::terrain_height_at(1.0f, 2.0f, 20.0f, 4.0f, 8));
+}
+
+TEST(MeshTest, TerrainPinsExactHeights)
+{
+	// Quintic value-noise fbm (lacunarity 2.02, rotated domains) reference
+	// values; tolerance covers float evaluation order, not noise changes.
+	EXPECT_NEAR(mesh::terrain_height_at(0.0f, 0.0f, 20.0f, 4.0f, 7),
+	            1.5721310f, 1e-4f);
+	EXPECT_NEAR(mesh::terrain_height_at(-10.0f, -10.0f, 20.0f, 4.0f, 7),
+	            0.5853509f, 1e-4f);
+	EXPECT_NEAR(mesh::terrain_height_at(10.0f, 10.0f, 20.0f, 4.0f, 7),
+	            1.1690160f, 1e-4f);
+	EXPECT_NEAR(mesh::terrain_height_at(5.0f, 2.5f, 20.0f, 4.0f, 7),
+	            1.0690796f, 1e-4f);
+	EXPECT_NEAR(mesh::terrain_height_at(0.0f, 0.0f, 50.0f, 8.0f, 42),
+	            3.9521205f, 1e-4f);
+	EXPECT_NEAR(mesh::terrain_height_at(-25.0f, -25.0f, 50.0f, 8.0f, 42),
+	            5.3330250f, 1e-4f);
+	EXPECT_NEAR(mesh::terrain_height_at(12.5f, -7.5f, 50.0f, 8.0f, 42),
+	            1.3376019f, 1e-4f);
+}

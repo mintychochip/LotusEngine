@@ -1,6 +1,7 @@
 #include "lotus/scene/mesh.hpp"
 
 #include <cmath>
+#include <cstdint>
 
 #include "lotus/scene/glb.hpp"
 
@@ -9,7 +10,63 @@ namespace {
 
 constexpr float kPi = 3.14159265358979323846f;
 
+// Shared deterministic value-noise helpers for terrain() and
+// terrain_height_at(). Single code path so both return bit-identical heights.
+inline float terrain_hash(int x, int z, int s)
+{
+	uint32_t h = static_cast<uint32_t>(x) * 374761393u +
+	             static_cast<uint32_t>(z) * 668265263u +
+	             static_cast<uint32_t>(s) * 2147483647u;
+	h = (h ^ (h >> 13)) * 1274126177u;
+	h = h ^ (h >> 16);
+	return static_cast<float>(h & 0xFFFFFF) / static_cast<float>(0xFFFFFF);
+}
+
+// Quintic smoother (Perlin fade): 6f^5 - 15f^4 + 10f^3.
+inline float terrain_smooth(float t)
+{
+	return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
+}
+
+// 2D value noise with quintic interpolation between grid points.
+inline float terrain_noise(float x, float z, int seed)
+{
+	const int ix = static_cast<int>(std::floor(x));
+	const int iz = static_cast<int>(std::floor(z));
+	const float fx = x - static_cast<float>(ix);
+	const float fz = z - static_cast<float>(iz);
+	const float a = terrain_hash(ix, iz, seed);
+	const float b = terrain_hash(ix + 1, iz, seed);
+	const float c = terrain_hash(ix, iz + 1, seed);
+	const float d = terrain_hash(ix + 1, iz + 1, seed);
+	const float u = terrain_smooth(fx);
+	const float v = terrain_smooth(fz);
+	return a * (1.0f - u) * (1.0f - v) + b * u * (1.0f - v) +
+	       c * (1.0f - u) * v + d * u * v;
+}
+
+// 4-octave fbm, gain 0.5, lacunarity 2.02 with per-octave domain rotation
+// [0.8 -0.6; 0.6 0.8], normalized by total amplitude.
+inline float terrain_fbm(float nx, float nz, int seed)
+{
+	float value = 0.0f;
+	float amplitude = 1.0f;
+	float total = 0.0f;
+	float px = nx;
+	float pz = nz;
+	for (int octave = 0; octave < 4; ++octave) {
+		value += terrain_noise(px, pz, seed) * amplitude;
+		total += amplitude;
+		amplitude *= 0.5f;
+		const float rx = 0.8f * px - 0.6f * pz;
+		const float rz = 0.6f * px + 0.8f * pz;
+		px = rx * 2.02f;
+		pz = rz * 2.02f;
+	}
+	return value / total;
+}
 } // namespace
+
 
 Mesh cube(float size)
 {
@@ -333,51 +390,8 @@ Mesh terrain(float size, int segments, float height, int seed)
 		height = 0.0f;
 	}
 
-	// Simple value-noise hash for deterministic terrain
-	auto hash = [](int x, int z, int s) -> float {
-		uint32_t h = static_cast<uint32_t>(x) * 374761393u +
-		             static_cast<uint32_t>(z) * 668265263u +
-		             static_cast<uint32_t>(s) * 2147483647u;
-		h = (h ^ (h >> 13)) * 1274126177u;
-		h = h ^ (h >> 16);
-		return static_cast<float>(h & 0xFFFFFF) / float(0xFFFFFF);
-	};
-
-	// Smooth interpolation between grid points
-	auto smooth = [](float t) -> float {
-		return t * t * (3.0f - 2.0f * t);
-	};
-
-	// 2D value noise with bilinear interpolation
-	auto noise = [&](float x, float z) -> float {
-		const int ix = static_cast<int>(std::floor(x));
-		const int iz = static_cast<int>(std::floor(z));
-		const float fx = x - static_cast<float>(ix);
-		const float fz = z - static_cast<float>(iz);
-		const float a = hash(ix, iz, seed);
-		const float b = hash(ix + 1, iz, seed);
-		const float c = hash(ix, iz + 1, seed);
-		const float d = hash(ix + 1, iz + 1, seed);
-		const float u = smooth(fx);
-		const float v = smooth(fz);
-		return a * (1.0f - u) * (1.0f - v) + b * u * (1.0f - v) +
-		       c * (1.0f - u) * v + d * u * v;
-	};
-
-	// Multi-octave noise for mountainous look
-	auto fbm = [&](float x, float z) -> float {
-		float value = 0.0f;
-		float amplitude = 1.0f;
-		float frequency = 1.0f;
-		float total = 0.0f;
-		for (int octave = 0; octave < 4; ++octave) {
-			value += noise(x * frequency, z * frequency) * amplitude;
-			total += amplitude;
-			amplitude *= 0.5f;
-			frequency *= 2.0f;
-		}
-		return value / total;
-	};
+	// Heights come from the shared file-local terrain_fbm() so terrain() and
+	// terrain_height_at() stay bit-identical for identical inputs.
 
 	Mesh result;
 	const int verts_per_side = segments + 1;
@@ -397,7 +411,7 @@ Mesh terrain(float size, int segments, float height, int seed)
 			// Scale noise to get mountains
 			const float nx = static_cast<float>(x) / static_cast<float>(segments) * 4.0f;
 			const float nz = static_cast<float>(z) / static_cast<float>(segments) * 4.0f;
-			const float h = fbm(nx, nz) * height;
+			const float h = terrain_fbm(nx, nz, seed) * height;
 			result.positions.push_back({wx, h, wz});
 			result.uvs.push_back({
 			        static_cast<float>(x) / static_cast<float>(segments),
@@ -438,48 +452,10 @@ Mesh terrain(float size, int segments, float height, int seed)
 
 float terrain_height_at(float x, float z, float size, float height, int seed)
 {
-	auto hash = [](int xi, int zi, int s) -> float {
-		uint32_t h = static_cast<uint32_t>(xi) * 374761393u +
-		             static_cast<uint32_t>(zi) * 668265263u +
-		             static_cast<uint32_t>(s) * 2147483647u;
-		h = (h ^ (h >> 13)) * 1274126177u;
-		h = h ^ (h >> 16);
-		return static_cast<float>(h & 0xFFFFFF) / float(0xFFFFFF);
-	};
-	auto smooth = [](float t) -> float {
-		return t * t * (3.0f - 2.0f * t);
-	};
-	auto noise = [&](float nx, float nz) -> float {
-		const int ix = static_cast<int>(std::floor(nx));
-		const int iz = static_cast<int>(std::floor(nz));
-		const float fx = nx - static_cast<float>(ix);
-		const float fz = nz - static_cast<float>(iz);
-		const float a = hash(ix, iz, seed);
-		const float b = hash(ix + 1, iz, seed);
-		const float c = hash(ix, iz + 1, seed);
-		const float d = hash(ix + 1, iz + 1, seed);
-		const float u = smooth(fx);
-		const float v = smooth(fz);
-		return a * (1.0f - u) * (1.0f - v) + b * u * (1.0f - v) +
-		       c * (1.0f - u) * v + d * u * v;
-	};
-	auto fbm = [&](float nx, float nz) -> float {
-		float value = 0.0f;
-		float amplitude = 1.0f;
-		float frequency = 1.0f;
-		float total = 0.0f;
-		for (int octave = 0; octave < 4; ++octave) {
-			value += noise(nx * frequency, nz * frequency) * amplitude;
-			total += amplitude;
-			amplitude *= 0.5f;
-			frequency *= 2.0f;
-		}
-		return value / total;
-	};
 	const float half_size = size * 0.5f;
 	const float nx = (x + half_size) / size * 4.0f;
 	const float nz = (z + half_size) / size * 4.0f;
-	return fbm(nx, nz) * height;
+	return terrain_fbm(nx, nz, seed) * height;
 }
 
 BoundingSphere compute_mesh_bounds(const Mesh& mesh)

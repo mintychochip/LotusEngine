@@ -27,6 +27,22 @@ Entity make_terrain_floor(Scene& scene, const HeightFieldCollider& collider)
 }
 
 } // namespace
+TEST(HeightFieldColliderTest, PinsExactTerrainHeight)
+{
+	// Reference value for the quintic fbm (lacunarity 2.02, rotated
+	// domains); the collider samples the same shared code path.
+	EXPECT_NEAR(mesh::terrain_height_at(0.0f, 0.0f, kTerrainSize,
+	                                    kPeakHeight, kTerrainSeed),
+	            1.5721310f, 1e-4f);
+	EXPECT_NEAR(mesh::terrain_height_at(5.0f, 2.5f, kTerrainSize,
+	                                    kPeakHeight, kTerrainSeed),
+	            1.0690796f, 1e-4f);
+	// Deterministic per seed.
+	EXPECT_FLOAT_EQ(mesh::terrain_height_at(1.0f, -3.0f, kTerrainSize,
+	                                        kPeakHeight, kTerrainSeed),
+	                mesh::terrain_height_at(1.0f, -3.0f, kTerrainSize,
+	                                        kPeakHeight, kTerrainSeed));
+}
 
 TEST(HeightFieldColliderTest, RaycastHitsTerrainSurface)
 {
