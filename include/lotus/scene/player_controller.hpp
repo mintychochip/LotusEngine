@@ -20,6 +20,38 @@ struct FollowCameraSettings {
 /// half-height, so 1.5 m sits a little below the top of the head.
 inline constexpr float kFirstPersonEyeHeight{1.5f};
 
+/// Sensitivity of mouse look: radians of yaw/pitch per pixel of right-drag.
+inline constexpr float kLookSensitivity{0.005f};
+
+/// Look pitch limit (radians, 80 degrees): the view never tilts past
+/// ±80°, so it can never flip over the top.
+inline constexpr float kMaxLookPitch{1.3962634f};
+
+/// Transient per-camera look state (never serialized): the view direction
+/// owned by the controller, fed by right-drag and consulted every frame by
+/// \c update_follow_camera, the only writer of the camera pose. Absent on
+/// the camera entity means the neutral view (zero yaw and pitch).
+struct CameraLookState {
+	float yaw_radians{0.0f};
+	float pitch_radians{0.0f};
+};
+
+/// Reports the controller-owned look direction (neutral when there is no
+/// camera or no drag has happened yet).
+CameraLookState camera_look(Scene& scene);
+
+/// Sets the look direction, wrapping yaw to (-pi, pi] and clamping pitch
+/// to ±\c kMaxLookPitch. No-op without a camera. This is the
+/// \c --exec-visible seam headless screenshots use (\c camera.look).
+void set_camera_look(Scene& scene, float yaw_radians, float pitch_radians);
+
+/// Applies a right-drag delta in pixels (SDL motion units: +x right, +y
+/// down): horizontal motion yaws (unbounded, wrapping), vertical motion
+/// pitches (clamped, never flipping). Returns the resulting look state.
+/// No-op (neutral) without a camera.
+CameraLookState apply_look_delta(Scene& scene, float dx_pixels,
+                                 float dy_pixels);
+
 /// World-space walk direction on the XZ plane from camera forward and strafe
 /// input in [-1, 1]. Returns zero when input is neutral.
 glm::vec3 movement_direction_from_camera(const Camera3D& camera,

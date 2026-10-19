@@ -105,6 +105,14 @@ bool Editor::captures_keyboard() const
 	return ImGui::GetIO().WantCaptureKeyboard;
 }
 
+bool Editor::captures_mouse() const
+{
+	if (!initialized_ || !visible_) {
+		return false;
+	}
+	return ImGui::GetIO().WantCaptureMouse;
+}
+
 
 void Editor::begin_frame()
 {
