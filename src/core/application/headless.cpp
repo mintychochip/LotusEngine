@@ -73,6 +73,7 @@ bool capture_screenshot(Scene& scene, const HeadlessOptions& options,
 				gpu.lighting().color     = s.light_color;
 				gpu.lighting().intensity = s.light_intensity;
 				gpu.lighting().ambient   = s.ambient;
+				gpu.lighting().exposure = s.exposure;
 			}
 			const float aspect =
 			        static_cast<float>(options.width) /

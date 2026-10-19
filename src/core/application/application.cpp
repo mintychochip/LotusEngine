@@ -477,10 +477,6 @@ void Application::handle_action(const std::string& action)
 		editor_.toggle();
 	} else if (action == "console.toggle") {
 		editor_.toggle_console();
-	} else if (action == "undo") {
-		editor_.request_undo();
-	} else if (action == "redo") {
-		editor_.request_redo();
 	} else if (action == "scene.save") {
 		std::string error;
 		if (!save_scene_now(&error)) {
@@ -602,7 +598,6 @@ void Application::adopt_scene_path(const std::string& path)
 	// Re-key the watcher, or hot reload keeps reloading the scene we left.
 	watcher_.watch("scene", path);
 	scene_status_ = "watching " + path;
-	editor_.reset_history();
 }
 
 bool Application::save_scene_now(std::string* error)
@@ -623,7 +618,6 @@ bool Application::save_scene_now(std::string* error)
 		return false;
 	}
 	scene_status_ = "saved " + scene_path_;
-	editor_.clear_dirty();
 	// Re-baseline so our own write does not trigger a reload.
 	watcher_.watch("scene", scene_path_);
 	return true;
@@ -648,8 +642,6 @@ bool Application::reload_scene_now(std::string* error)
 		return false;
 	}
 	scene_status_ = "reloaded " + scene_path_;
-	// The scene was replaced wholesale; undo history no longer applies.
-	editor_.reset_history();
 	bind_active_scene();
 	scripts_.sync(*scene);
 	return true;
@@ -792,14 +784,7 @@ void Application::run(int width, int height, const std::string& title)
 		}
 
 		editor_.set_console(&console_);
-		editor_.set_keybinds(&keybinds_, [this] {
-			std::string error;
-			if (!keybinds_.save(keybinds_path_, &error)) {
-				console_.warn(error);
-			} else {
-				console_.info("saved " + keybinds_path_);
-			}
-		});
+		editor_.set_keybinds(&keybinds_);
 
 		on_ready(window, gpu);
 		wire_assets();
@@ -816,27 +801,12 @@ void Application::run(int width, int height, const std::string& title)
 
 		editor_.set_scene_controls(Editor::SceneControls{
 		        [this] { return scene_path_; },
-		        [this] { return scene_status_; },
-		        [this] { save_scene_now(); },
-		        [this] { reload_scene_now(); }});
-
-		editor_.set_prefab_controls(Editor::PrefabControls{
-		        [this] { return prefab_names(); },
-		        [this](Entity root, const std::string& name, std::string* error) {
-			        return save_prefab_now(root, name, error);
-		        },
-		        [this](const std::string& name, Entity parent) {
-			        return instantiate_prefab(name, parent);
-		        }});
+		        [this] { return scene_status_; }});
 
 		editor_.set_physics(&physics_);
 		editor_.set_asset_controls(Editor::AssetControls{
 		        [this] { return &assets_; },
 		        [this] { return assets_status_; },
-		        [this] {
-			        std::string error;
-			        load_assets_now(&error);
-		        },
 		        [this](Scene* scene) {
 			        std::vector<std::string> out;
 			        if (scene == nullptr) {
@@ -932,6 +902,7 @@ void Application::run(int width, int height, const std::string& title)
 				gpu.lighting().color     = s.light_color;
 				gpu.lighting().intensity = s.light_intensity;
 				gpu.lighting().ambient   = s.ambient;
+				gpu.lighting().exposure = s.exposure;
 			}
 			gpu.begin_frame(window.handle(), 0.05f, 0.05f, 0.08f);
 			if (gpu.has_frame()) {

@@ -179,6 +179,7 @@ void RPGGame::on_ready(Window& /*window*/, GpuRenderer& gpu)
     gpu.lighting().direction = {0.5f, 0.9f, 0.4f};
     gpu.lighting().intensity = 1.0f;
     gpu.lighting().ambient   = {0.12f, 0.13f, 0.17f};
+    gpu.lighting().exposure = 1.0f;
 
     // Load or create the demo scene
     std::string error;
@@ -241,46 +242,6 @@ void RPGGame::on_ready(Window& /*window*/, GpuRenderer& gpu)
                        std::to_string(consumable_slot_index));
     });
 
-    // Wire up editor play controls
-    editor().set_play_controls(Editor::PlayControls{
-            [this] { return play_mode_; },
-            [this] { enter_play_mode(); },
-            [this] { exit_play_mode(); }});
-
-    editor().set_extra_components(
-            {"Stats", "Health", "Mana", "Inventory", "Combat", "NPC", "Loot",
-             "Interactable", "AI", "Dialogue", "Quest"},
-            [](Registry& registry, Entity entity, const std::string& name) {
-	            auto add = [&](auto component) {
-		            using T = decltype(component);
-		            if (!registry.all_of<T>(entity)) {
-			            registry.emplace<T>(entity, component);
-		            }
-	            };
-	            if (name == "Stats") {
-		            add(Stats{});
-	            } else if (name == "Health") {
-		            add(Health{});
-	            } else if (name == "Mana") {
-		            add(Mana{});
-	            } else if (name == "Inventory") {
-		            add(Inventory{});
-	            } else if (name == "Combat") {
-		            add(Combat{});
-	            } else if (name == "NPC") {
-		            add(NPC{});
-	            } else if (name == "Loot") {
-		            add(Loot{});
-	            } else if (name == "Interactable") {
-		            add(Interactable{});
-	            } else if (name == "AI") {
-		            add(AI{});
-	            } else if (name == "Dialogue") {
-		            add(Dialogue{});
-	            } else if (name == "Quest") {
-		            add(Quest{});
-	            }
-            });
 }
 
 void RPGGame::on_scene_committed(Scene& scene)

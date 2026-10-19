@@ -2,12 +2,13 @@
 
 #include <SDL3/SDL.h>
 
+#include <cstdint>
 #include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "lotus/ecs.hpp"
-#include "lotus/scene/history.hpp"
 
 namespace lotus {
 
@@ -19,12 +20,14 @@ class PhysicsWorld;
 class SceneManager;
 class Scene;
 
-/// Dear ImGui editor: scene hierarchy, entity inspector, stats, console, and
-/// keybind reference, plus scene-file controls (save / hot reload).
+/// Read-only scene viewer (Dear ImGui): viewport with camera orbit, scene
+/// hierarchy, read-only entity inspector, stats, scene-file status, asset
+/// list, keybind reference, and console.
 ///
-/// Structural components (Transform, Hierarchy, Name) are owned by Scene and
-/// are not removable from the UI; optional components (Sprite, Camera2D,
-/// Script) can be added and removed.
+/// The viewer never mutates the scene or the disk: every widget is
+/// display-only, selection is the only state it keeps, and all saving,
+/// reloading, spawning, and prefab work lives in Application behind console
+/// commands (the agent/CLI surface).
 class Editor {
 public:
 	Editor() = default;
@@ -33,68 +36,36 @@ public:
 	Editor(const Editor&)            = delete;
 	Editor& operator=(const Editor&) = delete;
 
-	/// Pull-based controls for the scene file panel.
+	/// Pull-based read-only status for the scene file panel.
 	struct SceneControls {
 		std::function<std::string()> path;
 		std::function<std::string()> status;
-		std::function<void()> on_save;
-		std::function<void()> on_reload;
 	};
 
-	/// Pull-based controls for the prefab panel. The Application owns the
-	/// prefab directory and the active scene, so the editor asks rather than
-	/// reaching for either.
+	/// Pull-based read-only status for the asset panel.
 	struct AssetControls {
 		std::function<const AssetRegistry*()> registry;
 		std::function<std::string()> status;
-		std::function<void()> on_reload;
 		/// Unknown asset keys referenced by the active scene (sorted, unique).
 		std::function<std::vector<std::string>(Scene* scene)> dangling_refs;
-	};
-
-	struct PrefabControls {
-		std::function<std::vector<std::string>()> names;
-		/// Saves \p root and its descendants as a named prefab. Returns false
-		/// and fills \p error on failure.
-		std::function<bool(Entity root, const std::string& name,
-		                   std::string* error)>
-		        create_from;
-		/// Instantiates \p name under \p parent. NullEntity on failure.
-		std::function<Entity(const std::string& name, Entity parent)> instantiate;
-	};
-
-	/// Pull-based controls for the play mode button.
-	struct PlayControls {
-		std::function<bool()> is_play_mode;
-		std::function<void()> on_enter_play;
-		std::function<void()> on_exit_play;
 	};
 
 	bool init(SDL_Window* window, GpuRenderer& gpu);
 	void shutdown();
 
-	void set_scene_controls(SceneControls controls);
-	void set_prefab_controls(PrefabControls controls)
+	void set_scene_controls(SceneControls controls)
 	{
-		prefab_controls_ = std::move(controls);
+		scene_controls_ = std::move(controls);
 	}
 	void set_asset_controls(AssetControls controls)
 	{
 		asset_controls_ = std::move(controls);
 	}
-	void set_play_controls(PlayControls controls)
-	{
-		play_controls_ = std::move(controls);
-	}
-	/// Names appended to the inspector's Add-component list. \p add emplaces
-	/// the named component. The editor does not know the component types.
-	void set_extra_components(
-	        std::vector<std::string> names,
-	        std::function<void(Registry&, Entity, const std::string&)> add);
 	/// Optional physics backend for viewport picking (raycast vs colliders).
 	void set_physics(PhysicsWorld* physics) { physics_ = physics; }
 	void set_console(Console* console) { console_ = console; }
-	void set_keybinds(Keybinds* keybinds, std::function<void()> on_save);
+	/// Read-only keybind reference; the viewer never saves keybinds.
+	void set_keybinds(Keybinds* keybinds) { keybinds_ = keybinds; }
 
 	void process_event(const SDL_Event& event);
 
@@ -103,7 +74,7 @@ public:
 
 	/// Starts an ImGui frame. No-op when hidden.
 	void begin_frame();
-	/// Builds the panels. No-op when hidden.
+	/// Builds the panels. No-op when hidden. Never mutates the scene.
 	void draw(SceneManager& scenes, float dt);
 	/// Renders the accumulated UI into its own render pass. No-op when hidden.
 	void render(GpuRenderer& gpu);
@@ -115,13 +86,6 @@ public:
 	bool console_visible() const { return console_visible_; }
 	void toggle_console() { console_visible_ = !console_visible_; }
 
-	/// True when the UI changed the scene since the last save.
-	bool dirty() const { return dirty_; }
-	void clear_dirty() { dirty_ = false; }
-	bool auto_save() const { return auto_save_; }
-
-	/// Drops the undo history (e.g. after a hot reload replaced the scene).
-	void reset_history() { history_scene_ = nullptr; }
 	/// Size of the viewport panel in pixels. The application queries this
 	/// to size the offscreen render target.
 	struct ViewportSize {
@@ -130,14 +94,6 @@ public:
 	};
 	ViewportSize viewport_size() const { return viewport_size_; }
 
-
-
-	bool can_undo() const { return history_.can_undo(); }
-	bool can_redo() const { return history_.can_redo(); }
-
-	void request_undo() { undo_requested_ = true; }
-	void request_redo() { redo_requested_ = true; }
-
 private:
 	void draw_viewport(Scene& scene);
 	void draw_hierarchy(Scene& scene);
@@ -145,35 +101,20 @@ private:
 	void draw_inspector(Scene& scene);
 	void draw_stats(SceneManager& scenes, float dt);
 	void draw_scene_panel();
-	void draw_console();
-	void draw_prefabs(Scene& scene);
 	void draw_assets(Scene* scene);
+	void draw_keybinds();
+	void draw_console();
 
 	bool initialized_{false};
 	bool frame_open_{false};
 	bool visible_{true};
-	std::vector<std::string> extra_component_names_;
-	std::function<void(Registry&, Entity, const std::string&)> extra_component_add_;
-	bool dirty_{false};
-	bool auto_save_{false};
-	bool edited_{false};
-	bool undo_requested_{false};
-	bool redo_requested_{false};
 	Entity selected_{NullEntity};
 	SceneControls scene_controls_;
 	AssetControls asset_controls_;
-	PrefabControls prefab_controls_;
-	PlayControls play_controls_;
-	char prefab_name_[64]{"prefab"};
-	std::string prefab_error_;
-
-	SceneHistory history_;
-	const Scene* history_scene_{nullptr};
 
 	PhysicsWorld* physics_{nullptr};
 	Console* console_{nullptr};
 	Keybinds* keybinds_{nullptr};
-	std::function<void()> save_keybinds_;
 	bool console_visible_{false};
 	bool refocus_console_{false};
 	bool console_scroll_{false};
@@ -182,14 +123,6 @@ private:
 	int console_history_pos_{-1};
 	ViewportSize viewport_size_;
 	GpuRenderer* gpu_{nullptr};
-
-	// Viewport interaction. gizmo_axis_ is 0/1/2 for X/Y/Z while a handle is
-	// hovered or dragged, -1 when idle. The drag is incremental: each frame
-	// applies the mouse movement since the previous frame along the axis.
-	int gizmo_axis_{-1};
-	bool gizmo_dragging_{false};
-	float gizmo_last_mouse_x_{0.0f};
-	float gizmo_last_mouse_y_{0.0f};
 };
 
 } // namespace lotus
