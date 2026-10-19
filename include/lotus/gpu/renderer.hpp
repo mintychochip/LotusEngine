@@ -16,6 +16,7 @@
 #include "lotus/scene/depth_pyramid.hpp"
 
 struct SDL_Window;
+struct ImDrawData;
 
 namespace lotus {
 
@@ -310,6 +311,10 @@ public:
 	/// Downloads the offscreen colour target as tightly packed RGBA8.
 	/// Returns an empty vector if this renderer is not in offscreen mode.
 	std::vector<uint8_t> capture_rgba(uint32_t& width, uint32_t& height);
+	/// Downloads the editor viewport texture as tightly packed RGBA8. Returns
+	/// an empty vector when there is no viewport texture.
+	std::vector<uint8_t> capture_viewport_rgba(uint32_t& width,
+	                                           uint32_t& height);
 	/// Resizes the offscreen target, and with it the depth buffer and the
 	/// occlusion pyramid. Offscreen mode only. Returns false, leaving the
 	/// renderer untouched, when not in offscreen mode or the new colour
@@ -327,7 +332,6 @@ public:
 	/// ("NVIDIA"); valid until shutdown(), empty before init.
 	const char* device_name() const;
 	const char* device_driver() const;
-	SDL_GPUDevice* device() const { return device_; }
 	const char* driver_name() const;
 
 	// --- frame ---
@@ -413,14 +417,24 @@ public:
 	void end_scene_pass();
 	void end_frame();
 
-	// --- for UI layers that open their own pass on the same command buffer ---
-
 	/// False when no swapchain texture was available (frame should be skipped).
 	bool has_frame() const { return cmd_ != nullptr; }
 
-	SDL_GPUCommandBuffer* command_buffer() const { return cmd_; }
-	SDL_GPUTexture* swapchain_texture() const { return swapchain_; }
-	SDL_GPUTextureFormat swapchain_format() const { return swapchain_format_; }
+	// --- UI layer (Dear ImGui) ---
+	//
+	// The renderer owns the ImGui renderer backend, so the editor never
+	// touches a GPU handle; the platform backend (ImGui_ImplSDL3_*) stays
+	// with the editor.
+
+	/// Creates the ImGui renderer backend that draws onto the swapchain.
+	/// False when it could not be created.
+	bool init_ui_backend();
+	void shutdown_ui_backend();
+	/// Per-frame backend state; call before ImGui::NewFrame().
+	void ui_backend_new_frame();
+	/// Records \p draw_data over the swapchain image of the frame in flight,
+	/// keeping what is already there. Does nothing for a frame without one.
+	void render_ui(ImDrawData* draw_data);
 
 	/// CPU copy of the previous frame's depth pyramid. Never null; empty when
 	/// the fence has not landed yet, in which case occlusion is skipped.
@@ -446,9 +460,9 @@ public:
 	/// True when the viewport texture is ready to be sampled by ImGui.
 	bool viewport_ready() const { return viewport_texture_ != nullptr; }
 
-	/// The offscreen texture the scene renders into for the editor viewport.
-	/// Valid only when viewport_ready() is true.
-	SDL_GPUTexture* viewport_texture() const { return viewport_texture_; }
+	/// The viewport texture as an ImGui texture id (ImGui::Image). Valid only
+	/// when viewport_ready() is true.
+	uint64_t viewport_ui_texture() const;
 
 	/// Width of the viewport texture in pixels.
 	uint32_t viewport_width() const { return viewport_width_; }
@@ -512,6 +526,11 @@ private:
 		uint32_t first_instance{0};
 		uint32_t instance_count{0};
 	};
+
+	/// Waits for the GPU, then reads \p texture (RGBA8, \p width x \p height)
+	/// back as tightly packed bytes.
+	std::vector<uint8_t> download_rgba(SDL_GPUTexture* texture, uint32_t width,
+	                                   uint32_t height);
 
 	void create_pipeline();
 	/// Starts a frame's geometry bookkeeping: drops the previous frame's draw

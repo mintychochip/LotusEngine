@@ -2,7 +2,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <vector>
 
 #include <SDL3/SDL.h>
@@ -117,50 +116,6 @@ std::vector<uint8_t> render_scene_pass(GpuRenderer& gpu, Scene& scene, bool sky)
 	return pixels;
 }
 
-/// The viewport texture as RGBA. The renderer only reads back its offscreen
-/// target, so this does what capture_rgba does for the viewport's.
-std::vector<uint8_t> download_viewport(GpuRenderer& gpu)
-{
-	SDL_GPUDevice* device    = gpu.device();
-	const uint32_t width     = gpu.viewport_width();
-	const uint32_t height    = gpu.viewport_height();
-	const uint32_t byte_size = width * height * 4;
-	SDL_WaitForGPUIdle(device);
-
-	SDL_GPUTransferBufferCreateInfo info{};
-	info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
-	info.size  = byte_size;
-	SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(device, &info);
-	EXPECT_NE(transfer, nullptr) << SDL_GetError();
-	if (transfer == nullptr) {
-		return {};
-	}
-
-	SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(device);
-	SDL_GPUCopyPass* copy     = SDL_BeginGPUCopyPass(cmd);
-	SDL_GPUTextureRegion region{};
-	region.texture = gpu.viewport_texture();
-	region.w       = width;
-	region.h       = height;
-	region.d       = 1;
-	SDL_GPUTextureTransferInfo destination{};
-	destination.transfer_buffer = transfer;
-	SDL_DownloadFromGPUTexture(copy, &region, &destination);
-	SDL_EndGPUCopyPass(copy);
-	EXPECT_TRUE(SDL_SubmitGPUCommandBuffer(cmd)) << SDL_GetError();
-	SDL_WaitForGPUIdle(device);
-
-	std::vector<uint8_t> pixels(byte_size);
-	const void* mapped = SDL_MapGPUTransferBuffer(device, transfer, false);
-	EXPECT_NE(mapped, nullptr) << SDL_GetError();
-	if (mapped != nullptr) {
-		std::memcpy(pixels.data(), mapped, byte_size);
-		SDL_UnmapGPUTransferBuffer(device, transfer);
-	}
-	SDL_ReleaseGPUTransferBuffer(device, transfer);
-	return pixels;
-}
-
 /// Three frames, the last of which is returned as RGBA: the viewport pass into
 /// the editor's viewport texture, which has a pass of its own.
 std::vector<uint8_t> render_viewport_pass(GpuRenderer& gpu, Scene& scene,
@@ -176,7 +131,12 @@ std::vector<uint8_t> render_viewport_pass(GpuRenderer& gpu, Scene& scene,
 		gpu.end_frame();
 		gpu.wait_idle();
 	}
-	return download_viewport(gpu);
+	uint32_t width  = 0;
+	uint32_t height = 0;
+	std::vector<uint8_t> pixels = gpu.capture_viewport_rgba(width, height);
+	EXPECT_EQ(width, kViewportWidth);
+	EXPECT_EQ(height, kViewportHeight);
+	return pixels;
 }
 
 bool same_pixel(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b,

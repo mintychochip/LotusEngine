@@ -2,7 +2,6 @@
 
 #include <imgui.h>
 #include <imgui_impl_sdl3.h>
-#include <imgui_impl_sdlgpu3.h>
 
 #include <algorithm>
 #include <cmath>
@@ -64,11 +63,7 @@ bool Editor::init(SDL_Window* window, GpuRenderer& gpu)
 	if (!ImGui_ImplSDL3_InitForSDLGPU(window)) {
 		return false;
 	}
-	ImGui_ImplSDLGPU3_InitInfo info{};
-	info.Device            = gpu.device();
-	info.ColorTargetFormat = gpu.swapchain_format();
-	info.MSAASamples       = SDL_GPU_SAMPLECOUNT_1;
-	if (!ImGui_ImplSDLGPU3_Init(&info)) {
+	if (!gpu.init_ui_backend()) {
 		ImGui_ImplSDL3_Shutdown();
 		return false;
 	}
@@ -82,7 +77,7 @@ void Editor::shutdown()
 	if (!initialized_) {
 		return;
 	}
-	ImGui_ImplSDLGPU3_Shutdown();
+	gpu_->shutdown_ui_backend();
 	ImGui_ImplSDL3_Shutdown();
 	ImGui::DestroyContext();
 	initialized_ = false;
@@ -112,7 +107,7 @@ void Editor::begin_frame()
 		return;
 	}
 	ImGui_ImplSDL3_NewFrame();
-	ImGui_ImplSDLGPU3_NewFrame();
+	gpu_->ui_backend_new_frame();
 	ImGui::NewFrame();
 	frame_open_ = true;
 }
@@ -253,7 +248,7 @@ void Editor::draw_viewport(Scene& scene)
 		return;
 	}
 
-	ImGui::Image(ImTextureID(gpu_->viewport_texture()), avail);
+	ImGui::Image(ImTextureID(gpu_->viewport_ui_texture()), avail);
 	const ImVec2 image_min  = ImGui::GetItemRectMin();
 	const ImVec2 image_max  = ImGui::GetItemRectMax();
 	const ImVec2 image_size{image_max.x - image_min.x, image_max.y - image_min.y};
@@ -602,24 +597,7 @@ void Editor::render(GpuRenderer& gpu)
 	}
 	frame_open_ = false;
 	ImGui::Render();
-	ImDrawData* draw_data = ImGui::GetDrawData();
-	if (!draw_data || draw_data->CmdListsCount == 0 || !gpu.command_buffer() ||
-	    !gpu.swapchain_texture()) {
-		return;
-	}
-	ImGui_ImplSDLGPU3_PrepareDrawData(draw_data, gpu.command_buffer());
-
-	SDL_GPUColorTargetInfo target{};
-	target.texture  = gpu.swapchain_texture();
-	target.load_op  = SDL_GPU_LOADOP_LOAD;
-	target.store_op = SDL_GPU_STOREOP_STORE;
-
-	SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(gpu.command_buffer(),
-	                                                 &target,
-	                                                 1,
-	                                                 nullptr);
-	ImGui_ImplSDLGPU3_RenderDrawData(draw_data, gpu.command_buffer(), pass);
-	SDL_EndGPURenderPass(pass);
+	gpu.render_ui(ImGui::GetDrawData());
 }
 
 } // namespace lotus

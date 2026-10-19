@@ -27,6 +27,8 @@
 #include <fstream>
 #include <cmath>
 #include <stdexcept>
+#include <imgui.h>
+#include <imgui_impl_sdlgpu3.h>
 
 namespace lotus {
 namespace {
@@ -1838,10 +1840,29 @@ std::vector<uint8_t> GpuRenderer::capture_rgba(uint32_t& width, uint32_t& height
 	if (!offscreen_ || !offscreen_color_) {
 		return {};
 	}
-	SDL_WaitForGPUIdle(device_);
-
 	width  = offscreen_width_;
 	height = offscreen_height_;
+	return download_rgba(offscreen_color_, width, height);
+}
+
+std::vector<uint8_t> GpuRenderer::capture_viewport_rgba(uint32_t& width,
+                                                        uint32_t& height)
+{
+	width  = 0;
+	height = 0;
+	if (!device_ || !viewport_texture_) {
+		return {};
+	}
+	width  = viewport_width_;
+	height = viewport_height_;
+	return download_rgba(viewport_texture_, width, height);
+}
+
+std::vector<uint8_t> GpuRenderer::download_rgba(SDL_GPUTexture* texture,
+                                                uint32_t width, uint32_t height)
+{
+	SDL_WaitForGPUIdle(device_);
+
 	const uint32_t byte_size = width * height * 4;
 
 	SDL_GPUTransferBufferCreateInfo transfer_info{};
@@ -1856,7 +1877,7 @@ std::vector<uint8_t> GpuRenderer::capture_rgba(uint32_t& width, uint32_t& height
 	SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(device_);
 	SDL_GPUCopyPass* pass     = SDL_BeginGPUCopyPass(cmd);
 	SDL_GPUTextureRegion region{};
-	region.texture = offscreen_color_;
+	region.texture = texture;
 	region.w       = width;
 	region.h       = height;
 	region.d       = 1;
@@ -2961,6 +2982,50 @@ const char* GpuRenderer::device_driver() const
 	                         SDL_GetGPUDeviceProperties(device_),
 	                         SDL_PROP_GPU_DEVICE_DRIVER_NAME_STRING, "?")
 	               : "";
+}
+
+bool GpuRenderer::init_ui_backend()
+{
+	if (!device_) {
+		return false;
+	}
+	ImGui_ImplSDLGPU3_InitInfo info{};
+	info.Device            = device_;
+	info.ColorTargetFormat = swapchain_format_;
+	info.MSAASamples       = SDL_GPU_SAMPLECOUNT_1;
+	return ImGui_ImplSDLGPU3_Init(&info);
+}
+
+void GpuRenderer::shutdown_ui_backend()
+{
+	ImGui_ImplSDLGPU3_Shutdown();
+}
+
+void GpuRenderer::ui_backend_new_frame()
+{
+	ImGui_ImplSDLGPU3_NewFrame();
+}
+
+void GpuRenderer::render_ui(ImDrawData* draw_data)
+{
+	if (!draw_data || draw_data->CmdListsCount == 0 || !cmd_ || !swapchain_) {
+		return;
+	}
+	ImGui_ImplSDLGPU3_PrepareDrawData(draw_data, cmd_);
+
+	SDL_GPUColorTargetInfo target{};
+	target.texture  = swapchain_;
+	target.load_op  = SDL_GPU_LOADOP_LOAD;
+	target.store_op = SDL_GPU_STOREOP_STORE;
+
+	SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd_, &target, 1, nullptr);
+	ImGui_ImplSDLGPU3_RenderDrawData(draw_data, cmd_, pass);
+	SDL_EndGPURenderPass(pass);
+}
+
+uint64_t GpuRenderer::viewport_ui_texture() const
+{
+	return reinterpret_cast<uint64_t>(viewport_texture_);
 }
 
 } // namespace lotus
