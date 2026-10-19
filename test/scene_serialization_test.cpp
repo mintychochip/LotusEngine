@@ -582,3 +582,52 @@ TEST(SceneSerialization, OldV3SettingsWithoutRealismKeysKeepDefaults)
 	EXPECT_NE(to_json_string(loaded).find("\"version\": 3"),
 	          std::string::npos);
 }
+
+TEST(SceneSerialization, SkySettingsRoundTrip)
+{
+	// The procedural-sky slice survives save/load, including off.
+	Scene with{"s"};
+	SceneSettings settings;
+	settings.sky_enabled   = false;
+	settings.horizon_warmth = 0.5f;
+	with.set_settings(settings);
+
+	const std::string text = to_json_string(with);
+	EXPECT_NE(text.find("\"sky_enabled\""), std::string::npos) << text;
+	EXPECT_NE(text.find("\"horizon_warmth\""), std::string::npos) << text;
+
+	Scene loaded{"s"};
+	ASSERT_TRUE(scene_from_json(loaded, text, nullptr));
+	ASSERT_TRUE(loaded.has_settings());
+	EXPECT_FALSE(loaded.settings().sky_enabled);
+	EXPECT_FLOAT_EQ(loaded.settings().horizon_warmth, 0.5f);
+}
+
+TEST(SceneSerialization, OldV3SettingsWithoutSkyKeysKeepDefaults)
+{
+	// Documents written before the sky slice carry neither new key. They
+	// must still load with the sky enabled at neutral warmth (no black
+	// void), and the saved form still declares version 3: the keys are
+	// optional within v3, never a version bump.
+	Scene loaded{"s"};
+	ASSERT_TRUE(scene_from_json(loaded,
+	                            R"({"version":3,"name":"p","settings":{)"
+	                            R"("light_direction":[0.0,-1.0,0.0],)"
+	                            R"("light_color":[1.0,1.0,1.0],)"
+	                            R"("light_intensity":2.0,)"
+	                            R"("ambient":[0.1,0.1,0.1],)"
+	                            R"("exposure":1.0,)"
+	                            R"("sky_color":[0.25,0.35,0.5],)"
+	                            R"("ground_color":[0.1,0.08,0.06],)"
+	                            R"("shadows_enabled":true,)"
+	                            R"("fxaa_enabled":true)"
+	                            R"(},"entities":[]})",
+	                            nullptr));
+	ASSERT_TRUE(loaded.has_settings());
+	const SceneSettings defaults;
+	EXPECT_TRUE(loaded.settings().sky_enabled);
+	EXPECT_FLOAT_EQ(loaded.settings().horizon_warmth,
+	                defaults.horizon_warmth);
+	EXPECT_NE(to_json_string(loaded).find("\"version\": 3"),
+	          std::string::npos);
+}

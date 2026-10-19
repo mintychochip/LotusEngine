@@ -10,7 +10,10 @@
 #include "lotus/gpu/shadow.frag.spv.h"
 #include "lotus/gpu/fxaa.vert.spv.h"
 #include "lotus/gpu/fxaa.frag.spv.h"
+#include "lotus/gpu/sky.vert.spv.h"
+#include "lotus/gpu/sky.frag.spv.h"
 
+#include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <cstring>
@@ -88,6 +91,27 @@ struct FxaaUniforms {
 
 static_assert(sizeof(FxaaUniforms) == 16,
               "must match fxaa.frag's std140 block");
+
+/// Must match shaders/sky.vert (set 1, binding 0).
+struct SkyVertexUniforms {
+	glm::mat4 inv_view_projection;
+};
+
+static_assert(sizeof(SkyVertexUniforms) == 64,
+              "must match sky.vert's std140 block");
+
+/// Must match shaders/sky.frag (set 3, binding 0).
+struct SkyFragmentUniforms {
+	glm::vec4 camera_position;
+	glm::vec4 sky_color;
+	glm::vec4 ground_color;
+	glm::vec4 sun_direction;
+	glm::vec4 sun_color; // rgb + intensity in .a
+	glm::vec4 params;    // x: exposure; y: horizon_warmth; zw reserved
+};
+
+static_assert(sizeof(SkyFragmentUniforms) == 96,
+              "must match sky.frag's std140 block");
 
 SDL_GPUShader* create_shader(SDL_GPUDevice* device, bool vertex)
 {
@@ -872,6 +896,120 @@ void GpuRenderer::destroy_fxaa()
 	pass_destination_ = nullptr;
 }
 
+bool GpuRenderer::ensure_sky_pipeline()
+{
+	if (!device_ || swapchain_format_ == SDL_GPU_TEXTUREFORMAT_INVALID) {
+		return false;
+	}
+	if (sky_unavailable_) {
+		return false;
+	}
+	if (sky_pipeline_ && sky_format_ == swapchain_format_) {
+		return true;
+	}
+	destroy_sky();
+	SDL_GPUShader* vert = create_graphics_shader(
+	        device_, SDL_GPU_SHADERSTAGE_VERTEX, sky_vert_spv,
+	        sky_vert_spv_len, 0, 1);
+	SDL_GPUShader* frag = create_graphics_shader(
+	        device_, SDL_GPU_SHADERSTAGE_FRAGMENT, sky_frag_spv,
+	        sky_frag_spv_len, 0, 1);
+	if (vert && frag) {
+		// Same attachments as the lit pipeline: colour target 0 plus the
+		// R32F linear-depth target 1 the pyramid reduction reads, with
+		// depth. A mismatch with the open scene pass would be a
+		// validation error, so the sky pass piggybacks the lit layout.
+		SDL_GPUColorTargetDescription targets[2]{};
+		targets[0].format = swapchain_format_;
+		targets[1].format = SDL_GPU_TEXTUREFORMAT_R32_FLOAT;
+		SDL_GPUGraphicsPipelineCreateInfo pipe{};
+		pipe.vertex_shader   = vert;
+		pipe.fragment_shader = frag;
+		pipe.primitive_type  = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+		pipe.target_info.num_color_targets         = 2u;
+		pipe.target_info.color_target_descriptions = targets;
+		pipe.target_info.has_depth_stencil_target  = true;
+		pipe.target_info.depth_stencil_format      = kDepthFormat;
+		pipe.vertex_input_state.num_vertex_buffers = 0;
+		pipe.vertex_input_state.vertex_buffer_descriptions = nullptr;
+		pipe.vertex_input_state.num_vertex_attributes      = 0;
+		pipe.vertex_input_state.vertex_attributes          = nullptr;
+		pipe.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+		pipe.multisample_state.sample_count = SDL_GPU_SAMPLECOUNT_1;
+		// Drawn first at far: geometry depth-tests LESS_OR_EQUAL against
+		// the cleared 1.0, passes, and overdraws the sky.
+		pipe.depth_stencil_state.enable_depth_test  = true;
+		pipe.depth_stencil_state.enable_depth_write = true;
+		pipe.depth_stencil_state.compare_op = SDL_GPU_COMPAREOP_LESS_OR_EQUAL;
+		sky_pipeline_ = SDL_CreateGPUGraphicsPipeline(device_, &pipe);
+	}
+	if (vert) {
+		SDL_ReleaseGPUShader(device_, vert);
+	}
+	if (frag) {
+		SDL_ReleaseGPUShader(device_, frag);
+	}
+	if (!sky_pipeline_) {
+		std::cerr << "sky: background pipeline unavailable, "
+		             "continuing with the clear color: " << SDL_GetError()
+		          << '\n';
+		destroy_sky();
+		sky_unavailable_ = true;
+		return false;
+	}
+	sky_format_ = swapchain_format_;
+	return true;
+}
+
+void GpuRenderer::draw_sky(const glm::mat4& view_projection,
+                           const glm::vec3& camera_position)
+{
+	// Once per pass, first geometry draw wins; a pass with no draws stays a
+	// clear (e.g. the editor's clear-only window pass). Disabled restores
+	// the exact legacy clear-color path.
+	if (sky_drawn_ || !pass_ || !lighting_.sky_enabled) {
+		return;
+	}
+	if (!ensure_sky_pipeline()) {
+		return;
+	}
+	sky_drawn_ = true;
+
+	SkyVertexUniforms vertex_uniforms{};
+	vertex_uniforms.inv_view_projection = glm::inverse(view_projection);
+
+	SkyFragmentUniforms fragment_uniforms{};
+	const glm::vec3 direction = glm::length(lighting_.direction) > 0.0f
+	                                    ? glm::normalize(lighting_.direction)
+	                                    : glm::vec3{0.0f, 0.0f, 1.0f};
+	fragment_uniforms.camera_position = glm::vec4{camera_position, 1.0f};
+	fragment_uniforms.sky_color       = glm::vec4{lighting_.sky_color, 0.0f};
+	fragment_uniforms.ground_color    = glm::vec4{lighting_.ground_color, 0.0f};
+	fragment_uniforms.sun_direction   = glm::vec4{direction, 0.0f};
+	fragment_uniforms.sun_color =
+	        glm::vec4{lighting_.color, lighting_.intensity};
+	fragment_uniforms.params = glm::vec4{lighting_.exposure,
+	                                     lighting_.horizon_warmth, 0.0f, 0.0f};
+
+	SDL_PushGPUVertexUniformData(cmd_, 0, &vertex_uniforms,
+	                             sizeof(vertex_uniforms));
+	SDL_PushGPUFragmentUniformData(cmd_, 0, &fragment_uniforms,
+	                               sizeof(fragment_uniforms));
+
+	SDL_BindGPUGraphicsPipeline(pass_, sky_pipeline_);
+	// Bufferless fullscreen triangle from sky.vert; covers both targets.
+	SDL_DrawGPUPrimitives(pass_, 3, 1, 0, 0);
+}
+
+void GpuRenderer::destroy_sky()
+{
+	if (sky_pipeline_) {
+		SDL_ReleaseGPUGraphicsPipeline(device_, sky_pipeline_);
+		sky_pipeline_ = nullptr;
+	}
+	sky_format_ = SDL_GPU_TEXTUREFORMAT_INVALID;
+}
+
 void GpuRenderer::destroy_buffers()
 {
 	if (vertex_buffer_) {
@@ -1543,6 +1681,7 @@ bool GpuRenderer::begin_viewport_pass()
 	SDL_GPUTexture* color_target = viewport_texture_;
 	pass_redirected_             = false;
 	pass_destination_            = nullptr;
+	sky_drawn_                   = false;
 	if (lighting_.fxaa_enabled && !fxaa_unavailable_ && viewport_width_ != 0 &&
 	    viewport_height_ != 0 && ensure_fxaa_pipeline() &&
 	    ensure_fxaa_source(viewport_width_, viewport_height_)) {
@@ -1648,6 +1787,7 @@ void GpuRenderer::shutdown()
 	destroy_buffers();
 	destroy_shadows();
 	destroy_fxaa();
+	destroy_sky();
 	destroy_textures();
 	if (depth_texture_) {
 		SDL_ReleaseGPUTexture(device_, depth_texture_);
@@ -1796,6 +1936,7 @@ void GpuRenderer::begin_scene_pass()
 	SDL_GPUTexture* color_target = swapchain_;
 	pass_redirected_             = false;
 	pass_destination_            = nullptr;
+	sky_drawn_                   = false;
 	if (record_occlusion_ && lighting_.fxaa_enabled && !fxaa_unavailable_ &&
 	    target_width != 0 && target_height != 0 && ensure_fxaa_pipeline() &&
 	    ensure_fxaa_source(target_width, target_height)) {
@@ -1846,7 +1987,14 @@ void GpuRenderer::draw(const glm::mat4& view, const glm::mat4& view_projection,
                        const glm::vec3& camera_position, uint32_t first_vertex,
                        uint32_t vertex_count)
 {
-	if (!pass_ || !pipeline_ || vertex_count == 0) {
+	if (!pass_) {
+		return;
+	}
+	// Background step for this pass: draws the sky dome once, before any
+	// geometry, on every target (swapchain, viewport, offscreen). A pass
+	// with no draws keeps the legacy clear color.
+	draw_sky(view_projection, camera_position);
+	if (!pipeline_ || vertex_count == 0) {
 		return;
 	}
 

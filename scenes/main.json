@@ -1,7 +1,7 @@
 {
   "version": 3,
   "name": "main",
-  "settings": {"light_direction": [-0.62, 0.35, 0.42], "light_color": [1.0, 0.82, 0.6], "light_intensity": 1.15, "ambient": [0.14, 0.13, 0.16], "exposure": 1.0},
+  "settings": {"light_direction": [-0.62, 0.35, 0.42], "light_color": [1.0, 0.82, 0.6], "light_intensity": 1.15, "ambient": [0.14, 0.13, 0.16], "exposure": 1.0, "sky_color": [0.32, 0.45, 0.68], "ground_color": [0.3, 0.24, 0.18], "shadows_enabled": true, "fxaa_enabled": true, "sky_enabled": true, "horizon_warmth": 0.9},
   "entities": [
     {
       "name": "camera",

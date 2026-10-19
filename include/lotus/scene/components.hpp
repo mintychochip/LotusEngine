@@ -235,8 +235,13 @@ struct Animator {
 /// default to the ambient gray, so a document that never sets them renders
 /// exactly the legacy flat floor. `shadows_enabled` (directional shadow map)
 /// and `fxaa_enabled` (post-pass AA) default ON; turning either off restores
-/// the exact legacy path for that feature. All four are additive v3 keys:
-/// absent in an old document means "keep the default", never a version bump.
+/// the exact legacy path for that feature. `sky_enabled` draws the procedural
+/// sky dome (gradient + sun disk from `sky_color`/`ground_color` along
+/// `light_direction`); it defaults ON so old documents gain the sky instead
+/// of the black void, while false restores the exact legacy clear-color path.
+/// `horizon_warmth` scales the warm glow around the sun azimuth (1.0 neutral,
+/// 0.0 off). All are additive v3 keys: absent in an old document means "keep
+/// the default", never a version bump.
 struct SceneSettings {
 	glm::vec3 light_direction{0.5f, 0.8f, 0.45f};
 	glm::vec3 light_color{1.0f, 1.0f, 1.0f};
@@ -247,6 +252,8 @@ struct SceneSettings {
 	glm::vec3 ground_color{0.15f, 0.15f, 0.18f};
 	bool shadows_enabled{true};
 	bool fxaa_enabled{true};
+	bool sky_enabled{true};
+	float horizon_warmth{1.0f};
 };
 
 } // namespace lotus

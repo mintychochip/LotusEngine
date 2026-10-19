@@ -149,8 +149,10 @@ inline float shadow_tap(float surface_depth, float occluder_depth, float bias)
 /// ambient is unified at the legacy renderer gray. `sky_color`/`ground_color`
 /// default to that same gray (see pbr::kHemiReference), reproducing the
 /// legacy flat floor exactly.
-/// `shadows_enabled`/`fxaa_enabled` default ON; both restore the exact legacy
-/// path when off. Mirrors SceneSettings; application/headless copy every
+/// `shadows_enabled`/`fxaa_enabled`/`sky_enabled` default ON; each restores
+/// the exact legacy path when off (for the sky, the clear-color background).
+/// `horizon_warmth` scales the warm horizon glow around the sun azimuth (1.0
+/// neutral, 0.0 off). Mirrors SceneSettings; application/headless copy every
 /// field across each frame.
 struct LightingSettings {
 	/// Unit vector pointing toward the light.
@@ -163,6 +165,8 @@ struct LightingSettings {
 	glm::vec3 ground_color{0.15f, 0.15f, 0.18f};
 	bool shadows_enabled{true};
 	bool fxaa_enabled{true};
+	bool sky_enabled{true};
+	float horizon_warmth{1.0f};
 };
 
 /// SDL3 GPU backend (Vulkan on Linux). Owns the device, the lit pipeline,
@@ -337,6 +341,20 @@ private:
 	void render_shadow_map();
 	void shadow_light_matrices(glm::mat4& view, glm::mat4& vp) const;
 	void destroy_shadows();
+	// --- Procedural sky background (gradient dome + sun disk, no textures) ---
+	// Drawn bufferless (fullscreen triangle from gl_VertexIndex) as the first
+	// step inside the scene pass, once per pass, before any geometry. The
+	// pipeline declares the same two colour targets plus depth as the lit
+	// pipeline, so the occlusion-pyramid location-1 contract is untouched;
+	// sky.frag writes the far sentinel there, and depth-writes 1.0 with
+	// LESS_OR_EQUAL so geometry overdraws it. Entry points keep their
+	// signatures: draw() draws it lazily on first use from the view matrices
+	// it already receives. sky_enabled=false restores the legacy clear-color
+	// path.
+	bool ensure_sky_pipeline();
+	void draw_sky(const glm::mat4& view_projection,
+	              const glm::vec3& camera_position);
+	void destroy_sky();
 	// --- FXAA 3.11 console post pass ---
 	// The scene renders into fxaa_source_; end_scene_pass()/end_viewport_pass()
 	// resolve it onto the real target (swapchain, viewport, offscreen) with a
@@ -436,6 +454,13 @@ private:
 	uint32_t fxaa_height_{0};
 	SDL_GPUSampler* fxaa_sampler_{nullptr};
 	bool fxaa_unavailable_{false};
+	// --- Procedural sky background (see ensure_sky_pipeline above) ---
+	SDL_GPUGraphicsPipeline* sky_pipeline_{nullptr};
+	SDL_GPUTextureFormat sky_format_{SDL_GPU_TEXTUREFORMAT_INVALID};
+	bool sky_unavailable_{false};
+	// True once the sky has been drawn into the current pass_; reset by
+	// begin_scene_pass()/begin_viewport_pass().
+	bool sky_drawn_{false};
 	// Set by begin_scene_pass()/begin_viewport_pass() when the scene renders
 	// into fxaa_source_; the matching end_*_pass() resolves onto the target.
 	bool pass_redirected_{false};

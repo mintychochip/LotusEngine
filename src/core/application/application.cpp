@@ -907,6 +907,8 @@ void Application::run(int width, int height, const std::string& title)
 				gpu.lighting().ground_color    = s.ground_color;
 				gpu.lighting().shadows_enabled = s.shadows_enabled;
 				gpu.lighting().fxaa_enabled    = s.fxaa_enabled;
+				gpu.lighting().sky_enabled     = s.sky_enabled;
+				gpu.lighting().horizon_warmth  = s.horizon_warmth;
 			}
 			gpu.begin_frame(window.handle(), 0.05f, 0.05f, 0.08f);
 			if (gpu.has_frame()) {

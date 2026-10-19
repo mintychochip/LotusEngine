@@ -891,7 +891,12 @@ std::string to_json_string(const Scene& scene)
 		    << ", \"shadows_enabled\": "
 		    << (s.shadows_enabled ? "true" : "false")
 		    << ", \"fxaa_enabled\": "
-		    << (s.fxaa_enabled ? "true" : "false") << "},\n";
+		    << (s.fxaa_enabled ? "true" : "false")
+		    // Procedural sky dome: same additive rule, absent keeps defaults
+		    // (enabled, neutral warmth), so no version bump.
+		    << ", \"sky_enabled\": "
+		    << (s.sky_enabled ? "true" : "false")
+		    << ", \"horizon_warmth\": " << tidy(s.horizon_warmth) << "},\n";
 	}
 	out << "  \"entities\": [\n";
 	bool first = true;
@@ -973,6 +978,16 @@ bool scene_from_json(Scene& scene, const std::string& text, std::string* error)
 		}
 		if (s.contains("fxaa_enabled") && s.at("fxaa_enabled").is_boolean()) {
 			settings.fxaa_enabled = s.at("fxaa_enabled").get<bool>();
+		}
+		// Same additive rule for the sky dome: absent keys keep struct
+		// defaults (enabled, neutral warmth).
+		if (s.contains("sky_enabled") &&
+		    s.at("sky_enabled").is_boolean()) {
+			settings.sky_enabled = s.at("sky_enabled").get<bool>();
+		}
+		if (s.contains("horizon_warmth") &&
+		    s.at("horizon_warmth").is_number()) {
+			settings.horizon_warmth = s.at("horizon_warmth").get<float>();
 		}
 		has_settings = true;
 	}
