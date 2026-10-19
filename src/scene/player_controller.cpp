@@ -58,6 +58,31 @@ glm::vec3 movement_direction_on_xz(glm::vec3 horizontal)
 	return horizontal / len;
 }
 
+/// Facing of a character whose yaw is \p yaw_radians about Y: +Z at zero,
+/// matching the \c face_toward helper (\c rotation.y = atan2(dx, dz)).
+glm::vec3 facing_from_yaw(float yaw_radians)
+{
+	return {std::sin(yaw_radians), 0.0f, std::cos(yaw_radians)};
+}
+
+/// Parks the camera at the character's eye, looking along its facing.
+void apply_first_person_pose(Camera3D& camera, const Transform& transform)
+{
+	const glm::vec3 eye =
+	        transform.position + glm::vec3{0.0f, kFirstPersonEyeHeight, 0.0f};
+	camera.position = eye;
+	camera.target   = eye + facing_from_yaw(transform.rotation.y);
+}
+
+/// Parks the camera behind the character, looking at its chest.
+void apply_chase_pose(Camera3D& camera, const Transform& transform,
+                      const FollowCameraSettings& settings)
+{
+	const glm::vec3 feet = transform.position;
+	camera.target        = feet + glm::vec3{0.0f, settings.look_at_height, 0.0f};
+	camera.position      = feet + settings.offset;
+}
+
 } // namespace
 
 glm::vec3 movement_direction_from_camera(const Camera3D& camera,
@@ -136,28 +161,15 @@ void update_follow_camera(Scene& scene, const FollowCameraSettings& settings)
 	if (player == NullEntity || !camera) {
 		return;
 	}
-	if (!camera->follow) {
-		return;
-	}
-	// First follow frame: remember the authored pose before overwriting it,
-	// so leaving third person can restore the fixed wide shot exactly. The
-	// stash is written once; later frames must not move it.
-	if (const Entity entity = find_follow_camera_entity(scene);
-	    entity != NullEntity &&
-	    !scene.registry().all_of<CameraHome>(entity)) {
-		scene.registry().emplace<CameraHome>(entity, camera->position,
-		                                     camera->target);
-	}
 	const Transform* transform = scene.registry().try_get<Transform>(player);
 	if (!transform) {
 		return;
 	}
-
-	const glm::vec3 feet = transform->position;
-	const glm::vec3 focus =
-	        feet + glm::vec3{0.0f, settings.look_at_height, 0.0f};
-	camera->target   = focus;
-	camera->position = feet + settings.offset;
+	if (camera->follow) {
+		apply_chase_pose(*camera, *transform, settings);
+		return;
+	}
+	apply_first_person_pose(*camera, *transform);
 }
 
 bool camera_third_person(Scene& scene)
@@ -176,18 +188,20 @@ void set_camera_third_person(Scene& scene, bool enabled)
 	if (!camera) {
 		return;
 	}
-	if (enabled) {
-		camera->follow = true;
+	const Entity player = find_named(scene, "player");
+	const Transform* transform =
+	        player == NullEntity
+	                ? nullptr
+	                : scene.registry().try_get<Transform>(player);
+	camera->follow = enabled;
+	if (!transform) {
 		return;
 	}
-	if (!scene.registry().all_of<CameraHome>(entity)) {
-		scene.registry().emplace<CameraHome>(entity, camera->position,
-		                                     camera->target);
+	if (enabled) {
+		apply_chase_pose(*camera, *transform, FollowCameraSettings{});
+		return;
 	}
-	camera->follow   = false;
-	const CameraHome& home = scene.registry().get<CameraHome>(entity);
-	camera->position = home.position;
-	camera->target   = home.target;
+	apply_first_person_pose(*camera, *transform);
 }
 
 bool toggle_camera_third_person(Scene& scene)

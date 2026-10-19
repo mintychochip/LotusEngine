@@ -9,11 +9,16 @@ namespace lotus {
 class PhysicsWorld;
 class Scene;
 
-/// Tunables for the default third-person follow camera on entity \c "camera".
+/// Tunables for the third-person chase camera on entity \c "camera".
 struct FollowCameraSettings {
 	glm::vec3 offset{0.0f, 2.2f, 5.0f};
 	float look_at_height{1.4f};
 };
+
+/// Height of the first-person eye above the character's feet
+/// (\c Transform::position.y). The capsule is 0.35 m radius with 0.85 m
+/// half-height, so 1.5 m sits a little below the top of the head.
+inline constexpr float kFirstPersonEyeHeight{1.5f};
 
 /// World-space walk direction on the XZ plane from camera forward and strafe
 /// input in [-1, 1]. Returns zero when input is neutral.
@@ -26,24 +31,26 @@ void apply_character_movement_input(Scene& scene, PhysicsWorld& physics,
                                     bool enable_input, float move_speed = 4.0f,
                                     float sprint_multiplier = 1.75f);
 
-/// Places the first \c Camera3D (or entity \c "camera") behind \c "player".
+/// Keeps the gameplay camera glued to \c "player": the third-person chase
+/// view while third person is on, the first-person eye view otherwise.
+/// Runs every frame, so both views track a moving character.
 void update_follow_camera(Scene& scene,
                           const FollowCameraSettings& settings = {});
 
-/// True when the gameplay camera follows \c "player" (the third-person
-/// chase view). False when it holds the scene's fixed wide shot, or when
-/// there is no camera at all.
+/// True when the gameplay camera shows the third-person chase view. False
+/// when it shows the character's own first-person eye view, or when there
+/// is no camera at all.
 bool camera_third_person(Scene& scene);
 
 /// Switches the gameplay camera between the third-person chase view and the
-/// scene's fixed wide shot. Disabling stashes nothing new: the authored pose
-/// was captured before the first follow overwrite, so it comes back exactly;
-/// re-enabling resumes the follow, which recomputes its pose every frame.
-/// No-op without a camera.
+/// first-person eye view at \c kFirstPersonEyeHeight looking along the
+/// character's facing (\c Transform::rotation.y). Snaps immediately, and the
+/// per-frame follow keeps the pose glued to the player afterwards. No-op
+/// without a camera.
 void set_camera_third_person(Scene& scene, bool enabled);
 
-/// Flips the third-person view and reports the new state. No-op (false)
-/// without a camera.
+/// Flips between the chase view and the first-person view and reports the
+/// new state (true = third person). No-op (false) without a camera.
 bool toggle_camera_third_person(Scene& scene);
 
 } // namespace lotus

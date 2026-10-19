@@ -183,14 +183,6 @@ struct Camera3D {
 	}
 };
 
-/// Authored fixed-camera pose, stashed before the follow camera first
-/// overwrites it. Transient (never serialized): lets the third-person
-/// keybind restore the scene's wide shot exactly.
-struct CameraHome {
-	glm::vec3 position{0.0f};
-	glm::vec3 target{0.0f};
-};
-
 /// Which scene file an entity came from. Assigned when a document is loaded or
 /// merged, so merged entity sets can be told apart and unloaded by origin.
 /// Empty for entities created directly.
