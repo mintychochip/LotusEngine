@@ -83,7 +83,7 @@ TEST_F(OcclusionGpuTest, PyramidReachesTheCpuWithoutBlocking)
 		scene.draw(gpu);
 		gpu.end_scene_pass();
 		gpu.end_frame();
-		SDL_WaitForGPUIdle(gpu.device());
+		gpu.wait_idle();
 		ready    = gpu.occlusion_ready();
 		occluded = scene.occluded_entities();
 		frames   = frame + 1;
@@ -159,7 +159,7 @@ Scene make_wall_and_cube_scene()
 }
 
 /// Runs one offscreen frame with no synchronisation of any kind: no
-/// SDL_WaitForGPUIdle, no fence wait.
+/// wait_idle, no fence wait.
 void render_frame(GpuRenderer& gpu, Scene& scene, float aspect)
 {
 	gpu.begin_frame_offscreen();
@@ -173,7 +173,7 @@ void render_frame(GpuRenderer& gpu, Scene& scene, float aspect)
 /// The engine never blocks: a run of frames completes in wall-clock time
 /// consistent with its frame count.
 ///
-/// The existing GPU test calls SDL_WaitForGPUIdle after every frame, which
+/// The existing GPU test calls wait_idle after every frame, which
 /// measures the opposite of what this asserts — it forces the very stall the
 /// feature promises not to cause, and then reports success. This runs the
 /// whole loop with no wait call anywhere in it.
@@ -184,8 +184,8 @@ void render_frame(GpuRenderer& gpu, Scene& scene, float aspect)
 /// paired control below: the same loop re-run with a blocking wait after every
 /// frame, which is what a synchronous implementation would cost. Measured on
 /// this configuration the blocking loop runs 2-7x slower per frame (up to
-/// ~107ms against ~13ms for 120 frames), because each SDL_WaitForGPUIdle
-/// drains the queue and re-serialises CPU against GPU. The assertion is that
+/// ~107ms against ~13ms for 120 frames), because each wait_idle drains the
+/// queue and re-serialises CPU against GPU. The assertion is that
 /// the no-wait loop is never slower than that control; it held in 12/12
 /// consecutive repetitions. A ratio or a tight deadline would flake on a
 /// shared box, so neither is used.
@@ -234,7 +234,7 @@ TEST_F(OcclusionGpuTest, RenderingALongRunNeverBlocks)
 		const auto start = std::chrono::steady_clock::now();
 		for (int frame = 0; frame < kFrames; ++frame) {
 			render_frame(gpu, scene, 1.0f);
-			SDL_WaitForGPUIdle(gpu.device());
+			gpu.wait_idle();
 		}
 		blocking_ms =
 		        std::chrono::duration<double, std::milli>(
@@ -246,7 +246,7 @@ TEST_F(OcclusionGpuTest, RenderingALongRunNeverBlocks)
 	}
 
 	// No cross-run timing comparison here on purpose: when the GPU queue
-	// drains between frames, SDL_WaitForGPUIdle in the control can legitimately
+	// drains between frames, wait_idle in the control can legitimately
 	// cost less CPU time than polling fences, so "no-wait <= blocking" measures
 	// machine jitter, not the no-block guarantee. The bound above already fails
 	// if this loop ever serialises CPU against GPU.
@@ -270,7 +270,7 @@ TEST_F(OcclusionGpuTest, ResizingMidRunInvalidatesThenRebuildsThePyramid)
 	bool ready = false;
 	for (int frame = 0; frame < 16 && !ready; ++frame) {
 		render_frame(gpu, scene, 1.0f);
-		SDL_WaitForGPUIdle(gpu.device());
+		gpu.wait_idle();
 		ready = gpu.occlusion_ready();
 	}
 	ASSERT_TRUE(ready) << "pyramid never reached the CPU before the resize";
@@ -360,7 +360,7 @@ TEST_F(OcclusionGpuTest, ReadbackKeepsTheEndOfEveryRowOfARaggedWidth)
 
 	for (int frame = 0; frame < 16 && !gpu.occlusion_ready(); ++frame) {
 		render_frame(gpu, scene, 1.0f);
-		SDL_WaitForGPUIdle(gpu.device());
+		gpu.wait_idle();
 	}
 	ASSERT_TRUE(gpu.occlusion_ready()) << "pyramid never reached the CPU";
 

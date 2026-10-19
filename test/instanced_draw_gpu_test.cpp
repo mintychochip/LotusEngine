@@ -128,7 +128,7 @@ std::vector<uint8_t> render(GpuRenderer& gpu, Scene& scene, int frames)
 		scene.draw(gpu);
 		gpu.end_scene_pass();
 		gpu.end_frame();
-		SDL_WaitForGPUIdle(gpu.device());
+		gpu.wait_idle();
 	}
 	uint32_t width  = 0;
 	uint32_t height = 0;

@@ -107,7 +107,7 @@ std::vector<uint8_t> render_scene_pass(GpuRenderer& gpu, Scene& scene, bool sky)
 		scene.draw(gpu);
 		gpu.end_scene_pass();
 		gpu.end_frame();
-		SDL_WaitForGPUIdle(gpu.device());
+		gpu.wait_idle();
 	}
 	uint32_t width  = 0;
 	uint32_t height = 0;
@@ -174,7 +174,7 @@ std::vector<uint8_t> render_viewport_pass(GpuRenderer& gpu, Scene& scene,
 		scene.draw(gpu);
 		gpu.end_viewport_pass();
 		gpu.end_frame();
-		SDL_WaitForGPUIdle(gpu.device());
+		gpu.wait_idle();
 	}
 	return download_viewport(gpu);
 }

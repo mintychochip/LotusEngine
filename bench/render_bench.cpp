@@ -14,7 +14,7 @@
 //   record  begin_scene_pass() .. end_scene_pass(): shadow, lit, FXAA, SSAO,
 //           Hi-Z passes recorded
 //   submit  end_frame(): vkQueueSubmit
-//   gpu     SDL_WaitForGPUIdle(): execution of the submitted work
+//   gpu     wait_idle(): execution of the submitted work
 //
 // The camera orbit and the moving props are pure functions of the frame
 // index, so warmup + measured frames replay identically on every run.
@@ -662,7 +662,7 @@ FrameSample render_frame(GpuRenderer& gpu, Scene& scene, float aspect)
 	const auto t3 = Clock::now();
 	gpu.end_frame();
 	const auto t4 = Clock::now();
-	SDL_WaitForGPUIdle(gpu.device());
+	gpu.wait_idle();
 	const auto t5 = Clock::now();
 
 	FrameSample sample;
@@ -743,11 +743,8 @@ int run_gpu(const Options& options, Scene& scene, World& world)
 	gpu.init_offscreen(options.width, options.height);
 	configure_lighting(gpu);
 
-	const SDL_PropertiesID props = SDL_GetGPUDeviceProperties(gpu.device());
-	const char* device_name =
-	        SDL_GetStringProperty(props, SDL_PROP_GPU_DEVICE_NAME_STRING, "?");
-	const char* driver_name = SDL_GetStringProperty(
-	        props, SDL_PROP_GPU_DEVICE_DRIVER_NAME_STRING, "?");
+	const char* device_name = gpu.device_name();
+	const char* driver_name = gpu.device_driver();
 	const float aspect = static_cast<float>(options.width) /
 	                     static_cast<float>(options.height);
 	std::printf("bench: device=\"%s\" driver=\"%s\" size=%ux%u "

@@ -321,6 +321,12 @@ public:
 	/// Offscreen capture written as a binary PPM (P6), which needs no encoder.
 	bool write_ppm(const std::string& path, std::string* error = nullptr);
 
+	/// Blocks until the GPU has finished every frame submitted so far.
+	void wait_idle();
+	/// Names of the GPU ("NVIDIA GeForce RTX 3080") and of its driver
+	/// ("NVIDIA"); valid until shutdown(), empty before init.
+	const char* device_name() const;
+	const char* device_driver() const;
 	SDL_GPUDevice* device() const { return device_; }
 	const char* driver_name() const;
 

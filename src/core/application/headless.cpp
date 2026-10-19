@@ -96,7 +96,7 @@ bool capture_screenshot(Scene& scene, const HeadlessOptions& options,
 			scene.draw(gpu);
 			gpu.end_scene_pass();
 			gpu.end_frame();
-			SDL_WaitForGPUIdle(gpu.device());
+			gpu.wait_idle();
 			ok = gpu.write_ppm(options.screenshot, error);
 		} catch (const std::exception& ex) {
 			if (error) {

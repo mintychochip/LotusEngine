@@ -2941,4 +2941,26 @@ const char* GpuRenderer::driver_name() const
 	return device_ ? SDL_GetGPUDeviceDriver(device_) : "";
 }
 
+void GpuRenderer::wait_idle()
+{
+	if (device_) {
+		SDL_WaitForGPUIdle(device_);
+	}
+}
+
+const char* GpuRenderer::device_name() const
+{
+	return device_ ? SDL_GetStringProperty(SDL_GetGPUDeviceProperties(device_),
+	                                       SDL_PROP_GPU_DEVICE_NAME_STRING, "?")
+	               : "";
+}
+
+const char* GpuRenderer::device_driver() const
+{
+	return device_ ? SDL_GetStringProperty(
+	                         SDL_GetGPUDeviceProperties(device_),
+	                         SDL_PROP_GPU_DEVICE_DRIVER_NAME_STRING, "?")
+	               : "";
+}
+
 } // namespace lotus
