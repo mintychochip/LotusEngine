@@ -1,9 +1,12 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <cstdint>
+#include <vector>
 
 #include "lotus/gpu/renderer.hpp"
 #include "lotus/scene/components.hpp"
+#include "lotus/scene/mesh.hpp"
 #include "lotus/scene/scene.hpp"
 
 using namespace lotus;
@@ -82,6 +85,70 @@ TEST(MaterialBatchTest, SameAlbedoIdMergesIntoOneDrawCall)
 	(void)scene.build_vertices(1.0f);
 
 	EXPECT_EQ(scene.draw_calls(), 1u);
+}
+
+TEST(VertexStreamTest, MalformedIndexNeverShiftsTheEntitiesAfterIt)
+{
+	Scene scene{"test"};
+	const Entity camera = scene.create("camera");
+	scene.registry().emplace<Camera3D>(camera); // (3, 2.5, 4) looking at origin
+
+	// Hand-built, so there is no MeshSource for sync to rebuild it from. Index
+	// 99 names a vertex that does not exist and is skipped: the entity owns
+	// five vertices, not six, and the batch table has to account for that.
+	Mesh broken;
+	broken.positions = {{0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}};
+	broken.normals   = {{0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 1.0f}};
+	broken.indices   = {0, 1, 2, 99, 0, 1};
+	broken.bounds    = BoundingSphere{{0.3f, 0.3f, 0.0f}, 1.0f};
+	const Entity first = scene.create("first");
+	scene.registry().emplace<Mesh>(first, broken);
+	scene.registry().emplace<Material>(first, Material{{1.0f, 1.0f, 1.0f}, "a"});
+
+	// "b" sorts after "a", so the cube's vertices follow the broken mesh's.
+	const Entity second = scene.create("second");
+	scene.registry().emplace<MeshSource>(second, MeshSource{"builtin:cube", ""});
+	scene.registry().emplace<Material>(second, Material{{1.0f, 1.0f, 1.0f}, "b"});
+	Transform& placed = scene.registry().get<Transform>(second);
+	placed.position   = {0.5f, 0.25f, -0.5f};
+	placed.rotation   = {0.0f, 0.6f, 0.0f};
+	placed.scale      = {1.5f, 1.5f, 1.5f};
+
+	scene.update(0.0f);
+	const std::vector<GpuVertex> vertices = scene.build_vertices(16.0f / 9.0f);
+
+	constexpr std::size_t kResolved = 5; // six indices, one of them dangling
+	const Mesh cube                 = mesh::cube();
+	ASSERT_EQ(scene.drawn_entities(), 2u);
+	ASSERT_EQ(vertices.size(), kResolved + cube.indices.size());
+	EXPECT_EQ(scene.draw_calls(), 2u);
+
+	// The surviving indices of the broken mesh, in order.
+	const std::uint32_t resolved[kResolved] = {0, 1, 2, 0, 1};
+	for (std::size_t i = 0; i < kResolved; ++i) {
+		EXPECT_NEAR(glm::distance(vertices[i].position,
+		                          broken.positions[resolved[i]]),
+		            0.0f, 1e-6f)
+		        << "broken mesh vertex " << i;
+	}
+
+	// Every cube vertex is the vertex its index names, under the entity's
+	// world matrix. A gather from the wrong slot, or a block written at the
+	// wrong offset, moves a corner or flips a face normal.
+	const glm::mat4 world = scene.registry().get<Transform>(second).world;
+	const glm::mat3 rotation{world};
+	for (std::size_t i = 0; i < cube.indices.size(); ++i) {
+		const GpuVertex& vertex = vertices[kResolved + i];
+		const std::uint32_t index = cube.indices[i];
+		const glm::vec3 position =
+		        glm::vec3{world * glm::vec4{cube.positions[index], 1.0f}};
+		const glm::vec3 normal =
+		        glm::normalize(rotation * cube.normals[index]);
+		EXPECT_NEAR(glm::distance(vertex.position, position), 0.0f, 1e-5f)
+		        << "cube vertex " << i;
+		EXPECT_NEAR(glm::distance(vertex.normal, normal), 0.0f, 1e-5f)
+		        << "cube vertex " << i;
+	}
 }
 
 TEST(PbrBrdfTest, HemisphericalReflectanceNeverExceedsOne)

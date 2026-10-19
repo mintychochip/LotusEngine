@@ -282,7 +282,8 @@ struct LightingSettings {
 ///
 /// Frame stages (all on one command buffer):
 ///   begin_frame()  -> acquire command buffer + swapchain (+ depth resize)
-///   upload_vertices() -> copy pass (must be outside a render pass)
+///   upload_vertices(), or begin_vertex_upload() + commit_vertex_upload() to
+///                  generate in place -> copy pass (outside a render pass)
 ///   begin_scene_pass() / draw() / end_scene_pass()
 ///   [UI layer may open its own pass here]
 ///   end_frame()    -> submit
