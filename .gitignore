@@ -2,5 +2,6 @@
 *.out
 .vscode
 build
+build_*
 imgui.ini
 keybinds.json
