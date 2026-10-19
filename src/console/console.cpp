@@ -62,7 +62,7 @@ std::string Console::execute(const std::string& line)
 
 	const auto it = commands_.find(tokens[0]);
 	if (it == commands_.end()) {
-		const std::string message = "unknown command: " + tokens[0];
+		const std::string message = "error: unknown command: " + tokens[0];
 		error(message);
 		return message;
 	}
@@ -80,6 +80,40 @@ std::string Console::execute(const std::string& line)
 		info(result);
 	}
 	return result;
+}
+
+namespace {
+
+std::string trim_command(const std::string& text)
+{
+	const auto begin = text.find_first_not_of(" \t\r\n");
+	if (begin == std::string::npos) {
+		return {};
+	}
+	const auto end = text.find_last_not_of(" \t\r\n");
+	return text.substr(begin, end - begin + 1);
+}
+
+} // namespace
+
+std::vector<std::string> split_console_commands(const std::string& script)
+{
+	std::vector<std::string> out;
+	std::size_t start = 0;
+	while (start <= script.size()) {
+		const std::size_t end     = script.find(';', start);
+		const std::string command = trim_command(script.substr(
+		        start,
+		        end == std::string::npos ? std::string::npos : end - start));
+		if (!command.empty()) {
+			out.push_back(command);
+		}
+		if (end == std::string::npos) {
+			break;
+		}
+		start = end + 1;
+	}
+	return out;
 }
 
 } // namespace lotus

@@ -52,6 +52,11 @@ private:
 /// rebuilt by Scene::resolve_refs(). None of those are serialized.
 const ComponentCodecs& default_component_codecs();
 
+/// Serializes one entity as `{"name": ..., "components": {...}}` using the
+/// default codecs. Shared by scene saving and the `entity.get` console
+/// command, so the two can never drift apart.
+nlohmann::json entity_to_json(const Registry& registry, Entity entity);
+
 /// Registers \p name so game code can serialize its own component types.
 /// Re-registering a name replaces the previous codec; the built-ins can be
 /// overridden this way, which is deliberate. Registration is process-global and

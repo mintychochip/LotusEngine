@@ -21,6 +21,10 @@ struct HeadlessOptions {
 	unsigned seed{42};
 	/// Scene JSON dump path. Empty skips.
 	std::string dump_state;
+	/// `;`-separated console commands (same splitting as LOTUS_CONSOLE).
+	/// Runs after scene load + script sync, before ticks. The first result
+	/// starting with `error: ` aborts the run with exit 1. Empty skips.
+	std::string exec;
 	std::string scene_dir{"scenes"};
 	std::string assets_dir{"assets"};
 };

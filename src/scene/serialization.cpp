@@ -911,6 +911,23 @@ std::string to_json_string(const Scene& scene)
 	return out.str();
 }
 
+nlohmann::json entity_to_json(const Registry& registry, Entity entity)
+{
+	const ComponentCodecs& codecs = default_component_codecs();
+	nlohmann::json out;
+	out["name"] = registry.get<Name>(entity).value;
+	nlohmann::json components = nlohmann::json::object();
+	for (const std::string& name : codecs.names()) {
+		const auto* write = codecs.writer(name);
+		nlohmann::json value;
+		if (write && (*write)(registry, entity, value)) {
+			components[name] = std::move(value);
+		}
+	}
+	out["components"] = std::move(components);
+	return out;
+}
+
 bool scene_from_json(Scene& scene, const std::string& text, std::string* error)
 {
 	const auto fail = [error](const std::string& message) {

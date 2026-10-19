@@ -165,16 +165,21 @@ bool parse_headless_args(const std::vector<std::string>& args,
 				return false;
 			}
 			parsed.dump_state = value;
-		} else if (arg == "--scene-dir") {
-			if (!need_value(args, i, arg, value, error)) {
-				return false;
-			}
-			parsed.scene_dir = value;
 		} else if (arg == "--assets-dir") {
 			if (!need_value(args, i, arg, value, error)) {
 				return false;
 			}
 			parsed.assets_dir = value;
+		} else if (arg == "--scene-dir") {
+			if (!need_value(args, i, arg, value, error)) {
+				return false;
+			}
+			parsed.scene_dir = value;
+		} else if (arg == "--exec") {
+			if (!need_value(args, i, arg, value, error)) {
+				return false;
+			}
+			parsed.exec = value;
 		} else {
 			if (error) {
 				*error = arg.rfind("--", 0) == 0
@@ -231,7 +236,17 @@ int Application::run_headless(const HeadlessOptions& options)
 			return 1;
 		}
 	}
-
+	if (!options.exec.empty()) {
+		for (const std::string& command :
+		     split_console_commands(options.exec)) {
+			const std::string result = console_.execute(command);
+			if (result.rfind("error: ", 0) == 0) {
+				console_.error("headless: exec '" + command +
+				               "' failed: " + result);
+				return 1;
+			}
+		}
+	}
 	std::srand(options.seed);
 	constexpr float kDt = 1.0f / 60.0f;
 	for (int tick = 0; tick < options.ticks; ++tick) {

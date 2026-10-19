@@ -22,16 +22,6 @@ using namespace lotus;
 
 namespace {
 
-std::string trim(const std::string& text)
-{
-	const auto begin = text.find_first_not_of(" \t\r\n");
-	if (begin == std::string::npos) {
-		return {};
-	}
-	const auto end = text.find_last_not_of(" \t\r\n");
-	return text.substr(begin, end - begin + 1);
-}
-
 std::string join_from(const std::vector<std::string>& parts, std::size_t from)
 {
 	std::string out;
@@ -42,6 +32,126 @@ std::string join_from(const std::vector<std::string>& parts, std::size_t from)
 		out += parts[i];
 	}
 	return out;
+}
+
+bool is_structural_component(const std::string& name)
+{
+	return name == "Transform" || name == "Hierarchy" ||
+	       name == "Name" || name == "SceneGuid";
+}
+
+/// Removes \p name from \p entity. Returns false when the entity does not
+/// carry it. Unknown and structural names never reach here; the command
+/// rejects those with an `error: ` result first.
+bool remove_entity_component(Registry& registry, Entity entity,
+                             const std::string& name)
+{
+	if (name == "Sprite") {
+		if (!registry.all_of<Sprite>(entity)) {
+			return false;
+		}
+		registry.remove<Sprite>(entity);
+		return true;
+	}
+	if (name == "Camera2D") {
+		if (!registry.all_of<Camera2D>(entity)) {
+			return false;
+		}
+		registry.remove<Camera2D>(entity);
+		return true;
+	}
+	if (name == "Script") {
+		if (!registry.all_of<Script>(entity)) {
+			return false;
+		}
+		registry.remove<Script>(entity);
+		return true;
+	}
+	if (name == "MeshSource") {
+		if (!registry.all_of<MeshSource>(entity)) {
+			return false;
+		}
+		registry.remove<MeshSource>(entity);
+		return true;
+	}
+	if (name == "Material") {
+		if (!registry.all_of<Material>(entity)) {
+			return false;
+		}
+		registry.remove<Material>(entity);
+		return true;
+	}
+	if (name == "Camera3D") {
+		if (!registry.all_of<Camera3D>(entity)) {
+			return false;
+		}
+		registry.remove<Camera3D>(entity);
+		return true;
+	}
+	if (name == "Lod") {
+		if (!registry.all_of<Lod>(entity)) {
+			return false;
+		}
+		registry.remove<Lod>(entity);
+		return true;
+	}
+	if (name == "EntityRef") {
+		if (!registry.all_of<EntityRef>(entity)) {
+			return false;
+		}
+		registry.remove<EntityRef>(entity);
+		return true;
+	}
+	if (name == "SceneOrigin") {
+		if (!registry.all_of<SceneOrigin>(entity)) {
+			return false;
+		}
+		registry.remove<SceneOrigin>(entity);
+		return true;
+	}
+	if (name == "RigidBody") {
+		if (!registry.all_of<RigidBody>(entity)) {
+			return false;
+		}
+		registry.remove<RigidBody>(entity);
+		return true;
+	}
+	if (name == "BoxCollider") {
+		if (!registry.all_of<BoxCollider>(entity)) {
+			return false;
+		}
+		registry.remove<BoxCollider>(entity);
+		return true;
+	}
+	if (name == "SphereCollider") {
+		if (!registry.all_of<SphereCollider>(entity)) {
+			return false;
+		}
+		registry.remove<SphereCollider>(entity);
+		return true;
+	}
+	if (name == "MeshCollider") {
+		if (!registry.all_of<MeshCollider>(entity)) {
+			return false;
+		}
+		registry.remove<MeshCollider>(entity);
+		return true;
+	}
+	if (name == "CharacterController") {
+		if (!registry.all_of<CharacterController>(entity)) {
+			return false;
+		}
+		registry.remove<CharacterController>(entity);
+		return true;
+	}
+	if (name == "Animator") {
+		if (!registry.all_of<Animator>(entity)) {
+			return false;
+		}
+		registry.remove<Animator>(entity);
+		return true;
+	}
+	return false;
 }
 
 } // namespace
@@ -222,11 +332,11 @@ void Application::register_commands()
 		        return out;
 	        });
 	console_.add_command(
-	        "entity.list", "list entities in the active scene",
+	        "entity.list", "entity.list - list entity names in the active scene",
 	        [this](const std::vector<std::string>&) {
 		        Scene* scene = scenes_.active();
 		        if (!scene) {
-			        return std::string{"no active scene"};
+			        return std::string{"error: no active scene"};
 		        }
 		        std::string out;
 		        for (const Entity entity : scene->registry().view<Name>()) {
@@ -236,6 +346,126 @@ void Application::register_commands()
 			        out += scene->registry().get<Name>(entity).value;
 		        }
 		        return out.empty() ? std::string{"(no entities)"} : out;
+	        });
+	console_.add_command(
+	        "entity.get",
+	        "entity.get <name> - print the entity as JSON {name, components}",
+	        [this](const std::vector<std::string>& args) {
+		        Scene* scene = scenes_.active();
+		        if (!scene) {
+			        return std::string{"error: no active scene"};
+		        }
+		        if (args.empty()) {
+			        return std::string{"usage: entity.get <name>"};
+		        }
+		        const Entity entity = scene->find(args[0]);
+		        if (entity == NullEntity) {
+			        return std::string{"error: no entity named "} + args[0];
+		        }
+		        return entity_to_json(scene->registry(), entity).dump();
+	        });
+	console_.add_command(
+	        "entity.spawn", "entity.spawn <name> - create an entity",
+	        [this](const std::vector<std::string>& args) {
+		        Scene* scene = scenes_.active();
+		        if (!scene) {
+			        return std::string{"error: no active scene"};
+		        }
+		        if (args.empty()) {
+			        return std::string{"usage: entity.spawn <name>"};
+		        }
+		        if (scene->find(args[0]) != NullEntity) {
+			        return std::string{"error: entity already exists: "} +
+			               args[0];
+		        }
+		        scene->create(args[0]);
+		        return std::string{"spawned "} + args[0];
+	        });
+	console_.add_command(
+	        "entity.destroy", "entity.destroy <name> - destroy an entity",
+	        [this](const std::vector<std::string>& args) {
+		        Scene* scene = scenes_.active();
+		        if (!scene) {
+			        return std::string{"error: no active scene"};
+		        }
+		        if (args.empty()) {
+			        return std::string{"usage: entity.destroy <name>"};
+		        }
+		        const Entity entity = scene->find(args[0]);
+		        if (entity == NullEntity) {
+			        return std::string{"error: no entity named "} + args[0];
+		        }
+		        scene->destroy(entity);
+		        return std::string{"destroyed "} + args[0];
+	        });
+	console_.add_command(
+	        "entity.set",
+	        "entity.set <name> <Component> <json> - replace a component from "
+	        "JSON",
+	        [this](const std::vector<std::string>& args) {
+		        Scene* scene = scenes_.active();
+		        if (!scene) {
+			        return std::string{"error: no active scene"};
+		        }
+		        if (args.size() < 3) {
+			        return std::string{
+			                "usage: entity.set <name> <Component> <json>"};
+		        }
+		        const Entity entity = scene->find(args[0]);
+		        if (entity == NullEntity) {
+			        return std::string{"error: no entity named "} + args[0];
+		        }
+		        const ComponentCodecs& codecs = default_component_codecs();
+		        const auto* read              = codecs.reader(args[1]);
+		        if (read == nullptr) {
+			        return std::string{"error: unknown component: "} +
+			               args[1];
+		        }
+		        nlohmann::json value;
+		        try {
+			        value = nlohmann::json::parse(join_from(args, 2));
+		        } catch (const std::exception& ex) {
+			        return std::string{"error: invalid JSON for "} +
+			               args[1] + ": " + ex.what();
+		        }
+		        try {
+			        (*read)(scene->registry(), entity, value);
+		        } catch (const std::exception& ex) {
+			        return std::string{"error: invalid JSON for "} +
+			               args[1] + ": " + ex.what();
+		        }
+		        return std::string{"set "} + args[0] + " " + args[1];
+	        });
+	console_.add_command(
+	        "entity.unset",
+	        "entity.unset <name> <Component> - remove a component "
+	        "(Transform/Hierarchy/Name/SceneGuid cannot be removed)",
+	        [this](const std::vector<std::string>& args) {
+		        Scene* scene = scenes_.active();
+		        if (!scene) {
+			        return std::string{"error: no active scene"};
+		        }
+		        if (args.size() < 2) {
+			        return std::string{"usage: entity.unset <name> <Component>"};
+		        }
+		        const Entity entity = scene->find(args[0]);
+		        if (entity == NullEntity) {
+			        return std::string{"error: no entity named "} + args[0];
+		        }
+		        if (is_structural_component(args[1])) {
+			        return std::string{"error: cannot remove "} + args[1] +
+			               ": structural component";
+		        }
+		        if (default_component_codecs().reader(args[1]) == nullptr) {
+			        return std::string{"error: unknown component: "} +
+			               args[1];
+		        }
+		        if (!remove_entity_component(scene->registry(), entity,
+		                                     args[1])) {
+			        return std::string{"error: "} + args[0] + " has no " +
+			               args[1];
+		        }
+		        return std::string{"unset "} + args[0] + " " + args[1];
 	        });
 	console_.add_command(
 	        "script.reload", "reload all scripts in the active scene",
@@ -835,21 +1065,9 @@ void Application::run(int width, int height, const std::string& title)
 		// Scriptable console: LOTUS_CONSOLE="cmd; cmd; ..." runs at startup,
 		// which makes the console usable from automation and by agents.
 		if (const char* script = std::getenv("LOTUS_CONSOLE")) {
-			const std::string list = script;
-			std::size_t start      = 0;
-			while (start <= list.size()) {
-				const std::size_t end = list.find(';', start);
-				const std::string command = trim(list.substr(
-				        start,
-				        end == std::string::npos ? std::string::npos
-				                                 : end - start));
-				if (!command.empty()) {
-					console_.execute(command);
-				}
-				if (end == std::string::npos) {
-					break;
-				}
-				start = end + 1;
+			for (const std::string& command :
+			     split_console_commands(script)) {
+				console_.execute(command);
 			}
 		}
 

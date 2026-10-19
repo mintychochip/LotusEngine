@@ -14,7 +14,7 @@ constexpr const char* kHeadlessUsage =
         "usage: lotus --headless [--scene NAME] [--ticks N] [--screenshot PATH]\n"
         "                       [--width W] [--height H] [--seed S]\n"
         "                       [--dump-state PATH] [--scene-dir DIR]\n"
-        "                       [--assets-dir DIR]";
+        "                       [--assets-dir DIR] [--exec \"cmd; cmd\"]";
 
 } // namespace
 

@@ -64,5 +64,9 @@ private:
 	std::map<std::string, Command> commands_;
 	SinkFn sink_;
 };
+/// Splits a `;`-separated command list (LOTUS_CONSOLE, `--exec`) into trimmed,
+/// non-empty commands. This is the one place that defines the splitting, so
+/// the env var and the headless flag stay in agreement.
+std::vector<std::string> split_console_commands(const std::string& script);
 
 } // namespace lotus
