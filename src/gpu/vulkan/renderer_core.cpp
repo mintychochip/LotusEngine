@@ -69,7 +69,10 @@ void GpuRendererVulkan::shutdown()
 	// A frame may be open; its command buffer dies with the pool.
 	cmd_          = nullptr;
 	slot_         = nullptr;
-	scene_pass_open_ = false;
+	scene_pass_open_    = false;
+	viewport_pass_open_ = false;
+	pass_redirected_    = false;
+	pass_color_view_    = VK_NULL_HANDLE;
 	abandon_geometry_staging();
 	geometry_draws_.clear();
 	pending_meshes_.clear();
@@ -77,6 +80,15 @@ void GpuRendererVulkan::shutdown()
 	destroy_textures();
 	destroy_shadows();
 	destroy_occlusion();
+	destroy_fxaa();
+	destroy_ssao();
+	destroy_viewport();
+	// Retired images are destroyed here, after the wait above: nothing can
+	// still reference them. destroy_fxaa/ssao/viewport only retired theirs.
+	for (auto& drop : retired_targets_) {
+		drop();
+	}
+	retired_targets_.clear();
 	destroy_pipelines();
 	layouts_.destroy(context_);
 	destroy_samplers();
@@ -226,9 +238,24 @@ FrameSlot& GpuRendererVulkan::acquire_slot()
 	vk::check(context_.api.WaitForFences(context_.device, 1, &slot.fence,
 	                                     VK_TRUE, UINT64_MAX),
 	          "vkWaitForFences");
+	// The wait just proved this slot's frame finished, and the queue runs
+	// in order, so every frame up to its serial is done: exactly what the
+	// reference records when its throttle wait lands (reap on block). Without
+	// this, a GPU-bound loop never observes completion in the poll below and
+	// the pyramid never rebuilds.
+	if (slot.serial > completed_serial_) {
+		completed_serial_ = slot.serial;
+	}
 	vk::check(context_.api.ResetFences(context_.device, 1, &slot.fence),
 	          "vkResetFences");
 	destroy_garbage(slot);
+	// Retired targets join this slot's garbage: its fence was just waited
+	// on, and a full ring turn passes before the slot is reused, so no
+	// submitted command buffer can still reference them.
+	for (auto& drop : retired_targets_) {
+		slot.garbage.push_back(std::move(drop));
+	}
+	retired_targets_.clear();
 	vk::check(context_.api.ResetDescriptorPool(context_.device,
 	                                           slot.descriptors, 0),
 	          "vkResetDescriptorPool");
@@ -280,13 +307,18 @@ void GpuRendererVulkan::begin_frame(SDL_Window* window, float clear_r, float cle
 	// Windowed rendering (swapchain, present) belongs to the second half:
 	// record the clear colour and report no frame.
 }
-std::vector<uint8_t> GpuRendererVulkan::capture_viewport_rgba(uint32_t& width,
-                                                              uint32_t& height)
+std::vector<uint8_t> GpuRendererVulkan::capture_rgba(uint32_t& width,
+                                                    uint32_t& height)
 {
-	// The editor viewport texture belongs to the second half.
 	width  = 0;
 	height = 0;
-	return {};
+	if (!offscreen_ || offscreen_color_.handle == VK_NULL_HANDLE) {
+		return {};
+	}
+	width  = offscreen_width_;
+	height = offscreen_height_;
+	return download_image_rgba(offscreen_color_, offscreen_color_state_,
+	                           width, height);
 }
 
 
@@ -443,90 +475,50 @@ void GpuRendererVulkan::destroy_targets()
 
 bool GpuRendererVulkan::resize_offscreen(uint32_t width, uint32_t height)
 {
-	if (!offscreen_ || offscreen_color_.handle == VK_NULL_HANDLE || width == 0 ||
-	    height == 0) {
-		return false;
-	}
-	if (width == offscreen_width_ && height == offscreen_height_) {
+		if (!offscreen_ || offscreen_color_.handle == VK_NULL_HANDLE ||
+		    width == 0 || height == 0) {
+			return false;
+		}
+		if (width == offscreen_width_ && height == offscreen_height_) {
+			return true;
+		}
+		// Created before the old one is retired, so a failed resize leaves the
+		// renderer on its old target rather than on none.
+		vk::Image replacement;
+		try {
+			replacement = create_target_image(
+			        "offscreen", kColorFormat, width, height, 1,
+			        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+			                VK_IMAGE_USAGE_SAMPLED_BIT |
+			                VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+		} catch (const std::exception&) {
+			return false;
+		}
+		// The old targets stay alive until a frame-ring slot is reused (a full
+		// turn later), so frames still in flight keep reading valid images.
+		retire_image(offscreen_color_);
+		offscreen_color_       = replacement;
+		offscreen_color_state_ = vk::ImageState{};
+		offscreen_width_       = width;
+		offscreen_height_      = height;
+		retire_image(depth_);
+		depth_          = vk::Image{};
+		depth_state_    = vk::ImageState{};
+		depth_width_    = 0;
+		depth_height_   = 0;
+		// Both sized from the target: the depth buffer because it is now the
+		// wrong size, the pyramid because its extent is. Retiring the pyramid
+		// clears the CPU-side chain and occlusion_ready_, so the frame after
+		// a resize treats every entity as visible rather than querying a
+		// stale chain against the new camera.
+		retire_pyramid_gpu();
+		ensure_depth_target(width, height);
+		ensure_pyramid(width, height);
+		// FXAA/SSAO intermediates are sized from the target too, but lazily:
+		// the next ensure_* recreates (and retires) them on mismatch.
 		return true;
 	}
-	wait_idle();
-	// Created before the old one is released, so a failed resize leaves the
-	// renderer on its old target rather than on none.
-	vk::Image replacement = create_target_image(
-	        "offscreen", kColorFormat, width, height, 1,
-	        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
-	                VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
-	memory_.destroy_image(offscreen_color_);
-	offscreen_color_       = replacement;
-	offscreen_color_state_ = vk::ImageState{};
-	offscreen_width_       = width;
-	offscreen_height_      = height;
-	// Both sized from the target: the depth buffer because it is now the
-	// wrong size, the pyramid because its extent is.
-	ensure_depth_target(width, height);
-	ensure_pyramid(width, height);
-	return true;
-}
 
-std::vector<uint8_t> GpuRendererVulkan::capture_rgba(uint32_t& width, uint32_t& height)
-{
-	width  = 0;
-	height = 0;
-	if (!offscreen_ || offscreen_color_.handle == VK_NULL_HANDLE) {
-		return {};
-	}
-	width  = offscreen_width_;
-	height = offscreen_height_;
-	// Like the reference: the GPU goes idle first, so no frame is still
-	// reading the target while it is copied out.
-	wait_idle();
-	const uint64_t pitch_alignment =
-	        context_.properties.limits.optimalBufferCopyRowPitchAlignment;
-	const uint32_t row_texels =
-	        static_cast<uint32_t>(align_up(static_cast<uint64_t>(width) * 4,
-	                                       std::max<uint64_t>(pitch_alignment, 1)) /
-	                              4);
-	const uint64_t buffer_size =
-	        static_cast<uint64_t>(row_texels) * height * 4;
-	vk::Buffer readback = memory_.create_buffer(vk::MemoryClass::Readback,
-	                                            VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-	                                            buffer_size, "capture");
-	context_.submit_and_wait([&](VkCommandBuffer cmd) {
-		image_transfer_src(*barriers_, cmd, offscreen_color_, 0, 1,
-		                   offscreen_color_state_);
-		barriers_->flush(cmd);
-		VkBufferImageCopy region{};
-		region.bufferOffset      = 0;
-		region.bufferRowLength   = row_texels;
-		region.bufferImageHeight = 0;
-		region.imageSubresource.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
-		region.imageSubresource.mipLevel       = 0;
-		region.imageSubresource.baseArrayLayer = 0;
-		region.imageSubresource.layerCount     = 1;
-		region.imageOffset = VkOffset3D{0, 0, 0};
-		region.imageExtent = VkExtent3D{width, height, 1};
-		context_.api.CmdCopyImageToBuffer(cmd, offscreen_color_.handle,
-		                                  VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-		                                  readback.handle, 1, &region);
-		image_as_color_attachment(*barriers_, cmd, offscreen_color_, 0, 1,
-		                          offscreen_color_state_);
-		barriers_->flush(cmd);
-	});
-	if (!readback.allocation.coherent) {
-		memory_.invalidate(readback.allocation, 0, buffer_size);
-	}
-	std::vector<uint8_t> pixels(static_cast<std::size_t>(width) * height * 4);
-	const auto* src = static_cast<const uint8_t*>(readback.mapped);
-	const uint64_t row_bytes = static_cast<uint64_t>(width) * 4;
-	const uint64_t pitch     = static_cast<uint64_t>(row_texels) * 4;
-	for (uint32_t y = 0; y < height; ++y) {
-		std::memcpy(pixels.data() + static_cast<std::size_t>(y) * row_bytes,
-		            src + y * pitch, row_bytes);
-	}
-	memory_.destroy_buffer(readback);
-	return pixels;
-}
 
 bool GpuRendererVulkan::write_ppm(const std::string& path, std::string* error)
 {
@@ -594,10 +586,19 @@ void GpuRendererVulkan::destroy_pipelines()
 {
 	const vk::Api& api    = context_.api;
 	const VkDevice device = context_.device;
-	for (VkPipeline* pipeline : {&lit_pipeline_, &shadow_pipeline_, &sky_pipeline_}) {
+	for (VkPipeline* pipeline :
+	     {&lit_pipeline_, &shadow_pipeline_, &sky_pipeline_,
+	      &fxaa_pipeline_, &ssao_pipeline_}) {
 		if (*pipeline != VK_NULL_HANDLE) {
 			api.DestroyPipeline(device, *pipeline, nullptr);
 			*pipeline = VK_NULL_HANDLE;
+		}
+	}
+	for (VkSampler* sampler :
+	     {&fxaa_sampler_, &ssao_sampler_, &ssao_depth_sampler_}) {
+		if (*sampler != VK_NULL_HANDLE) {
+			api.DestroySampler(device, *sampler, nullptr);
+			*sampler = VK_NULL_HANDLE;
 		}
 	}
 	for (VkPipelineLayout* layout : {&lit_layout_, &shadow_layout_, &sky_layout_}) {

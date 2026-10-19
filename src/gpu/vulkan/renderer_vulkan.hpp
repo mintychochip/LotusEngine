@@ -1,19 +1,21 @@
 #pragma once
 
-// Vulkan backend for `GpuRenderer`: offscreen core, geometry, textures and the
-// shadow/lit/sky passes (first half; FXAA, SSAO, Hi-Z, the swapchain and ImGui
-// belong to the second half).
-//
-// Behavioural reference: src/gpu/sdlgpu/renderer_sdlgpu.cpp. Mesh-cache
-// semantics, pass order, uniform contents, clear values and degradation
-// messages match it; the comments there explain why.
-//
-// Translation units, by concern:
-//   renderer_core.cpp      device, frame ring, targets, frame lifecycle, capture
-//   renderer_geometry.cpp  mesh cache, per-frame streams, uploads, draw recording
-//   renderer_passes.cpp    descriptor layouts, pipelines, shadow/lit/sky passes
-//   renderer_textures.cpp  samplers, white texture, albedo cache, image helper
-//   factory.cpp            create_gpu_renderer()
+	// Vulkan backend for `GpuRenderer`: offscreen core, geometry, textures, the
+	// shadow/lit/sky passes, FXAA, SSAO, Hi-Z occlusion and the editor viewport
+	// pass (the swapchain and ImGui belong to a later stage).
+	//
+	// Behavioural reference: src/gpu/sdlgpu/renderer_sdlgpu.cpp. Mesh-cache
+	// semantics, pass order, uniform contents, clear values and degradation
+	// messages match it; the comments there explain why.
+	//
+	// Translation units, by concern:
+	//   renderer_core.cpp      device, frame ring, targets, frame lifecycle, capture
+	//   renderer_geometry.cpp  mesh cache, per-frame streams, uploads, draw recording
+	//   renderer_passes.cpp    descriptor layouts, pipelines, shadow/lit/sky passes
+	//   renderer_post.cpp      FXAA, SSAO, viewport pass, capture, retirement
+	//   renderer_textures.cpp  samplers, white texture, albedo cache, image helper
+	//   renderer_occlusion.cpp Hi-Z reduction, readback, CPU pyramid adoption
+	//   factory.cpp            create_gpu_renderer()
 //
 // Descriptor sets keep the committed SPIR-V's numbers (sets 1/2/3 from SDL's
 // Vulkan backend), so the shader headers stay byte-identical: set 1 is the
@@ -71,6 +73,21 @@ struct FragmentUniforms {
 };
 static_assert(sizeof(FragmentUniforms) == 368,
               "must match lit.frag's std140 block");
+
+/// Must match shaders/ssao.frag (set 3, binding 0).
+struct SsaoUniforms {
+	glm::vec4 texel;  // xy: 1/width, 1/height; zw reserved
+	glm::vec4 params; // x: radius (texels); y: bias; z: strength; w reserved
+};
+static_assert(sizeof(SsaoUniforms) == 32,
+              "must match ssao.frag's std140 block");
+
+/// Must match shaders/fxaa.frag (set 3, binding 0).
+struct FxaaUniforms {
+	glm::vec4 texel; // x: 1/width; y: 1/height; zw reserved
+};
+static_assert(sizeof(FxaaUniforms) == 16,
+              "must match fxaa.frag's std140 block");
 
 /// Must match shaders/sky.vert (set 1, binding 0).
 struct SkyVertexUniforms {
@@ -141,9 +158,9 @@ struct FrameSlot {
 };
 
 /// Raw Vulkan implementation of `GpuRenderer`: offscreen rendering with
-/// shadow-mapped lit geometry and the procedural sky. Until the second half
-/// lands, FXAA/SSAO/Hi-Z are unavailable, the viewport/swapchain/UI paths are
-/// inert, and occlusion reports disabled.
+/// shadow-mapped lit geometry, the procedural sky, FXAA, SSAO, Hi-Z occlusion
+/// and the editor viewport pass. The swapchain/UI paths are inert until a
+/// later stage.
 class GpuRendererVulkan final : public GpuRenderer {
 public:
 	GpuRendererVulkan() = default;
@@ -197,18 +214,13 @@ public:
 	float occlusion_aspect() const override { return occlusion_aspect_; }
 	void suppress_occlusion_record() override { record_occlusion_ = false; }
 	uint32_t vertex_capacity() const override { return vertex_capacity_; }
-	bool viewport_ready() const override { return false; }
+	bool viewport_ready() const override;
 	uint64_t viewport_ui_texture() const override { return 0; }
-	uint32_t viewport_width() const override { return 0; }
-	uint32_t viewport_height() const override { return 0; }
-	bool begin_viewport_pass() override { return false; }
-	void end_viewport_pass() override {}
-	bool resize_viewport(uint32_t width, uint32_t height) override
-	{
-		(void)width;
-		(void)height;
-		return false;
-	}
+	uint32_t viewport_width() const override;
+	uint32_t viewport_height() const override;
+	bool begin_viewport_pass() override;
+	void end_viewport_pass() override;
+	bool resize_viewport(uint32_t width, uint32_t height) override;
 	uint64_t frames_rendered() const override { return frames_rendered_; }
 	LightingSettings& lighting() override { return lighting_; }
 	const LightingSettings& lighting() const override { return lighting_; }
@@ -290,8 +302,52 @@ private:
 	uint64_t completed_serial_{0};
 	VkPipelineLayout hiz_layout_{VK_NULL_HANDLE};
 	VkPipeline hiz_pipeline_{VK_NULL_HANDLE};
-	bool fxaa_unavailable_{true};
-	bool ssao_unavailable_{true};
+	// --- FXAA -------------------------------------------------------------------
+	// The scene renders into fxaa_source_; end_scene_pass()/end_viewport_pass()
+	// resolve it onto the real target with a fullscreen triangle. Disabled or
+	// unavailable renders straight to the target, exactly as the reference.
+	vk::Image fxaa_source_;
+	vk::ImageState fxaa_source_state_;
+	uint32_t fxaa_width_{0};
+	uint32_t fxaa_height_{0};
+	VkPipeline fxaa_pipeline_{VK_NULL_HANDLE};
+	VkSampler fxaa_sampler_{VK_NULL_HANDLE};
+	bool fxaa_unavailable_{false};
+	bool pass_redirected_{false};
+	// --- SSAO -------------------------------------------------------------------
+	// Quarter-res AO target, cleared to white, produced by run_ssao_pass() at
+	// the end of the scene pass and sampled by the NEXT frame's lit pass
+	// (one frame of lag, no circular dependency). Disabled or unavailable
+	// binds the white texture (AO = 1).
+	vk::Image ssao_texture_;
+	vk::ImageState ssao_state_;
+	uint32_t ssao_width_{0};
+	uint32_t ssao_height_{0};
+	uint32_t ssao_target_width_{0};
+	uint32_t ssao_target_height_{0};
+	VkPipeline ssao_pipeline_{VK_NULL_HANDLE};
+	VkSampler ssao_sampler_{VK_NULL_HANDLE};
+	VkSampler ssao_depth_sampler_{VK_NULL_HANDLE};
+	bool ssao_unavailable_{false};
+	// --- viewport (editor panel) ------------------------------------------------
+	// Own colour, depth and single-mip linear-depth images; the Hi-Z pyramid
+	// is never recorded from this pass. viewport_pass_open_ joins
+	// scene_pass_open_ as a pass draw()/draw_sky() record into.
+	vk::Image viewport_color_;
+	vk::ImageState viewport_color_state_;
+	vk::Image viewport_depth_;
+	vk::ImageState viewport_depth_state_;
+	vk::Image viewport_linear_;
+	vk::ImageState viewport_linear_state_;
+	uint32_t viewport_width_{0};
+	uint32_t viewport_height_{0};
+	bool viewport_pass_open_{false};
+	// --- deferred destruction ---------------------------------------------------
+	// Images replaced by a resize (or a lazy FXAA/SSAO recreate) while frames
+	// are in flight: moved here, swept into the next acquired slot's garbage
+	// list, destroyed when that slot is reused (a full ring turn later, so no
+	// submitted command buffer can still reference them).
+	std::vector<std::function<void()>> retired_targets_;
 	/// 1024^2 D16 depth rendered from the light.
 	vk::Image shadow_map_;
 	vk::ImageState shadow_map_state_;
@@ -308,6 +364,9 @@ private:
 	float clear_g_{0.0f};
 	float clear_b_{0.0f};
 	bool scene_pass_open_{false};
+	/// Colour attachment 0 of the open pass: the real target, or the FXAA
+	/// intermediate when the pass was redirected.
+	VkImageView pass_color_view_{VK_NULL_HANDLE};
 
 	LightingSettings lighting_;
 	glm::vec4 blob_spheres_[4]{};
@@ -384,6 +443,18 @@ private:
 	void begin_rendering(VkCommandBuffer cmd);
 	void destroy_pipelines();
 
+	// renderer_post.cpp (FXAA, SSAO, viewport pass, frame-ring retirement)
+	void destroy_fxaa();
+	void destroy_ssao();
+	void destroy_viewport();
+	/// Moves \p image (with its view) into deferred destruction: destroyed
+	/// when a frame-ring slot is reused, never while submitted work reads it.
+	void retire_image(vk::Image image);
+	void retire_pyramid_gpu();
+	std::vector<uint8_t> download_image_rgba(vk::Image& image,
+	                                         vk::ImageState& state,
+	                                         uint32_t width, uint32_t height);
+
 	// renderer_geometry.cpp
 	void grow_streams(FrameSlot& slot, uint32_t vertices, uint32_t instances);
 	void grow_uniforms(FrameSlot& slot, uint64_t size);
@@ -420,6 +491,19 @@ private:
 	void poll_pyramid();
 	VkDescriptorSet alloc_storage_set(VkImageView src, VkImageView dst);
 	void order_storage_write(VkCommandBuffer cmd, uint32_t mip);
+
+	// renderer_post.cpp (FXAA, SSAO, viewport pass)
+	bool ensure_fxaa_source(uint32_t width, uint32_t height);
+	bool ensure_fxaa_pipeline();
+	void fxaa_resolve(vk::Image& destination, vk::ImageState& destination_state,
+	                  uint32_t width, uint32_t height);
+	bool ensure_ssao_resources(uint32_t width, uint32_t height);
+	bool ensure_ssao_pipeline();
+	void run_ssao_pass(uint32_t width, uint32_t height);
+	/// Lit sampler set for \p albedo with the current shadow/SSAO bindings
+	/// (SSAO = previous frame's texture, or white when off/unavailable).
+	VkDescriptorSet alloc_lit_sampler_set(VkImageView albedo);
+	bool ssao_on() const;
 
 	// renderer_textures.cpp
 	void create_samplers();

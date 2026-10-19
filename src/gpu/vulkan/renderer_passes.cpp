@@ -572,9 +572,18 @@ void GpuRendererVulkan::bind_lit_state(const glm::mat4& view,
 	fragment_uniforms.blob_params =
 	        glm::vec4{static_cast<float>(blob_count_), pbr::kBlobSunRadius,
 	                  0.0f, 0.0f};
-	// SSAO belongs to the second half: always off, binding white (AO=1).
-	fragment_uniforms.ssao_params = glm::vec4{0.0f, 0.0f, 0.0f, 0.0f};
-	fragment_uniforms.ssao_texel  = glm::vec4{0.0f};
+	// SSAO: scales fill only, never the sun. Disabled (or no texture yet)
+	// binds white so the factor reads 1. The texture is the PREVIOUS
+	// frame's AO (run_ssao_pass produces it at the end of the scene pass),
+	// so there is one frame of lag and no circular dependency.
+	const bool ao_on = ssao_on();
+	fragment_uniforms.ssao_params =
+	        glm::vec4{ao_on ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f};
+	fragment_uniforms.ssao_texel =
+	        ao_on ? glm::vec4{1.0f / static_cast<float>(ssao_target_width_),
+	                            1.0f / static_cast<float>(ssao_target_height_),
+	                            0.0f, 0.0f}
+	                : glm::vec4{0.0f};
 
 	const uint64_t vertex_offset =
 	        push_uniforms(&vertex_uniforms, sizeof(vertex_uniforms));
@@ -582,14 +591,12 @@ void GpuRendererVulkan::bind_lit_state(const glm::mat4& view,
 	        push_uniforms(&fragment_uniforms, sizeof(fragment_uniforms));
 	VkDescriptorSet vertex_set   = alloc_vertex_set(vertex_offset);
 	VkDescriptorSet fragment_set = alloc_fragment_set(fragment_offset);
-	VkImageView shadow_view =
-	        shadow_on ? shadow_map_.view : white_texture_.view;
-	VkSampler shadow_sampler =
-	        shadow_on ? shadow_sampler_ : default_sampler_;
-	VkDescriptorSet sampler_set = alloc_sampler_set(
-	        white_texture_.view, default_sampler_, shadow_view,
-	        shadow_sampler, white_texture_.view, default_sampler_);
-
+	// Binding 1 (shadow map) lives here, next to the pipeline, so every draw
+	// samples a valid descriptor: the map when lit, else the white texel
+	// (depth 1.0 reads as lit, failing open). Binding 2 (SSAO) samples the
+	// previous frame's AO texture, or white (AO=1) when off/unavailable.
+	VkDescriptorSet sampler_set =
+	        alloc_lit_sampler_set(white_texture_.view);
 	context_.api.CmdBindPipeline(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS,
 	                             lit_pipeline_);
 	const uint32_t vertex_dynamic   = static_cast<uint32_t>(vertex_offset);
@@ -607,75 +614,55 @@ void GpuRendererVulkan::bind_lit_state(const glm::mat4& view,
 
 void GpuRendererVulkan::begin_scene_pass()
 {
-	if (cmd_ == VK_NULL_HANDLE || slot_ == nullptr ||
-	    offscreen_color_.handle == VK_NULL_HANDLE) {
-		return;
+		if (cmd_ == VK_NULL_HANDLE || slot_ == nullptr ||
+		    offscreen_color_.handle == VK_NULL_HANDLE) {
+			return;
+		}
+		// Depth-only pass from the light, once per frame. Replays the draw list
+		// commit_geometry_upload() kept; a frame with no geometry skips it and
+		// the shader flag below takes the legacy unshadowed path.
+		render_shadow_map();
+		// FXAA: render into the intermediate, resolve onto the real target in
+		// end_scene_pass(). The clear-only pass behind the editor stays direct:
+		// there is nothing to antialias in a clear. A target that cannot host
+		// the intermediate renders directly, so capture_rgba/write_ppm never
+		// break.
+		vk::Image* color_image       = &offscreen_color_;
+		vk::ImageState* color_state  = &offscreen_color_state_;
+		pass_redirected_             = false;
+		sky_drawn_                   = false;
+		pass_color_view_             = offscreen_color_.view;
+		if (record_occlusion_ && lighting_.fxaa_enabled &&
+		    !fxaa_unavailable_ && offscreen_width_ != 0 &&
+		    offscreen_height_ != 0 && ensure_fxaa_pipeline() &&
+		    ensure_fxaa_source(offscreen_width_, offscreen_height_)) {
+			color_image       = &fxaa_source_;
+			color_state       = &fxaa_source_state_;
+			pass_redirected_  = true;
+			pass_color_view_  = fxaa_source_.view;
+		}
+		// The pass's viewport: that of its first colour target, which is the
+		// offscreen texture or the FXAA source made from it.
+		pass_width_  = offscreen_width_;
+		pass_height_ = offscreen_height_;
+
+		image_as_color_attachment(*barriers_, cmd_, *color_image, 0, 1,
+		                          *color_state);
+		image_as_color_attachment(*barriers_, cmd_, pyramid_, 0, 1,
+		                          pyramid_states_[0]);
+		image_as_depth_attachment(*barriers_, cmd_, depth_, depth_state_);
+		barriers_->flush(cmd_);
+		begin_rendering(cmd_);
+		scene_pass_open_ = true;
 	}
-	// Depth-only pass from the light, once per frame. Replays the draw list
-	// commit_geometry_upload() kept; a frame with no geometry skips it and
-	// the shader flag below takes the legacy unshadowed path.
-	render_shadow_map();
-
-	pass_width_  = offscreen_width_;
-	pass_height_ = offscreen_height_;
-	sky_drawn_   = false;
-
-	image_as_color_attachment(*barriers_, cmd_, offscreen_color_, 0, 1,
-	                          offscreen_color_state_);
-	image_as_color_attachment(*barriers_, cmd_, pyramid_, 0, 1,
-	                          pyramid_states_[0]);
-	image_as_depth_attachment(*barriers_, cmd_, depth_, depth_state_);
-	barriers_->flush(cmd_);
-	begin_rendering(cmd_);
-	scene_pass_open_ = true;
-}
-
-void GpuRendererVulkan::begin_rendering(VkCommandBuffer cmd)
-{
-	VkRenderingAttachmentInfo colors[2]{};
-	colors[0].sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-	colors[0].imageView   = offscreen_color_.view;
-	colors[0].imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-	colors[0].loadOp      = VK_ATTACHMENT_LOAD_OP_CLEAR;
-	colors[0].storeOp     = VK_ATTACHMENT_STORE_OP_STORE;
-	colors[0].clearValue.color = VkClearColorValue{
-	        {clear_r_, clear_g_, clear_b_, 1.0f}};
-	// Unconditional, matching the pipeline's two declared colour targets.
-	// Load-bearing: an unwritten texel reads as ~0 and would poison any
-	// future min reduction, so the clear is the far sentinel.
-	colors[1].sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-	colors[1].imageView   = pyramid_views_[0];
-	colors[1].imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-	colors[1].loadOp      = VK_ATTACHMENT_LOAD_OP_CLEAR;
-	colors[1].storeOp     = VK_ATTACHMENT_STORE_OP_STORE;
-	const float far       = kDepthFar;
-	colors[1].clearValue.color = VkClearColorValue{{far, far, far, far}};
-
-	VkRenderingAttachmentInfo depth{};
-	depth.sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-	depth.imageView   = depth_.view;
-	depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
-	depth.loadOp      = VK_ATTACHMENT_LOAD_OP_CLEAR;
-	depth.storeOp     = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-	depth.clearValue.depthStencil = VkClearDepthStencilValue{1.0f, 0};
-
-	VkRenderingInfo rendering{};
-	rendering.sType               = VK_STRUCTURE_TYPE_RENDERING_INFO;
-	rendering.renderArea           = VkRect2D{{0, 0},
-	                                           {pass_width_, pass_height_}};
-	rendering.layerCount           = 1;
-	rendering.colorAttachmentCount = 2;
-	rendering.pColorAttachments    = colors;
-	rendering.pDepthAttachment     = &depth;
-	context_.api.CmdBeginRendering(cmd, &rendering);
-}
 
 void GpuRendererVulkan::draw(const glm::mat4& view, const glm::mat4& view_projection,
                              const glm::vec3& camera_position,
                              const GpuDrawBatch* batches, uint32_t batch_count,
                              const AssetRegistry* assets)
 {
-	if (!scene_pass_open_ || cmd_ == VK_NULL_HANDLE || slot_ == nullptr ||
+	if ((!scene_pass_open_ && !viewport_pass_open_) ||
+	    cmd_ == VK_NULL_HANDLE || slot_ == nullptr ||
 	    batches == nullptr || batch_count == 0 ||
 	    lit_pipeline_ == VK_NULL_HANDLE) {
 		return;
@@ -702,21 +689,10 @@ void GpuRendererVulkan::draw(const glm::mat4& view, const glm::mat4& view_projec
 		}
 		VkImageView albedo = texture_for_albedo(batch.albedo_id, assets);
 		if (albedo != bound_albedo || sampler_set == VK_NULL_HANDLE) {
-			const bool shadow_on =
-			        lighting_.shadows_enabled && shadows_supported_ &&
-			        shadow_rendered_ &&
-			        shadow_map_.handle != VK_NULL_HANDLE &&
-			        shadow_sampler_ != VK_NULL_HANDLE;
-			VkImageView shadow_view =
-			        shadow_on ? shadow_map_.view : white_texture_.view;
-			VkSampler shadow_sampler =
-			        shadow_on ? shadow_sampler_ : default_sampler_;
-			sampler_set = alloc_sampler_set(
-			        albedo, default_sampler_, shadow_view, shadow_sampler,
-			        white_texture_.view, default_sampler_);
+			sampler_set = alloc_lit_sampler_set(albedo);
 			context_.api.CmdBindDescriptorSets(
-			        cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, lit_layout_, 2,
-			        1, &sampler_set, 0, nullptr);
+			        cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, lit_layout_,
+			        2, 1, &sampler_set, 0, nullptr);
 			bound_albedo = albedo;
 		}
 		record_geometry_draw(cmd_, GeometryDraw{batch.mesh, batch.first_vertex,
@@ -736,21 +712,35 @@ void GpuRendererVulkan::draw(const glm::mat4& view, const glm::mat4& view_projec
 
 void GpuRendererVulkan::end_scene_pass()
 {
-	if (!scene_pass_open_) {
-		return;
-	}
-	scene_pass_open_ = false;
-	if (cmd_ != VK_NULL_HANDLE) {
-		context_.api.CmdEndRendering(cmd_);
-		// The reduction reads the colour target this pass just wrote, so it
-		// can only be recorded after the render pass has ended. A
-		// clear-only pass behind the editor suppresses this so it does not
-		// replace the pyramid with an empty image.
-		if (record_occlusion_) {
-			record_pyramid();
+		if (!scene_pass_open_) {
+			return;
 		}
-	}
-	record_occlusion_ = true;
+		scene_pass_open_ = false;
+		if (cmd_ != VK_NULL_HANDLE) {
+			context_.api.CmdEndRendering(cmd_);
+			// FXAA resolve onto the real target. The pyramid reduction reads
+			// target 1, which is never redirected, so resolve order vs. the
+			// reduction below does not matter.
+			if (pass_redirected_) {
+				fxaa_resolve(offscreen_color_, offscreen_color_state_,
+				             fxaa_width_, fxaa_height_);
+			}
+			pass_redirected_ = false;
+			if (lighting_.ssao_enabled && !ssao_unavailable_ &&
+			    pyramid_.handle != VK_NULL_HANDLE) {
+				if (offscreen_width_ != 0 && offscreen_height_ != 0) {
+					run_ssao_pass(offscreen_width_, offscreen_height_);
+				}
+			}
+			// The reduction reads the colour target this pass just wrote, so
+			// it can only be recorded after the render pass has ended. A
+			// clear-only pass behind the editor suppresses this so it does
+			// not replace the pyramid with an empty image.
+			if (record_occlusion_) {
+				record_pyramid();
+			}
+		}
+		record_occlusion_ = true;
 }
 
 bool GpuRendererVulkan::ensure_sky_pipeline()
@@ -811,7 +801,8 @@ void GpuRendererVulkan::draw_sky(const glm::mat4& view_projection,
 	// over a pixel only where nothing was drawn, so geometry is never shaded
 	// twice. A pass with no draws stays a clear. Disabled restores the exact
 	// legacy clear-color path.
-	if (sky_drawn_ || !scene_pass_open_ || !lighting_.sky_enabled) {
+	if (sky_drawn_ || (!scene_pass_open_ && !viewport_pass_open_) ||
+	    !lighting_.sky_enabled) {
 		return;
 	}
 	if (!ensure_sky_pipeline()) {
