@@ -154,28 +154,91 @@ void apply_character_movement_input(Scene& scene, PhysicsWorld& physics,
 	physics.set_character_velocity(scene, player, velocity);
 }
 
+/// Records the authored pose once, before either moving view first
+/// overwrites it, so leaving the follow views can restore the fixed wide
+/// shot exactly. Later frames must not move the stash.
+void stash_authored_pose_once(Scene& scene, Entity entity, const Camera3D& camera)
+{
+	if (entity != NullEntity && !scene.registry().all_of<CameraHome>(entity)) {
+		scene.registry().emplace<CameraHome>(entity, camera.position,
+		                                     camera.target);
+	}
+}
+
+/// The controller-owned follow mode: \c Eye when the camera entity carries
+/// an eye state, \c Chase otherwise (absent state means chase).
+CameraFollowMode follow_mode(Scene& scene, Entity entity)
+{
+	if (entity != NullEntity) {
+		if (const auto* state =
+		            scene.registry().try_get<CameraFollowModeState>(entity)) {
+			return state->mode;
+		}
+	}
+	return CameraFollowMode::Chase;
+}
+
+/// Parks the camera per the controller-owned mode with default chase
+/// tuning. The authored pose is stashed first so the fixed wide shot
+/// survives either moving view.
+void snap_to_follow_mode(Scene& scene, Entity entity, Camera3D& camera,
+                         const Transform& transform)
+{
+	stash_authored_pose_once(scene, entity, camera);
+	if (follow_mode(scene, entity) == CameraFollowMode::Eye) {
+		apply_first_person_pose(camera, transform);
+		return;
+	}
+	apply_chase_pose(camera, transform, FollowCameraSettings{});
+}
+
+CameraView camera_view(Scene& scene)
+{
+	const Entity entity = find_follow_camera_entity(scene);
+	const Camera3D* camera =
+	        entity == NullEntity
+	                ? nullptr
+	                : scene.registry().try_get<Camera3D>(entity);
+	if (camera == nullptr || !camera->follow) {
+		return CameraView::Fixed;
+	}
+	return follow_mode(scene, entity) == CameraFollowMode::Eye
+	        ? CameraView::Eye
+	        : CameraView::Chase;
+}
+
 void update_follow_camera(Scene& scene, const FollowCameraSettings& settings)
 {
 	const Entity player = find_named(scene, "player");
-	Camera3D* camera    = find_follow_camera(scene);
+	const Entity entity = find_follow_camera_entity(scene);
+	Camera3D* camera =
+	        entity == NullEntity
+	                ? nullptr
+	                : scene.registry().try_get<Camera3D>(entity);
 	if (player == NullEntity || !camera) {
+		return;
+	}
+	// Fixed pose (the authored wide shot or a manual orbit): hold it.
+	// Only the follow modes rewrite the camera, consulting the
+	// controller-owned mode every frame so F5 never fights the writer.
+	if (!camera->follow) {
 		return;
 	}
 	const Transform* transform = scene.registry().try_get<Transform>(player);
 	if (!transform) {
 		return;
 	}
-	if (camera->follow) {
-		apply_chase_pose(*camera, *transform, settings);
+	stash_authored_pose_once(scene, entity, *camera);
+	if (follow_mode(scene, entity) == CameraFollowMode::Eye) {
+		apply_first_person_pose(*camera, *transform);
 		return;
 	}
-	apply_first_person_pose(*camera, *transform);
+	apply_chase_pose(*camera, *transform, settings);
 }
 
 bool camera_third_person(Scene& scene)
 {
-	const Camera3D* camera = find_follow_camera(scene);
-	return camera != nullptr && camera->follow;
+	return camera_view(scene) == CameraView::Chase;
 }
 
 void set_camera_third_person(Scene& scene, bool enabled)
@@ -188,30 +251,61 @@ void set_camera_third_person(Scene& scene, bool enabled)
 	if (!camera) {
 		return;
 	}
-	const Entity player = find_named(scene, "player");
-	const Transform* transform =
-	        player == NullEntity
-	                ? nullptr
-	                : scene.registry().try_get<Transform>(player);
-	camera->follow = enabled;
-	if (!transform) {
-		return;
-	}
 	if (enabled) {
-		apply_chase_pose(*camera, *transform, FollowCameraSettings{});
+		camera->follow = true;
+		scene.registry().emplace_or_replace<CameraFollowModeState>(
+		        entity, CameraFollowModeState{CameraFollowMode::Chase});
+		if (const Entity player = find_named(scene, "player");
+		    player != NullEntity) {
+			if (const Transform* transform =
+			            scene.registry().try_get<Transform>(player)) {
+				snap_to_follow_mode(scene, entity, *camera, *transform);
+			}
+		}
 		return;
 	}
-	apply_first_person_pose(*camera, *transform);
+	stash_authored_pose_once(scene, entity, *camera);
+	// A direct re-follow (for example the RPG orbit reset) resumes the
+	// chase view, so leave no stale eye mode behind.
+	scene.registry().emplace_or_replace<CameraFollowModeState>(
+	        entity, CameraFollowModeState{CameraFollowMode::Chase});
+	camera->follow   = false;
+	const CameraHome& home = scene.registry().get<CameraHome>(entity);
+	camera->position = home.position;
+	camera->target   = home.target;
 }
 
 bool toggle_camera_third_person(Scene& scene)
 {
-	if (find_follow_camera(scene) == nullptr) {
+	const Entity entity = find_follow_camera_entity(scene);
+	if (entity == NullEntity) {
 		return false;
 	}
-	const bool enabled = !camera_third_person(scene);
-	set_camera_third_person(scene, enabled);
-	return enabled;
+	Camera3D* camera = scene.registry().try_get<Camera3D>(entity);
+	if (!camera) {
+		return false;
+	}
+	// From the fixed pose F5 returns to the chase view; while following
+	// it flips the controller-owned mode between chase and eye. Either
+	// way the writer below applies the same mode every frame.
+	if (!camera->follow) {
+		set_camera_third_person(scene, true);
+		return true;
+	}
+	const CameraFollowMode flipped =
+	        follow_mode(scene, entity) == CameraFollowMode::Chase
+	                ? CameraFollowMode::Eye
+	                : CameraFollowMode::Chase;
+	scene.registry().emplace_or_replace<CameraFollowModeState>(
+	        entity, CameraFollowModeState{flipped});
+	if (const Entity player = find_named(scene, "player");
+	    player != NullEntity) {
+		if (const Transform* transform =
+		            scene.registry().try_get<Transform>(player)) {
+			snap_to_follow_mode(scene, entity, *camera, *transform);
+		}
+	}
+	return flipped == CameraFollowMode::Chase;
 }
 
 } // namespace lotus

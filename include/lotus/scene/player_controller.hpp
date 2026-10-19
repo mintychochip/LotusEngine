@@ -31,26 +31,49 @@ void apply_character_movement_input(Scene& scene, PhysicsWorld& physics,
                                     bool enable_input, float move_speed = 4.0f,
                                     float sprint_multiplier = 1.75f);
 
-/// Keeps the gameplay camera glued to \c "player": the third-person chase
-/// view while third person is on, the first-person eye view otherwise.
-/// Runs every frame, so both views track a moving character.
+/// Moving views the follow writer produces while \c Camera3D::follow is on.
+/// The mode is controller-owned transient state (never serialized): a
+/// document only knows follow on/off. \c follow off means the fixed pose.
+enum class CameraFollowMode { Chase, Eye };
+
+/// Transient per-camera follow mode. Absent means \c Chase.
+struct CameraFollowModeState {
+	CameraFollowMode mode{CameraFollowMode::Chase};
+};
+
+/// Observed gameplay view: \c Chase or \c Eye while the camera follows
+/// \c "player", \c Fixed when it holds its pose (\c follow off) or when
+/// there is no camera at all.
+enum class CameraView { Chase, Eye, Fixed };
+
+/// Reports the observed gameplay view.
+CameraView camera_view(Scene& scene);
+
+/// Keeps the gameplay camera glued to \c "player" while \c follow is on:
+/// the chase view or the first-person eye view according to the
+/// controller-owned mode. Holds the pose untouched while \c follow is off
+/// (the fixed wide shot or a manual orbit). Runs every frame, so both
+/// moving views track a moving character.
 void update_follow_camera(Scene& scene,
                           const FollowCameraSettings& settings = {});
 
-/// True when the gameplay camera shows the third-person chase view. False
-/// when it shows the character's own first-person eye view, or when there
-/// is no camera at all.
+/// True when the gameplay camera shows the third-person chase view: it
+/// follows \c "player" in \c Chase mode. False for the first-person eye
+/// view, for the fixed pose, and when there is no camera at all.
 bool camera_third_person(Scene& scene);
 
-/// Switches the gameplay camera between the third-person chase view and the
-/// first-person eye view at \c kFirstPersonEyeHeight looking along the
-/// character's facing (\c Transform::rotation.y). Snaps immediately, and the
-/// per-frame follow keeps the pose glued to the player afterwards. No-op
+/// Switches the gameplay camera between the third-person chase view and
+/// the scene's fixed wide shot (restored exactly from the pose stashed
+/// before the follow writer first overwrote it). Snaps immediately. No-op
 /// without a camera.
 void set_camera_third_person(Scene& scene, bool enabled);
 
-/// Flips between the chase view and the first-person view and reports the
-/// new state (true = third person). No-op (false) without a camera.
+/// Flips the gameplay camera between the chase view and the first-person
+/// eye view at \c kFirstPersonEyeHeight looking along the character's
+/// facing (\c Transform::rotation.y), and reports the new state (true =
+/// third person). From the fixed pose it returns to the chase view.
+/// Snaps immediately; the per-frame follow keeps the pose glued to the
+/// player afterwards. No-op (false) without a camera.
 bool toggle_camera_third_person(Scene& scene);
 
 } // namespace lotus

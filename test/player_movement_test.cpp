@@ -76,7 +76,7 @@ TEST(PlayerMovementTest, ThirdPersonIsOnByDefault)
 	EXPECT_TRUE(camera_third_person(scene));
 }
 
-TEST(PlayerMovementTest, ThirdPersonToggleSwitchesToFirstPerson)
+TEST(PlayerMovementTest, ThirdPersonToggleCyclesChaseEyeChase)
 {
 	Scene scene{"toggle"};
 	const Entity player = scene.create("player");
@@ -86,13 +86,17 @@ TEST(PlayerMovementTest, ThirdPersonToggleSwitchesToFirstPerson)
 	authored.position          = {7.5f, 4.5f, 10.5f};
 	authored.target            = {0.0f, 1.0f, 0.0f};
 
+	EXPECT_EQ(camera_view(scene), CameraView::Chase);
 	update_follow_camera(scene);
 	const Camera3D& chase = scene.registry().get<Camera3D>(camera_entity);
 	EXPECT_NEAR(chase.position.z, 7.0f, 1e-4f);
 
+	// F5 leaves the chase writer for the eye view, not the fixed pose.
 	EXPECT_FALSE(toggle_camera_third_person(scene));
+	EXPECT_EQ(camera_view(scene), CameraView::Eye);
 	const Camera3D& eye = scene.registry().get<Camera3D>(camera_entity);
 	EXPECT_FALSE(camera_third_person(scene));
+	EXPECT_TRUE(eye.follow);
 	EXPECT_NEAR(eye.position.x, 1.0f, 1e-4f);
 	EXPECT_NEAR(eye.position.y, kFirstPersonEyeHeight, 1e-4f);
 	EXPECT_NEAR(eye.position.z, 2.0f, 1e-4f);
@@ -101,11 +105,14 @@ TEST(PlayerMovementTest, ThirdPersonToggleSwitchesToFirstPerson)
 	scene.registry().get<Transform>(player).position = {4.0f, 0.0f, -1.0f};
 	update_follow_camera(scene);
 	const Camera3D& tracked = scene.registry().get<Camera3D>(camera_entity);
+	EXPECT_EQ(camera_view(scene), CameraView::Eye);
 	EXPECT_NEAR(tracked.position.x, 4.0f, 1e-4f);
 	EXPECT_NEAR(tracked.position.y, kFirstPersonEyeHeight, 1e-4f);
 	EXPECT_NEAR(tracked.position.z, -1.0f, 1e-4f);
 
+	// F5 again returns to the chase view exactly.
 	EXPECT_TRUE(toggle_camera_third_person(scene));
+	EXPECT_EQ(camera_view(scene), CameraView::Chase);
 	update_follow_camera(scene);
 	const Camera3D& resumed = scene.registry().get<Camera3D>(camera_entity);
 	EXPECT_NEAR(resumed.position.x, 4.0f, 1e-4f);
@@ -125,7 +132,8 @@ TEST(PlayerMovementTest, FirstPersonPoseLooksAlongFacing)
 	const Entity camera_entity = scene.create("camera");
 	scene.registry().emplace<Camera3D>(camera_entity);
 
-	set_camera_third_person(scene, false);
+	EXPECT_FALSE(toggle_camera_third_person(scene));
+	EXPECT_EQ(camera_view(scene), CameraView::Eye);
 	const Camera3D& camera = scene.registry().get<Camera3D>(camera_entity);
 	EXPECT_FALSE(camera_third_person(scene));
 	EXPECT_NEAR(camera.position.x, 2.0f, 1e-4f);
@@ -137,6 +145,63 @@ TEST(PlayerMovementTest, FirstPersonPoseLooksAlongFacing)
 	EXPECT_NEAR(view.x, 1.0f, 1e-4f);
 	EXPECT_NEAR(view.y, 0.0f, 1e-4f);
 	EXPECT_NEAR(view.z, 0.0f, 1e-4f);
+}
+
+TEST(PlayerMovementTest, FixedPoseRestoresAuthoredShot)
+{
+	Scene scene{"fixed"};
+	const Entity player = scene.create("player");
+	scene.registry().get<Transform>(player).position = {1.0f, 0.0f, 2.0f};
+	const Entity camera_entity = scene.create("camera");
+	auto& authored             = scene.registry().emplace<Camera3D>(camera_entity);
+	authored.position          = {7.5f, 4.5f, 10.5f};
+	authored.target            = {0.0f, 1.0f, 0.0f};
+
+	update_follow_camera(scene);
+	EXPECT_EQ(camera_view(scene), CameraView::Chase);
+
+	set_camera_third_person(scene, false);
+	EXPECT_EQ(camera_view(scene), CameraView::Fixed);
+	const Camera3D& fixed = scene.registry().get<Camera3D>(camera_entity);
+	EXPECT_FALSE(camera_third_person(scene));
+	EXPECT_FALSE(fixed.follow);
+	EXPECT_NEAR(fixed.position.x, 7.5f, 1e-4f);
+	EXPECT_NEAR(fixed.position.y, 4.5f, 1e-4f);
+	EXPECT_NEAR(fixed.position.z, 10.5f, 1e-4f);
+	EXPECT_NEAR(fixed.target.x, 0.0f, 1e-4f);
+	EXPECT_NEAR(fixed.target.y, 1.0f, 1e-4f);
+	EXPECT_NEAR(fixed.target.z, 0.0f, 1e-4f);
+
+	// Follow frames while fixed leave the wide shot alone.
+	update_follow_camera(scene);
+	const Camera3D& still = scene.registry().get<Camera3D>(camera_entity);
+	EXPECT_NEAR(still.position.x, 7.5f, 1e-4f);
+	EXPECT_EQ(camera_view(scene), CameraView::Fixed);
+}
+
+TEST(PlayerMovementTest, ToggleFromFixedReturnsToChase)
+{
+	Scene scene{"unfixed"};
+	const Entity player = scene.create("player");
+	scene.registry().get<Transform>(player).position = {1.0f, 0.0f, 2.0f};
+	const Entity camera_entity = scene.create("camera");
+	scene.registry().emplace<Camera3D>(camera_entity);
+	update_follow_camera(scene);
+
+	// A manual orbit (follow off, pose moved) is the fixed state too.
+	auto& camera = scene.registry().get<Camera3D>(camera_entity);
+	camera.follow   = false;
+	camera.position = {20.0f, 10.0f, 20.0f};
+	camera.target   = {0.0f, 0.0f, 0.0f};
+	EXPECT_EQ(camera_view(scene), CameraView::Fixed);
+
+	EXPECT_TRUE(toggle_camera_third_person(scene));
+	EXPECT_EQ(camera_view(scene), CameraView::Chase);
+	const Camera3D& resumed = scene.registry().get<Camera3D>(camera_entity);
+	EXPECT_TRUE(resumed.follow);
+	EXPECT_NEAR(resumed.position.x, 1.0f, 1e-4f);
+	EXPECT_NEAR(resumed.position.y, 2.2f, 1e-4f);
+	EXPECT_NEAR(resumed.position.z, 7.0f, 1e-4f);
 }
 
 TEST(PlayerMovementTest, ThirdPersonToggleWithoutCameraIsNoOp)
