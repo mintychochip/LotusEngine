@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <deque>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -339,6 +340,11 @@ public:
 	void begin_frame(SDL_Window* window, float clear_r, float clear_g,
 	                 float clear_b);
 
+	/// Frames an offscreen renderer lets queue up before begin_frame_offscreen()
+	/// waits for the oldest to finish: enough to keep the GPU fed while the CPU
+	/// records the next one. A windowed renderer is paced by its swapchain.
+	static constexpr uint32_t kFramesInFlight = 2;
+
 	// --- geometry ---
 	//
 	// A frame's geometry is a set of instanced draws of cached meshes plus,
@@ -567,13 +573,15 @@ private:
 	/// target 1 when the reduction is unavailable. lit.frag writes location 1
 	/// unconditionally, so the attachment must exist even with occlusion off.
 	void ensure_pyramid_stand_in(uint32_t width, uint32_t height);
-	/// Releases fences whose submission has already been superseded (a resize
-	/// dropped the pyramid they were reading into) but which the GPU may still
-	/// be using. Releasing one of those would hand it straight back to SDL's
-	/// pool, and the next SDL_AcquireGPUCommandBuffer would vkResetFences a
-	/// fence that is still in use. Each is therefore released only once
-	/// SDL_QueryGPUFence reports it signalled.
-	void release_retired_fences();
+	/// Frame fences. Every offscreen frame, and every windowed frame that
+	/// downloads a pyramid, is submitted with one; they queue in submit order.
+	/// reap_frame_fences() collects the finished ones without waiting,
+	/// wait_for_frame_slot() blocks until fewer than kFramesInFlight frames
+	/// are outstanding, and release_frame_fences() drops them all once the GPU
+	/// is idle.
+	void reap_frame_fences();
+	void wait_for_frame_slot();
+	void release_frame_fences();
 	void ensure_default_sampler();
 	void ensure_white_texture();
 	void destroy_textures();
@@ -672,12 +680,21 @@ private:
 	std::vector<uint32_t> pyramid_offset_;
 	uint32_t pyramid_levels_{0};
 	SDL_GPUTransferBuffer* pyramid_transfer_{nullptr};
-	SDL_GPUFence* pyramid_fence_{nullptr};
+	/// Submit serial of the frame whose pyramid download is in flight; valid
+	/// while pyramid_in_flight_.
+	uint64_t pyramid_serial_{0};
 	bool pyramid_in_flight_{false};
-	/// Fences still owned by the GPU but no longer read from, e.g. when a
-	/// resize destroyed the transfer buffer they were reading into. Released
-	/// by release_retired_fences() once signalled, never before.
-	std::vector<SDL_GPUFence*> retired_fences_;
+	/// A submitted frame's fence, in submit order. Owned here and released
+	/// only once reaped, so a fence is never handed back to SDL's pool while
+	/// the GPU may still be using it, whatever became of the resources the
+	/// frame read.
+	struct FrameFence {
+		uint64_t serial;
+		SDL_GPUFence* fence;
+	};
+	std::deque<FrameFence> frame_fences_;
+	uint64_t submit_serial_{0};    // frames submitted so far
+	uint64_t completed_serial_{0}; // every frame up to this one has finished
 	/// True once SDL_CreateGPUTexture has failed for the mip-chain pyramid
 	/// texture. The scene pass still needs an R32F target 1 (lit.frag writes
 	/// it unconditionally), so a single-mip stand-in takes over, but the

@@ -1437,17 +1437,9 @@ bool GpuRenderer::create_occlusion_pipeline()
 // The compute pipeline is device-scoped and deliberately survives a resize.
 void GpuRenderer::destroy_pyramid()
 {
-	if (pyramid_fence_) {
-		// Retired, never released outright. This fence's vkQueueSubmit may
-		// still be pending, and releasing it drops the reference count to
-		// zero and returns the handle to SDL's pool — where the next submit
-		// pops it and calls vkResetFences on a fence Vulkan still considers in
-		// use. A prematurely reset fence also reports signalled, which would
-	// let the poll map a download that has not landed. release_retired_fences
-		// collects each one only once SDL_QueryGPUFence agrees.
-		retired_fences_.push_back(pyramid_fence_);
-		pyramid_fence_ = nullptr;
-	}
+	// A pyramid download still in flight is simply forgotten: its frame's
+	// fence belongs to frame_fences_ and is reaped like any other, and SDL
+	// keeps the transfer buffer released below alive until the GPU is done.
 	if (pyramid_transfer_) {
 		SDL_ReleaseGPUTransferBuffer(device_, pyramid_transfer_);
 		pyramid_transfer_ = nullptr;
@@ -1476,18 +1468,39 @@ void GpuRenderer::destroy_occlusion()
 	occlusion_enabled_ = false;
 }
 
-void GpuRenderer::release_retired_fences()
+void GpuRenderer::reap_frame_fences()
 {
-	for (auto it = retired_fences_.begin(); it != retired_fences_.end();) {
-		// Query, never wait. A fence that is not signalled yet stays retired
-		// and is retried next frame; a resize must not stall the loop.
-		if (SDL_QueryGPUFence(device_, *it)) {
-			SDL_ReleaseGPUFence(device_, *it);
-			it = retired_fences_.erase(it);
-		} else {
-			++it;
-		}
+	// Query, never wait. A frame that has not finished stays queued and is
+	// retried next time; nothing here may stall the loop.
+	while (!frame_fences_.empty() &&
+	       SDL_QueryGPUFence(device_, frame_fences_.front().fence)) {
+		SDL_ReleaseGPUFence(device_, frame_fences_.front().fence);
+		completed_serial_ = frame_fences_.front().serial;
+		frame_fences_.pop_front();
 	}
+}
+
+void GpuRenderer::wait_for_frame_slot()
+{
+	reap_frame_fences();
+	while (frame_fences_.size() >= kFramesInFlight) {
+		SDL_GPUFence* const oldest = frame_fences_.front().fence;
+		SDL_WaitForGPUFences(device_, true, &oldest, 1);
+		SDL_ReleaseGPUFence(device_, oldest);
+		completed_serial_ = frame_fences_.front().serial;
+		frame_fences_.pop_front();
+	}
+}
+
+void GpuRenderer::release_frame_fences()
+{
+	// Only called with the GPU idle, so every fence is signalled and this
+	// cannot block.
+	for (const FrameFence& frame : frame_fences_) {
+		SDL_ReleaseGPUFence(device_, frame.fence);
+	}
+	frame_fences_.clear();
+	completed_serial_ = submit_serial_;
 }
 
 void GpuRenderer::ensure_pyramid(uint32_t width, uint32_t height)
@@ -1634,21 +1647,15 @@ void GpuRenderer::ensure_pyramid_texture(uint32_t width, uint32_t height)
 
 void GpuRenderer::poll_pyramid_fence()
 {
-	// Drains fences a resize superseded. Polls, never waits.
-	release_retired_fences();
+	// Collects the frames that have finished. Polls, never waits.
+	reap_frame_fences();
 	occlusion_ready_ = false;
-	if (!pyramid_in_flight_ || !pyramid_fence_) {
+	if (!pyramid_in_flight_) {
 		return;
 	}
-
-	// This SDL build's SDL_QueryGPUFence returns true when the fence is
-	// signaled and false when it is not (or on error); both mean the same
-	// thing here: nothing to read back yet.
-	if (!SDL_QueryGPUFence(device_, pyramid_fence_)) {
+	if (completed_serial_ < pyramid_serial_) {
 		return; // still in flight: skip occlusion this frame, never block
 	}
-	SDL_ReleaseGPUFence(device_, pyramid_fence_);
-	pyramid_fence_     = nullptr;
 	pyramid_in_flight_ = false;
 
 	if (!pyramid_transfer_ || pyramid_levels_ <= kDepthPyramidMinLevel) {
@@ -1707,13 +1714,12 @@ void GpuRenderer::record_pyramid()
 	// so without this the reduction would still run pointlessly whenever
 	// occlusion was disabled.
 	//
-	// pyramid_in_flight_ keeps this to at most one outstanding fence. Recording
-	// a second download into the same transfer buffer while the first
+	// pyramid_in_flight_ keeps this to at most one outstanding download.
+	// Recording a second one into the same transfer buffer while the first
 	// submission is still pending would overwrite the bytes the poll is going
-	// to map, and would leave end_frame holding a fence nobody has consumed —
-	// releasing that is the premature-vkResetFences bug. Skipping the download
-	// costs one frame of occlusion, which is the direction this project calls
-	// safe: the frame still renders, it just culls nothing.
+	// to map. Skipping the download costs one frame of occlusion, which is the
+	// direction this project calls safe: the frame still renders, it just
+	// culls nothing.
 	if (!occlusion_enabled_ || !pyramid_texture_ || !hiz_pipeline_ ||
 	    !pyramid_transfer_ || !cmd_ || pyramid_in_flight_ ||
 	    pyramid_levels_ <= kDepthPyramidMinLevel) {
@@ -1820,6 +1826,7 @@ void GpuRenderer::begin_frame_offscreen()
 	if (!offscreen_ || !offscreen_color_) {
 		return;
 	}
+	wait_for_frame_slot();
 	begin_geometry_frame();
 	poll_pyramid_fence();
 	cmd_ = SDL_AcquireGPUCommandBuffer(device_);
@@ -2135,13 +2142,10 @@ void GpuRenderer::shutdown()
 	}
 	SDL_WaitForGPUIdle(device_);
 	destroy_occlusion();
-	// Every retired fence is now signalled, so this only releases handles; it
+	// Every frame fence is now signalled, so this only releases handles; it
 	// cannot block. Releasing them here rather than leaking keeps SDL's fence
 	// pool and the Vulkan device in step through SDL_DestroyGPUDevice.
-	for (SDL_GPUFence* fence : retired_fences_) {
-		SDL_ReleaseGPUFence(device_, fence);
-	}
-	retired_fences_.clear();
+	release_frame_fences();
 
 	abandon_geometry_staging();
 	destroy_buffers();
@@ -2930,18 +2934,19 @@ void GpuRenderer::end_frame()
 		SDL_GPUCommandBuffer* const submit = cmd_;
 		const bool had_pyramid_download    = pyramid_recorded_;
 
-		// No fence is dropped here. pyramid_recorded_ is only ever true when
-		// pyramid_in_flight_ was false, so this submit cannot orphan one: the
-		// fence it acquires is the single outstanding one, and
-		// poll_pyramid_fence releases it once SDL_QueryGPUFence says it has
-		// signalled.
+		// Offscreen frames always carry a fence, which begin_frame_offscreen()
+		// throttles on; a windowed frame needs one only for its pyramid
+		// download, the swapchain paces the rest. frame_fences_ owns the fence
+		// until it is reaped.
 		pyramid_recorded_ = false;
 		cmd_              = nullptr;
 		++frames_rendered_;
 
-		if (had_pyramid_download) {
-			pyramid_fence_ = SDL_SubmitGPUCommandBufferAndAcquireFence(submit);
-			if (!pyramid_fence_) {
+		const uint64_t serial = ++submit_serial_;
+		if (had_pyramid_download || offscreen_) {
+			SDL_GPUFence* fence =
+			        SDL_SubmitGPUCommandBufferAndAcquireFence(submit);
+			if (!fence) {
 				// SDL's Vulkan backend has already ended this command buffer
 				// inside the failed call, so there is nothing left to fall back
 				// to: re-submitting would submit an already-ended buffer. Report
@@ -2949,7 +2954,11 @@ void GpuRenderer::end_frame()
 				// reported.
 				throw std::runtime_error(SDL_GetError());
 			}
-			pyramid_in_flight_ = true;
+			frame_fences_.push_back(FrameFence{serial, fence});
+			if (had_pyramid_download) {
+				pyramid_serial_    = serial;
+				pyramid_in_flight_ = true;
+			}
 		} else if (!SDL_SubmitGPUCommandBuffer(submit)) {
 			throw std::runtime_error(SDL_GetError());
 		}
@@ -2966,6 +2975,7 @@ void GpuRenderer::wait_idle()
 {
 	if (device_) {
 		SDL_WaitForGPUIdle(device_);
+		release_frame_fences();
 	}
 }
 
