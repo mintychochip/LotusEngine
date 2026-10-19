@@ -229,12 +229,24 @@ struct Animator {
 /// Per-scene environment. Replaces the renderer's global lighting when a scene
 /// specifies one; a scene without settings leaves the globals alone.
 /// `exposure` scales linear HDR before ACES tone mapping (1.0 = neutral).
+///
+/// Hemisphere ambient: the shader blends `ground_color` (down) to `sky_color`
+/// (up) by world normal Y, then multiplies by `ambient` as the floor. Both
+/// default to the ambient gray, so a document that never sets them renders
+/// exactly the legacy flat floor. `shadows_enabled` (directional shadow map)
+/// and `fxaa_enabled` (post-pass AA) default ON; turning either off restores
+/// the exact legacy path for that feature. All four are additive v3 keys:
+/// absent in an old document means "keep the default", never a version bump.
 struct SceneSettings {
-	glm::vec3 light_direction{0.5f, 0.9f, 0.4f};
+	glm::vec3 light_direction{0.5f, 0.8f, 0.45f};
 	glm::vec3 light_color{1.0f, 1.0f, 1.0f};
-	float light_intensity{1.0f};
-	glm::vec3 ambient{0.12f, 0.13f, 0.17f};
+	float light_intensity{1.1f};
+	glm::vec3 ambient{0.15f, 0.15f, 0.18f};
 	float exposure{1.0f};
+	glm::vec3 sky_color{0.15f, 0.15f, 0.18f};
+	glm::vec3 ground_color{0.15f, 0.15f, 0.18f};
+	bool shadows_enabled{true};
+	bool fxaa_enabled{true};
 };
 
 } // namespace lotus

@@ -24,8 +24,9 @@ fi
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-# "<stage> <base>": lit supplies vert and frag, depth supplies comp.
-for pair in "vert lit" "frag lit" "comp depth"; do
+# "<stage> <base>": lit/shadow/fxaa supply vert and frag, depth supplies comp.
+for pair in "vert lit" "frag lit" "comp depth" "vert shadow" "frag shadow" \
+             "vert fxaa" "frag fxaa"; do
     stage="${pair%% *}"
     base="${pair##* }"
     source="$here/$base.$stage"

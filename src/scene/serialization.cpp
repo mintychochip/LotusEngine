@@ -879,7 +879,19 @@ std::string to_json_string(const Scene& scene)
 		    << dump_compact(arr3(s.ambient.x, s.ambient.y, s.ambient.z))
 		    // Additive within v3 (like the 2 -> 3 ids): an old document
 		    // without "exposure" loads with the default below.
-		    << ", \"exposure\": " << tidy(s.exposure) << "},\n";
+		    << ", \"exposure\": " << tidy(s.exposure)
+		    // Same additive rule for the realism slice: absent keys keep
+		    // struct defaults, so no version bump.
+		    << ", \"sky_color\": "
+		    << dump_compact(
+		               arr3(s.sky_color.x, s.sky_color.y, s.sky_color.z))
+		    << ", \"ground_color\": "
+		    << dump_compact(arr3(s.ground_color.x, s.ground_color.y,
+		                         s.ground_color.z))
+		    << ", \"shadows_enabled\": "
+		    << (s.shadows_enabled ? "true" : "false")
+		    << ", \"fxaa_enabled\": "
+		    << (s.fxaa_enabled ? "true" : "false") << "},\n";
 	}
 	out << "  \"entities\": [\n";
 	bool first = true;
@@ -943,6 +955,8 @@ bool scene_from_json(Scene& scene, const std::string& text, std::string* error)
 		read3("light_direction", settings.light_direction);
 		read3("light_color", settings.light_color);
 		read3("ambient", settings.ambient);
+		read3("sky_color", settings.sky_color);
+		read3("ground_color", settings.ground_color);
 		if (s.contains("light_intensity") && s.at("light_intensity").is_number()) {
 			settings.light_intensity = s.at("light_intensity").get<float>();
 		}
@@ -950,6 +964,15 @@ bool scene_from_json(Scene& scene, const std::string& text, std::string* error)
 		// default (1.0, neutral), so old v3 scenes load unchanged.
 		if (s.contains("exposure") && s.at("exposure").is_number()) {
 			settings.exposure = s.at("exposure").get<float>();
+		}
+		// Same additive rule for the realism slice: absent keys keep struct
+		// defaults (hemisphere == legacy floor, both features on).
+		if (s.contains("shadows_enabled") &&
+		    s.at("shadows_enabled").is_boolean()) {
+			settings.shadows_enabled = s.at("shadows_enabled").get<bool>();
+		}
+		if (s.contains("fxaa_enabled") && s.at("fxaa_enabled").is_boolean()) {
+			settings.fxaa_enabled = s.at("fxaa_enabled").get<bool>();
 		}
 		has_settings = true;
 	}

@@ -99,18 +99,70 @@ inline float linear_to_srgb(float c)
 	        : 1.055f * std::pow(c, 1.0f / 2.4f) - 0.055f;
 }
 
+/// Reference gray the hemisphere colours are stored against. Sky/ground
+/// default to exactly this, so the hemisphere multiplier below is 1.0 and an
+/// old document renders the legacy flat floor bit-for-bit. Matches
+/// HEMI_REFERENCE in shaders/lit.frag; keep the two in sync.
+inline const glm::vec3 kHemiReference{0.15f, 0.15f, 0.18f};
+
+/// Hemisphere blend weight from world normal Y: 0 facing down, 1 facing up.
+/// Matches `hemi_t` in shaders/lit.frag.
+inline float hemisphere_blend(float normal_y)
+{
+	return clamp01(normal_y * 0.5f + 0.5f);
+}
+
+/// Hemisphere ambient floor for one unit of albedo: the legacy `ambient`
+/// multiplied by the sky/ground blend, normalized by kHemiReference so the
+/// defaults reproduce the legacy floor exactly. When ambient is at its
+/// default the sky/ground colours apply verbatim; moving ambient scales the
+/// whole hemisphere as a gain. Matches lit.frag's `hemi` term.
+inline glm::vec3 hemisphere_ambient(const glm::vec3& ambient,
+                                    const glm::vec3& sky,
+                                    const glm::vec3& ground, float normal_y)
+{
+	const float t = hemisphere_blend(normal_y);
+	const glm::vec3 hemi =
+	        ground + (sky - ground) * t; // mix(ground, sky, t)
+	return {ambient.x * hemi.x / kHemiReference.x,
+	        ambient.y * hemi.y / kHemiReference.y,
+	        ambient.z * hemi.z / kHemiReference.z};
+}
+
+/// One PCF tap: 1 when the surface is lit (sampled occluder at or behind the
+/// surface depth minus bias), 0 when shadowed. lit.frag averages nine of
+/// these over a 3x3 texel neighbourhood. Matches `shadow_factor`'s tap.
+inline float shadow_tap(float surface_depth, float occluder_depth, float bias)
+{
+	return (surface_depth - bias) <= occluder_depth ? 1.0f : 0.0f;
+}
+
 } // namespace pbr
 
-/// A directional light plus an ambient floor, evaluated by the
+/// A directional light plus a hemisphere ambient floor, evaluated by the
 /// Cook-Torrance dielectric BRDF in shaders/lit.frag with ACES tone mapping
 /// and sRGB output. `exposure` scales linear HDR before the tone map.
+///
+/// Retuned for the shadowed pipeline: the sun sits a touch lower so forms
+/// model and shadows read, intensity is 1.1 to compensate for light lost to
+/// shadowing, exposure stays neutral (the ACES fit is already tuned), and
+/// ambient is unified at the legacy renderer gray. `sky_color`/`ground_color`
+/// default to that same gray (see pbr::kHemiReference), reproducing the
+/// legacy flat floor exactly.
+/// `shadows_enabled`/`fxaa_enabled` default ON; both restore the exact legacy
+/// path when off. Mirrors SceneSettings; application/headless copy every
+/// field across each frame.
 struct LightingSettings {
 	/// Unit vector pointing toward the light.
-	glm::vec3 direction{0.4f, 0.8f, 0.6f};
+	glm::vec3 direction{0.5f, 0.8f, 0.45f};
 	glm::vec3 color{1.0f, 1.0f, 1.0f};
-	float intensity{1.0f};
+	float intensity{1.1f};
 	glm::vec3 ambient{0.15f, 0.15f, 0.18f};
 	float exposure{1.0f};
+	glm::vec3 sky_color{0.15f, 0.15f, 0.18f};
+	glm::vec3 ground_color{0.15f, 0.15f, 0.18f};
+	bool shadows_enabled{true};
+	bool fxaa_enabled{true};
 };
 
 /// SDL3 GPU backend (Vulkan on Linux). Owns the device, the lit pipeline,
@@ -274,6 +326,26 @@ private:
 	                                   const AssetRegistry* assets);
 	bool load_texture_from_file(const std::string& path,
 	                            const std::string& cache_key);
+	// --- directional shadow map ---
+	// Rendered from the light once per frame (first scene/viewport pass wins)
+	// into shadow_texture_, then sampled by lit.frag with a 3x3 PCF. All
+	// entry points keep their signatures: the light VP is derived from
+	// lighting_.direction over a fixed ortho box, and the pass reuses the
+	// already-uploaded vertex buffers.
+	bool shadows_ready();
+	void ensure_shadow_resources();
+	void render_shadow_map();
+	void shadow_light_matrices(glm::mat4& view, glm::mat4& vp) const;
+	void destroy_shadows();
+	// --- FXAA 3.11 console post pass ---
+	// The scene renders into fxaa_source_; end_scene_pass()/end_viewport_pass()
+	// resolve it onto the real target (swapchain, viewport, offscreen) with a
+	// fullscreen-triangle pass, or skip cleanly when the target cannot host it.
+	bool ensure_fxaa_source(uint32_t width, uint32_t height);
+	bool ensure_fxaa_pipeline();
+	void fxaa_resolve(SDL_GPUTexture* destination, uint32_t width,
+	                  uint32_t height);
+	void destroy_fxaa();
 
 	SDL_GPUDevice* device_{nullptr};
 	SDL_Window* window_{nullptr};
@@ -343,7 +415,31 @@ private:
 
 	LightingSettings lighting_;
 	float clear_r_{0.0f}, clear_g_{0.0f}, clear_b_{0.0f};
-
+	// --- directional shadow map (1024px D16, depth-only pass from the light) ---
+	SDL_GPUTexture* shadow_texture_{nullptr};
+	SDL_GPUGraphicsPipeline* shadow_pipeline_{nullptr};
+	SDL_GPUSampler* shadow_sampler_{nullptr};
+	// Tri-state: queried once, then cached. False (unsupported format, failed
+	// creation) means every frame silently takes the legacy unshadowed path.
+	bool shadow_support_queried_{false};
+	bool shadows_supported_{false};
+	bool shadow_rendered_{false};
+	glm::mat4 light_vp_{1.0f};
+	uint32_t uploaded_vertex_count_{0};
+	uint32_t swapchain_width_{0};
+	uint32_t swapchain_height_{0};
+	// --- FXAA 3.11 console post pass (fullscreen triangle onto the target) ---
+	SDL_GPUGraphicsPipeline* fxaa_pipeline_{nullptr};
+	SDL_GPUTextureFormat fxaa_format_{SDL_GPU_TEXTUREFORMAT_INVALID};
+	SDL_GPUTexture* fxaa_source_{nullptr};
+	uint32_t fxaa_width_{0};
+	uint32_t fxaa_height_{0};
+	SDL_GPUSampler* fxaa_sampler_{nullptr};
+	bool fxaa_unavailable_{false};
+	// Set by begin_scene_pass()/begin_viewport_pass() when the scene renders
+	// into fxaa_source_; the matching end_*_pass() resolves onto the target.
+	bool pass_redirected_{false};
+	SDL_GPUTexture* pass_destination_{nullptr};
 	SDL_GPUSampler* default_sampler_{nullptr};
 	SDL_GPUTexture* white_texture_{nullptr};
 	struct CachedAlbedo {

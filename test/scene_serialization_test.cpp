@@ -525,3 +525,60 @@ TEST(SceneSerialization, OldV3SettingsWithoutExposureLoadNeutral)
 	EXPECT_FLOAT_EQ(loaded.settings().light_intensity, 2.0f);
 	EXPECT_FLOAT_EQ(loaded.settings().light_direction.y, -1.0f);
 }
+
+TEST(SceneSerialization, NewSettingsKeysRoundTrip)
+{
+	// Non-default hemisphere colours and toggles survive save/load.
+	Scene with{"s"};
+	SceneSettings settings;
+	settings.sky_color       = {0.25f, 0.35f, 0.5f};
+	settings.ground_color    = {0.1f, 0.08f, 0.06f};
+	settings.shadows_enabled = false;
+	settings.fxaa_enabled    = false;
+	with.set_settings(settings);
+
+	const std::string text = to_json_string(with);
+	EXPECT_NE(text.find("\"sky_color\""), std::string::npos) << text;
+	EXPECT_NE(text.find("\"ground_color\""), std::string::npos) << text;
+	EXPECT_NE(text.find("\"shadows_enabled\""), std::string::npos) << text;
+	EXPECT_NE(text.find("\"fxaa_enabled\""), std::string::npos) << text;
+
+	Scene loaded{"s"};
+	ASSERT_TRUE(scene_from_json(loaded, text, nullptr));
+	ASSERT_TRUE(loaded.has_settings());
+	EXPECT_FLOAT_EQ(loaded.settings().sky_color.x, 0.25f);
+	EXPECT_FLOAT_EQ(loaded.settings().sky_color.y, 0.35f);
+	EXPECT_FLOAT_EQ(loaded.settings().sky_color.z, 0.5f);
+	EXPECT_FLOAT_EQ(loaded.settings().ground_color.x, 0.1f);
+	EXPECT_FALSE(loaded.settings().shadows_enabled);
+	EXPECT_FALSE(loaded.settings().fxaa_enabled);
+}
+
+TEST(SceneSerialization, OldV3SettingsWithoutRealismKeysKeepDefaults)
+{
+	// Documents written before the realism slice carry none of the new keys.
+	// They must still load: hemisphere == legacy floor, both features on.
+	// No version bump -- the keys are optional within v3.
+	Scene loaded{"s"};
+	ASSERT_TRUE(scene_from_json(loaded,
+	                            R"({"version":3,"name":"p","settings":{)"
+	                            R"("light_direction":[0.0,-1.0,0.0],)"
+	                            R"("light_color":[1.0,1.0,1.0],)"
+	                            R"("light_intensity":2.0,)"
+	                            R"("ambient":[0.1,0.1,0.1],)"
+	                            R"("exposure":1.0)"
+	                            R"(},"entities":[]})",
+	                            nullptr));
+	ASSERT_TRUE(loaded.has_settings());
+	const SceneSettings defaults;
+	EXPECT_FLOAT_EQ(loaded.settings().sky_color.x, defaults.sky_color.x);
+	EXPECT_FLOAT_EQ(loaded.settings().sky_color.y, defaults.sky_color.y);
+	EXPECT_FLOAT_EQ(loaded.settings().sky_color.z, defaults.sky_color.z);
+	EXPECT_FLOAT_EQ(loaded.settings().ground_color.x,
+	                defaults.ground_color.x);
+	EXPECT_TRUE(loaded.settings().shadows_enabled);
+	EXPECT_TRUE(loaded.settings().fxaa_enabled);
+	// And the saved form still declares version 3.
+	EXPECT_NE(to_json_string(loaded).find("\"version\": 3"),
+	          std::string::npos);
+}

@@ -6,11 +6,18 @@
 #include "lotus/gpu/lit.frag.spv.h"
 #include "lotus/gpu/lit.vert.spv.h"
 #include "lotus/gpu/depth.comp.spv.h"
+#include "lotus/gpu/shadow.vert.spv.h"
+#include "lotus/gpu/shadow.frag.spv.h"
+#include "lotus/gpu/fxaa.vert.spv.h"
+#include "lotus/gpu/fxaa.frag.spv.h"
+
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <cstring>
 #include <algorithm>
 #include <iostream>
 #include <fstream>
+#include <cmath>
 #include <stdexcept>
 
 namespace lotus {
@@ -20,12 +27,32 @@ constexpr uint32_t kInitialVertexBytes = 128 * 1024;
 constexpr uint32_t kVertexStride       = sizeof(GpuVertex);
 constexpr SDL_GPUTextureFormat kDepthFormat = SDL_GPU_TEXTUREFORMAT_D32_FLOAT;
 
+/// Shadow map: 1024px D16 depth rendered from the light each frame, then
+/// sampled by lit.frag with a 3x3 PCF. D16 (not D32) because it is the one
+/// depth format universally sampler-supported; devices that reject even this
+/// combination take the legacy unshadowed path via shadows_supported_.
+constexpr uint32_t kShadowMapSize = 1024;
+constexpr SDL_GPUTextureFormat kShadowFormat = SDL_GPU_TEXTUREFORMAT_D16_UNORM;
+/// Constant bias in shadow-depth units plus a world-space normal offset.
+/// Matches shadow_params.y/z uploaded to lit.frag.
+constexpr float kShadowBias         = 0.0015f;
+constexpr float kShadowNormalOffset = 0.05f;
+/// Fixed ortho box around the origin the light frustum covers. Keeps every
+/// renderer entry point signature-stable (no scene bounds needed); large
+/// scenes outside the box read as lit, failing open rather than into
+/// darkness.
+constexpr float kShadowOrthoHalf     = 15.0f;
+constexpr float kShadowLightDistance = 30.0f;
+constexpr float kShadowNear          = 1.0f;
+constexpr float kShadowFar           = 60.0f;
+
 /// Rows in the readback transfer buffer are padded so each pitch is a multiple
 /// of this. D3D12 requires 256; matching it everywhere avoids SDL inserting a
 /// repacking copy on every download.
 constexpr uint32_t kTransferRowAlignment = 256;
 
-/// Must match shaders/lit.vert (set 1, binding 0).
+/// Must match shaders/lit.vert (set 1, binding 0). shadow.vert reuses the
+/// same layout: the renderer uploads the light VP in view_projection.
 struct VertexUniforms {
 	glm::mat4 view_projection;
 	glm::mat4 view;
@@ -36,17 +63,31 @@ struct VertexUniforms {
 // indeterminate view matrix and every depth would be plausible but wrong.
 static_assert(sizeof(VertexUniforms) == 128, "must match lit.vert's std140 block");
 
-/// Must match shaders/lit.frag (set 3, binding 0).
+/// Must match shaders/lit.frag (set 3, binding 0). Only GAINS trailing
+/// members over the original five vec4s, so old uniform data stays
+/// prefix-compatible.
 struct FragmentUniforms {
 	glm::vec4 light_direction;
 	glm::vec4 light_color;    // rgb + intensity in .a
 	glm::vec4 ambient_color;
 	glm::vec4 camera_position;
 	glm::vec4 tone_params;    // x: exposure; yzw reserved
+	glm::vec4 hemi_sky;       // rgb: sky (up) hemisphere colour
+	glm::vec4 hemi_ground;    // rgb: ground (down) hemisphere colour
+	glm::vec4 shadow_params;  // x: enabled; y: bias; z: normal offset; w: texel
+	glm::mat4 light_vp;       // light view-projection for in-frag shadow UVs
 };
 
-static_assert(sizeof(FragmentUniforms) == 80,
+static_assert(sizeof(FragmentUniforms) == 192,
               "must match lit.frag's std140 block");
+
+/// Must match shaders/fxaa.frag (set 3, binding 0).
+struct FxaaUniforms {
+	glm::vec4 texel; // x: 1/width; y: 1/height; zw reserved
+};
+
+static_assert(sizeof(FxaaUniforms) == 16,
+              "must match fxaa.frag's std140 block");
 
 SDL_GPUShader* create_shader(SDL_GPUDevice* device, bool vertex)
 {
@@ -60,7 +101,8 @@ SDL_GPUShader* create_shader(SDL_GPUDevice* device, bool vertex)
 		info.code      = lit_vert_spv;
 		info.code_size = lit_vert_spv_len;
 	} else {
-		info.num_samplers = 1;
+		// Albedo (binding 0) plus the shadow map (binding 1).
+		info.num_samplers = 2;
 		info.code      = lit_frag_spv;
 		info.code_size = lit_frag_spv_len;
 	}
@@ -69,6 +111,60 @@ SDL_GPUShader* create_shader(SDL_GPUDevice* device, bool vertex)
 		throw std::runtime_error(SDL_GetError());
 	}
 	return shader;
+}
+
+SDL_GPUShader* create_graphics_shader(SDL_GPUDevice* device,
+                                      SDL_GPUShaderStage stage,
+                                      const unsigned char* code,
+                                      std::size_t code_size,
+                                      uint32_t samplers, uint32_t uniforms)
+{
+	SDL_GPUShaderCreateInfo info{};
+	info.format              = SDL_GPU_SHADERFORMAT_SPIRV;
+	info.stage               = stage;
+	info.entrypoint          = "main";
+	info.code                = code;
+	info.code_size           = code_size;
+	info.num_samplers        = samplers;
+	info.num_uniform_buffers = uniforms;
+	return SDL_CreateGPUShader(device, &info); // null on failure: caller skips
+}
+
+/// Shared vertex input state for the lit and shadow pipelines: both consume
+/// the same uploaded buffers (shadow.vert reads only position; unconsumed
+/// attributes are legal).
+void lit_vertex_descriptions(SDL_GPUVertexBufferDescription (&vb)[2],
+                             SDL_GPUVertexAttribute (&attrs)[5])
+{
+	vb[0].slot               = 0;
+	vb[0].pitch              = kVertexStride;
+	vb[0].input_rate         = SDL_GPU_VERTEXINPUTRATE_VERTEX;
+	vb[0].instance_step_rate = 0;
+	vb[1].slot               = 1;
+	vb[1].pitch              = sizeof(glm::vec2);
+	vb[1].input_rate         = SDL_GPU_VERTEXINPUTRATE_VERTEX;
+	vb[1].instance_step_rate = 0;
+
+	attrs[0].location    = 0;
+	attrs[0].buffer_slot = 0;
+	attrs[0].format      = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3;
+	attrs[0].offset      = offsetof(GpuVertex, position);
+	attrs[1].location    = 1;
+	attrs[1].buffer_slot = 0;
+	attrs[1].format      = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3;
+	attrs[1].offset      = offsetof(GpuVertex, normal);
+	attrs[2].location    = 2;
+	attrs[2].buffer_slot = 0;
+	attrs[2].format      = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3;
+	attrs[2].offset      = offsetof(GpuVertex, color);
+	attrs[3].location    = 4;
+	attrs[3].buffer_slot = 1;
+	attrs[3].format      = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2;
+	attrs[3].offset      = 0;
+	attrs[4].location    = 6;
+	attrs[4].buffer_slot = 0;
+	attrs[4].format      = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT;
+	attrs[4].offset      = offsetof(GpuVertex, roughness);
 }
 
 } // namespace
@@ -401,36 +497,8 @@ void GpuRenderer::create_pipeline()
 	}
 
 	SDL_GPUVertexBufferDescription vb_desc[2]{};
-	vb_desc[0].slot               = 0;
-	vb_desc[0].pitch              = kVertexStride;
-	vb_desc[0].input_rate         = SDL_GPU_VERTEXINPUTRATE_VERTEX;
-	vb_desc[0].instance_step_rate = 0;
-	vb_desc[1].slot               = 1;
-	vb_desc[1].pitch              = sizeof(glm::vec2);
-	vb_desc[1].input_rate         = SDL_GPU_VERTEXINPUTRATE_VERTEX;
-	vb_desc[1].instance_step_rate = 0;
-
 	SDL_GPUVertexAttribute attrs[5]{};
-	attrs[0].location    = 0;
-	attrs[0].buffer_slot = 0;
-	attrs[0].format      = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3;
-	attrs[0].offset      = offsetof(GpuVertex, position);
-	attrs[1].location    = 1;
-	attrs[1].buffer_slot = 0;
-	attrs[1].format      = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3;
-	attrs[1].offset      = offsetof(GpuVertex, normal);
-	attrs[2].location    = 2;
-	attrs[2].buffer_slot = 0;
-	attrs[2].format      = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3;
-	attrs[2].offset      = offsetof(GpuVertex, color);
-	attrs[3].location    = 4;
-	attrs[3].buffer_slot = 1;
-	attrs[3].format      = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2;
-	attrs[3].offset      = 0;
-	attrs[4].location    = 6;
-	attrs[4].buffer_slot = 0;
-	attrs[4].format      = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT;
-	attrs[4].offset      = offsetof(GpuVertex, roughness);
+	lit_vertex_descriptions(vb_desc, attrs);
 
 	SDL_GPUGraphicsPipelineCreateInfo pipe{};
 	pipe.vertex_shader   = vert;
@@ -456,6 +524,352 @@ void GpuRenderer::create_pipeline()
 	if (!pipeline_) {
 		throw std::runtime_error(SDL_GetError());
 	}
+}
+
+void GpuRenderer::shadow_light_matrices(glm::mat4& view, glm::mat4& vp) const
+{
+	glm::vec3 direction = glm::length(lighting_.direction) > 0.0f
+	                            ? glm::normalize(lighting_.direction)
+	                            : glm::vec3{0.0f, 1.0f, 0.0f};
+	const glm::vec3 center{0.0f};
+	const glm::vec3 eye = center + direction * kShadowLightDistance;
+	const glm::vec3 up =
+	        std::abs(direction.y) > 0.99f ? glm::vec3{1.0f, 0.0f, 0.0f}
+	                                      : glm::vec3{0.0f, 1.0f, 0.0f};
+	view = glm::lookAtRH(eye, center, up);
+	vp   = glm::orthoRH_ZO(-kShadowOrthoHalf, kShadowOrthoHalf,
+	                       -kShadowOrthoHalf, kShadowOrthoHalf, kShadowNear,
+	                       kShadowFar) *
+	       view;
+}
+
+bool GpuRenderer::shadows_ready()
+{
+	if (!lighting_.shadows_enabled || !device_) {
+		return false;
+	}
+	if (!shadow_support_queried_) {
+		shadow_support_queried_ = true;
+		shadows_supported_      = SDL_GPUTextureSupportsFormat(
+                        device_, kShadowFormat, SDL_GPU_TEXTURETYPE_2D,
+                        static_cast<SDL_GPUTextureUsageFlags>(
+                                SDL_GPU_TEXTUREUSAGE_SAMPLER |
+                                SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET));
+		if (!shadows_supported_) {
+			std::cerr << "shadows: depth-sampler format unsupported, "
+			             "continuing without shadow mapping\n";
+		}
+	}
+	if (!shadows_supported_) {
+		return false;
+	}
+	ensure_shadow_resources();
+	return shadows_supported_;
+}
+
+void GpuRenderer::ensure_shadow_resources()
+{
+	if (!device_ || !shadows_supported_) {
+		return;
+	}
+	const auto disable = [this](const char* what) {
+		std::cerr << "shadows: " << what
+		          << ", continuing without shadow mapping\n";
+		destroy_shadows();
+		shadows_supported_ = false;
+	};
+	if (!shadow_texture_) {
+		SDL_GPUTextureCreateInfo info{};
+		info.type                 = SDL_GPU_TEXTURETYPE_2D;
+		info.format               = kShadowFormat;
+		info.usage                = static_cast<SDL_GPUTextureUsageFlags>(
+                        SDL_GPU_TEXTUREUSAGE_SAMPLER |
+                        SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET);
+		info.width                = kShadowMapSize;
+		info.height               = kShadowMapSize;
+		info.layer_count_or_depth = 1;
+		info.num_levels           = 1;
+		info.sample_count         = SDL_GPU_SAMPLECOUNT_1;
+		shadow_texture_           = SDL_CreateGPUTexture(device_, &info);
+		if (!shadow_texture_) {
+			disable("shadow map unavailable");
+			return;
+		}
+	}
+	if (!shadow_sampler_) {
+		// Nearest, clamp-to-edge: lit.frag does its own 3x3 PCF with
+		// texelFetch-free texture() taps, so no depth-filtering support is
+		// required from the device beyond plain depth sampling.
+		SDL_GPUSamplerCreateInfo info{};
+		info.min_filter   = SDL_GPU_FILTER_NEAREST;
+		info.mag_filter   = SDL_GPU_FILTER_NEAREST;
+		info.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+		info.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+		info.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+		shadow_sampler_     = SDL_CreateGPUSampler(device_, &info);
+		if (!shadow_sampler_) {
+			disable("shadow sampler unavailable");
+			return;
+		}
+	}
+	if (!shadow_pipeline_) {
+		SDL_GPUShader* vert = create_graphics_shader(
+		        device_, SDL_GPU_SHADERSTAGE_VERTEX, shadow_vert_spv,
+		        shadow_vert_spv_len, 0, 1);
+		SDL_GPUShader* frag = create_graphics_shader(
+		        device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shadow_frag_spv,
+		        shadow_frag_spv_len, 0, 0);
+		if (vert && frag) {
+			SDL_GPUVertexBufferDescription vb_desc[2]{};
+			SDL_GPUVertexAttribute attrs[5]{};
+			lit_vertex_descriptions(vb_desc, attrs);
+			SDL_GPUGraphicsPipelineCreateInfo pipe{};
+			pipe.vertex_shader   = vert;
+			pipe.fragment_shader = frag;
+			pipe.primitive_type  = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+			pipe.target_info.num_color_targets = 0u;
+			pipe.target_info.color_target_descriptions = nullptr;
+			pipe.target_info.has_depth_stencil_target  = true;
+			pipe.target_info.depth_stencil_format      = kShadowFormat;
+			pipe.vertex_input_state.num_vertex_buffers = 2;
+			pipe.vertex_input_state.vertex_buffer_descriptions = vb_desc;
+			pipe.vertex_input_state.num_vertex_attributes      = 5;
+			pipe.vertex_input_state.vertex_attributes          = attrs;
+			pipe.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+			pipe.multisample_state.sample_count = SDL_GPU_SAMPLECOUNT_1;
+			pipe.depth_stencil_state.enable_depth_test  = true;
+			pipe.depth_stencil_state.enable_depth_write = true;
+			pipe.depth_stencil_state.compare_op =
+			        SDL_GPU_COMPAREOP_LESS_OR_EQUAL;
+			// No hardware depth bias: lit.frag carries a constant bias plus
+			// a normal offset, which keeps every depth unit on the CPU side.
+			shadow_pipeline_ =
+			        SDL_CreateGPUGraphicsPipeline(device_, &pipe);
+		}
+		if (vert) {
+			SDL_ReleaseGPUShader(device_, vert);
+		}
+		if (frag) {
+			SDL_ReleaseGPUShader(device_, frag);
+		}
+		if (!shadow_pipeline_) {
+			disable("shadow pipeline unavailable");
+			return;
+		}
+	}
+}
+
+void GpuRenderer::render_shadow_map()
+{
+	if (shadow_rendered_ || !cmd_ || uploaded_vertex_count_ == 0 ||
+	    !vertex_buffer_ || !uv_buffer_) {
+		return;
+	}
+	if (!shadows_ready()) {
+		return;
+	}
+	glm::mat4 light_view{1.0f};
+	shadow_light_matrices(light_view, light_vp_);
+
+	SDL_GPUDepthStencilTargetInfo depth{};
+	depth.texture          = shadow_texture_;
+	depth.clear_depth      = 1.0f;
+	depth.load_op          = SDL_GPU_LOADOP_CLEAR;
+	depth.store_op         = SDL_GPU_STOREOP_STORE;
+	depth.stencil_load_op  = SDL_GPU_LOADOP_DONT_CARE;
+	depth.stencil_store_op = SDL_GPU_STOREOP_DONT_CARE;
+
+	SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd_, nullptr, 0, &depth);
+	if (!pass) {
+		std::cerr << "shadows: shadow pass failed, "
+		             "continuing without shadow mapping\n";
+		shadows_supported_ = false;
+		return;
+	}
+	VertexUniforms uniforms{};
+	uniforms.view_projection = light_vp_;
+	uniforms.view            = light_view;
+	SDL_PushGPUVertexUniformData(cmd_, 0, &uniforms, sizeof(uniforms));
+	SDL_BindGPUGraphicsPipeline(pass, shadow_pipeline_);
+	SDL_GPUBufferBinding bindings[2]{};
+	bindings[0].buffer = vertex_buffer_;
+	bindings[0].offset = 0;
+	bindings[1].buffer = uv_buffer_;
+	bindings[1].offset = 0;
+	SDL_BindGPUVertexBuffers(pass, 0, bindings, 2);
+	SDL_DrawGPUPrimitives(pass, uploaded_vertex_count_, 1, 0, 0);
+	SDL_EndGPURenderPass(pass);
+	shadow_rendered_ = true;
+}
+
+void GpuRenderer::destroy_shadows()
+{
+	if (shadow_pipeline_) {
+		SDL_ReleaseGPUGraphicsPipeline(device_, shadow_pipeline_);
+		shadow_pipeline_ = nullptr;
+	}
+	if (shadow_texture_) {
+		SDL_ReleaseGPUTexture(device_, shadow_texture_);
+		shadow_texture_ = nullptr;
+	}
+	if (shadow_sampler_) {
+		SDL_ReleaseGPUSampler(device_, shadow_sampler_);
+		shadow_sampler_ = nullptr;
+	}
+	shadow_rendered_ = false;
+	light_vp_        = glm::mat4{1.0f};
+}
+
+bool GpuRenderer::ensure_fxaa_source(uint32_t width, uint32_t height)
+{
+	if (!device_ || width == 0 || height == 0 ||
+	    swapchain_format_ == SDL_GPU_TEXTUREFORMAT_INVALID) {
+		return false;
+	}
+	if (fxaa_source_ && fxaa_width_ == width && fxaa_height_ == height) {
+		return true;
+	}
+	SDL_GPUTextureCreateInfo info{};
+	info.type                 = SDL_GPU_TEXTURETYPE_2D;
+	info.format               = swapchain_format_;
+	info.usage                = static_cast<SDL_GPUTextureUsageFlags>(
+                SDL_GPU_TEXTUREUSAGE_COLOR_TARGET |
+                SDL_GPU_TEXTUREUSAGE_SAMPLER);
+	info.width                = width;
+	info.height               = height;
+	info.layer_count_or_depth = 1;
+	info.num_levels           = 1;
+	info.sample_count         = SDL_GPU_SAMPLECOUNT_1;
+	SDL_GPUTexture* replacement = SDL_CreateGPUTexture(device_, &info);
+	if (!replacement) {
+		static bool warned = false;
+		if (!warned) {
+			warned = true;
+			std::cerr << "fxaa: intermediate target unavailable, "
+			             "rendering directly: " << SDL_GetError() << '\n';
+		}
+		return false;
+	}
+	if (fxaa_source_) {
+		SDL_ReleaseGPUTexture(device_, fxaa_source_);
+	}
+	fxaa_source_ = replacement;
+	fxaa_width_  = width;
+	fxaa_height_ = height;
+	return true;
+}
+
+bool GpuRenderer::ensure_fxaa_pipeline()
+{
+	if (!device_ || swapchain_format_ == SDL_GPU_TEXTUREFORMAT_INVALID) {
+		return false;
+	}
+	if (fxaa_unavailable_) {
+		return false;
+	}
+	if (fxaa_pipeline_ && fxaa_sampler_ &&
+	    fxaa_format_ == swapchain_format_) {
+		return true;
+	}
+	destroy_fxaa();
+	SDL_GPUShader* vert = create_graphics_shader(
+	        device_, SDL_GPU_SHADERSTAGE_VERTEX, fxaa_vert_spv,
+	        fxaa_vert_spv_len, 0, 0);
+	SDL_GPUShader* frag = create_graphics_shader(
+	        device_, SDL_GPU_SHADERSTAGE_FRAGMENT, fxaa_frag_spv,
+	        fxaa_frag_spv_len, 1, 1);
+	if (vert && frag) {
+		SDL_GPUColorTargetDescription target{};
+		target.format = swapchain_format_;
+		SDL_GPUGraphicsPipelineCreateInfo pipe{};
+		pipe.vertex_shader   = vert;
+		pipe.fragment_shader = frag;
+		pipe.primitive_type  = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+		pipe.target_info.num_color_targets         = 1u;
+		pipe.target_info.color_target_descriptions = &target;
+		pipe.target_info.has_depth_stencil_target  = false;
+		pipe.vertex_input_state.num_vertex_buffers = 0;
+		pipe.vertex_input_state.vertex_buffer_descriptions = nullptr;
+		pipe.vertex_input_state.num_vertex_attributes      = 0;
+		pipe.vertex_input_state.vertex_attributes          = nullptr;
+		pipe.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+		pipe.multisample_state.sample_count = SDL_GPU_SAMPLECOUNT_1;
+		fxaa_pipeline_ = SDL_CreateGPUGraphicsPipeline(device_, &pipe);
+	}
+	if (vert) {
+		SDL_ReleaseGPUShader(device_, vert);
+	}
+	if (frag) {
+		SDL_ReleaseGPUShader(device_, frag);
+	}
+	if (fxaa_pipeline_) {
+		SDL_GPUSamplerCreateInfo sampler{};
+		sampler.min_filter    = SDL_GPU_FILTER_LINEAR;
+		sampler.mag_filter    = SDL_GPU_FILTER_LINEAR;
+		sampler.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+		sampler.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+		sampler.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+		fxaa_sampler_          = SDL_CreateGPUSampler(device_, &sampler);
+	}
+	if (!fxaa_pipeline_ || !fxaa_sampler_) {
+		std::cerr << "fxaa: post pipeline unavailable, "
+		             "rendering directly: " << SDL_GetError() << '\n';
+		destroy_fxaa();
+		fxaa_unavailable_ = true;
+		return false;
+	}
+	fxaa_format_ = swapchain_format_;
+	return true;
+}
+
+void GpuRenderer::fxaa_resolve(SDL_GPUTexture* destination, uint32_t width,
+                               uint32_t height)
+{
+	if (!cmd_ || !destination || !fxaa_source_ || width == 0 || height == 0 ||
+	    !ensure_fxaa_pipeline() || !fxaa_sampler_) {
+		return;
+	}
+	SDL_GPUColorTargetInfo target{};
+	target.texture  = destination;
+	target.load_op  = SDL_GPU_LOADOP_DONT_CARE;
+	target.store_op = SDL_GPU_STOREOP_STORE;
+	SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd_, &target, 1, nullptr);
+	if (!pass) {
+		return;
+	}
+	FxaaUniforms uniforms{};
+	uniforms.texel = glm::vec4{1.0f / static_cast<float>(width),
+	                           1.0f / static_cast<float>(height), 0.0f, 0.0f};
+	SDL_PushGPUFragmentUniformData(cmd_, 0, &uniforms, sizeof(uniforms));
+	SDL_BindGPUGraphicsPipeline(pass, fxaa_pipeline_);
+	SDL_GPUTextureSamplerBinding binding{};
+	binding.texture = fxaa_source_;
+	binding.sampler = fxaa_sampler_;
+	SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
+	// Fullscreen triangle from fxaa.vert; covers the DONT_CARE target fully.
+	SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+	SDL_EndGPURenderPass(pass);
+}
+
+void GpuRenderer::destroy_fxaa()
+{
+	if (fxaa_pipeline_) {
+		SDL_ReleaseGPUGraphicsPipeline(device_, fxaa_pipeline_);
+		fxaa_pipeline_ = nullptr;
+	}
+	if (fxaa_source_) {
+		SDL_ReleaseGPUTexture(device_, fxaa_source_);
+		fxaa_source_ = nullptr;
+	}
+	if (fxaa_sampler_) {
+		SDL_ReleaseGPUSampler(device_, fxaa_sampler_);
+		fxaa_sampler_ = nullptr;
+	}
+	fxaa_width_      = 0;
+	fxaa_height_     = 0;
+	fxaa_format_     = SDL_GPU_TEXTUREFORMAT_INVALID;
+	pass_redirected_ = false;
+	pass_destination_ = nullptr;
 }
 
 void GpuRenderer::destroy_buffers()
@@ -940,6 +1354,9 @@ void GpuRenderer::begin_frame_offscreen()
 	}
 	swapchain_ = offscreen_color_;
 	ensure_depth_target(offscreen_width_, offscreen_height_);
+	shadow_rendered_  = false;
+	pass_redirected_  = false;
+	pass_destination_ = nullptr;
 }
 
 std::vector<uint8_t> GpuRenderer::capture_rgba(uint32_t& width, uint32_t& height)
@@ -1120,8 +1537,21 @@ bool GpuRenderer::begin_viewport_pass()
 	if (!cmd_ || !viewport_texture_ || !viewport_pyramid_ || !viewport_depth_) {
 		return false;
 	}
+	// Same once-per-frame shadow map the scene pass uses; a no-op when the
+	// scene pass already rendered it.
+	render_shadow_map();
+	SDL_GPUTexture* color_target = viewport_texture_;
+	pass_redirected_             = false;
+	pass_destination_            = nullptr;
+	if (lighting_.fxaa_enabled && !fxaa_unavailable_ && viewport_width_ != 0 &&
+	    viewport_height_ != 0 && ensure_fxaa_pipeline() &&
+	    ensure_fxaa_source(viewport_width_, viewport_height_)) {
+		color_target      = fxaa_source_;
+		pass_redirected_  = true;
+		pass_destination_ = viewport_texture_;
+	}
 	SDL_GPUColorTargetInfo targets[2]{};
-	targets[0].texture     = viewport_texture_;
+	targets[0].texture     = color_target;
 	targets[0].clear_color = SDL_FColor{clear_r_, clear_g_, clear_b_, 1.0f};
 	targets[0].load_op     = SDL_GPU_LOADOP_CLEAR;
 	targets[0].store_op    = SDL_GPU_STOREOP_STORE;
@@ -1140,6 +1570,10 @@ bool GpuRenderer::begin_viewport_pass()
 	depth.stencil_store_op = SDL_GPU_STOREOP_DONT_CARE;
 
 	pass_ = SDL_BeginGPURenderPass(cmd_, targets, 2, &depth);
+	if (!pass_) {
+		pass_redirected_  = false;
+		pass_destination_ = nullptr;
+	}
 	return pass_ != nullptr;
 }
 
@@ -1148,6 +1582,13 @@ void GpuRenderer::end_viewport_pass()
 	if (pass_) {
 		SDL_EndGPURenderPass(pass_);
 		pass_ = nullptr;
+		// FXAA resolve onto the viewport texture ImGui samples. Skipped when
+		// the pass rendered directly (pass_destination_ null).
+		if (pass_redirected_ && pass_destination_) {
+			fxaa_resolve(pass_destination_, fxaa_width_, fxaa_height_);
+		}
+		pass_redirected_  = false;
+		pass_destination_ = nullptr;
 		// The viewport pass does NOT record the Hi-Z pyramid. The main pass
 		// (begin_scene_pass / end_scene_pass) stays authoritative for occlusion.
 	}
@@ -1205,6 +1646,8 @@ void GpuRenderer::shutdown()
 	retired_fences_.clear();
 
 	destroy_buffers();
+	destroy_shadows();
+	destroy_fxaa();
 	destroy_textures();
 	if (depth_texture_) {
 		SDL_ReleaseGPUTexture(device_, depth_texture_);
@@ -1270,14 +1713,23 @@ void GpuRenderer::begin_frame(SDL_Window* window, float clear_r, float clear_g,
 	}
 	ensure_depth_target(width, height);
 	ensure_pyramid(width, height);
+	swapchain_width_  = width;
+	swapchain_height_ = height;
+	// The shadow map renders once per frame (first scene/viewport pass wins);
+	// a new command buffer means it must render again.
+	shadow_rendered_  = false;
+	pass_redirected_  = false;
+	pass_destination_ = nullptr;
 }
 
 void GpuRenderer::upload_vertices(const GpuVertex* vertices,
                                   const glm::vec2* uvs, uint32_t count)
 {
 	if (!cmd_ || count == 0 || !vertices) {
+		uploaded_vertex_count_ = 0;
 		return;
 	}
+	uploaded_vertex_count_ = count;
 	const uint32_t bytes =
 	        count * static_cast<uint32_t>(sizeof(GpuVertex));
 	const uint32_t uv_bytes =
@@ -1328,8 +1780,31 @@ void GpuRenderer::begin_scene_pass()
 	if (!cmd_ || !swapchain_) {
 		return;
 	}
+	// Depth-only pass from the light, once per frame. Reuses the buffers
+	// upload_vertices() just filled; a no-vertex frame skips it and the
+	// shader flag below takes the legacy unshadowed path.
+	render_shadow_map();
+	// FXAA: render into the intermediate, resolve onto the real target in
+	// end_scene_pass(). The clear-only pass behind the editor stays direct:
+	// there is nothing to antialias in a clear. A target that cannot host
+	// the intermediate renders directly, so capture_rgba/write_ppm never
+	// break.
+	const uint32_t target_width =
+	        offscreen_ ? offscreen_width_ : swapchain_width_;
+	const uint32_t target_height =
+	        offscreen_ ? offscreen_height_ : swapchain_height_;
+	SDL_GPUTexture* color_target = swapchain_;
+	pass_redirected_             = false;
+	pass_destination_            = nullptr;
+	if (record_occlusion_ && lighting_.fxaa_enabled && !fxaa_unavailable_ &&
+	    target_width != 0 && target_height != 0 && ensure_fxaa_pipeline() &&
+	    ensure_fxaa_source(target_width, target_height)) {
+		color_target      = fxaa_source_;
+		pass_redirected_  = true;
+		pass_destination_ = swapchain_;
+	}
 	SDL_GPUColorTargetInfo targets[2]{};
-	targets[0].texture     = swapchain_;
+	targets[0].texture     = color_target;
 	targets[0].clear_color = SDL_FColor{clear_r_, clear_g_, clear_b_, 1.0f};
 	targets[0].load_op     = SDL_GPU_LOADOP_CLEAR;
 	targets[0].store_op    = SDL_GPU_STOREOP_STORE;
@@ -1390,6 +1865,18 @@ void GpuRenderer::draw(const glm::mat4& view, const glm::mat4& view_projection,
 	fragment_uniforms.camera_position = glm::vec4{camera_position, 1.0f};
 	fragment_uniforms.tone_params =
 	        glm::vec4{lighting_.exposure, 0.0f, 0.0f, 0.0f};
+	fragment_uniforms.hemi_sky    = glm::vec4{lighting_.sky_color, 0.0f};
+	fragment_uniforms.hemi_ground = glm::vec4{lighting_.ground_color, 0.0f};
+	// Lit only when the toggle is on AND the map actually rendered this
+	// frame; every other combination reads shadow_params.x == 0 and takes
+	// the exact legacy unshadowed path in the shader.
+	const bool shadow_on = lighting_.shadows_enabled && shadows_supported_ &&
+	                       shadow_rendered_ && shadow_texture_ &&
+	                       shadow_sampler_;
+	fragment_uniforms.shadow_params =
+	        glm::vec4{shadow_on ? 1.0f : 0.0f, kShadowBias,
+	                  kShadowNormalOffset, 1.0f / kShadowMapSize};
+	fragment_uniforms.light_vp = light_vp_;
 
 	SDL_PushGPUVertexUniformData(cmd_, 0, &vertex_uniforms,
 	                             sizeof(vertex_uniforms));
@@ -1397,6 +1884,21 @@ void GpuRenderer::draw(const glm::mat4& view, const glm::mat4& view_projection,
 	                               sizeof(fragment_uniforms));
 
 	SDL_BindGPUGraphicsPipeline(pass_, pipeline_);
+	// Binding 1 (shadow map) lives here, next to the pipeline, so both draw
+	// overloads sample a valid descriptor: the map when lit, else the white
+	// texel (depth 1.0 reads as lit, failing open). Binding 0 (albedo) is
+	// bound per batch by the overload below.
+	ensure_default_sampler();
+	ensure_white_texture();
+	SDL_GPUTextureSamplerBinding shadow_binding{};
+	if (shadow_on) {
+		shadow_binding.texture = shadow_texture_;
+		shadow_binding.sampler = shadow_sampler_;
+	} else {
+		shadow_binding.texture = white_texture_;
+		shadow_binding.sampler = default_sampler_;
+	}
+	SDL_BindGPUFragmentSamplers(pass_, 1, &shadow_binding, 1);
 	SDL_GPUBufferBinding bindings[2]{};
 	bindings[0].buffer = vertex_buffer_;
 	bindings[0].offset = 0;
@@ -1436,6 +1938,14 @@ void GpuRenderer::end_scene_pass()
 	if (pass_) {
 		SDL_EndGPURenderPass(pass_);
 		pass_ = nullptr;
+		// FXAA resolve onto the real target. The pyramid reduction reads
+		// target 1, which is never redirected, so resolve order vs. the
+		// reduction below does not matter.
+		if (pass_redirected_ && pass_destination_) {
+			fxaa_resolve(pass_destination_, fxaa_width_, fxaa_height_);
+		}
+		pass_redirected_  = false;
+		pass_destination_ = nullptr;
 		// The reduction reads the colour target this pass just wrote, so it can
 		// only be recorded after the render pass has ended. A clear-only pass
 		// behind the editor suppresses this so it does not replace the pyramid

@@ -903,6 +903,10 @@ void Application::run(int width, int height, const std::string& title)
 				gpu.lighting().intensity = s.light_intensity;
 				gpu.lighting().ambient   = s.ambient;
 				gpu.lighting().exposure = s.exposure;
+				gpu.lighting().sky_color       = s.sky_color;
+				gpu.lighting().ground_color    = s.ground_color;
+				gpu.lighting().shadows_enabled = s.shadows_enabled;
+				gpu.lighting().fxaa_enabled    = s.fxaa_enabled;
 			}
 			gpu.begin_frame(window.handle(), 0.05f, 0.05f, 0.08f);
 			if (gpu.has_frame()) {
