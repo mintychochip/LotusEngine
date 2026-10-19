@@ -19,6 +19,12 @@
 // The camera orbit and the moving props are pure functions of the frame
 // index, so warmup + measured frames replay identically on every run.
 //
+// --pipelined switches to throughput: frames go out back to back with only the
+// renderer's own frames-in-flight limit between them, for --seconds of wall
+// time, and the report is frames per second (and vertices per second) rather
+// than per-phase medians. --no-occlusion pins the culling, because with frames
+// in flight the Hi-Z history a frame culls against depends on timing.
+//
 // Exit codes follow the engine CLI: 0 ok, 1 runtime failure, 2 CLI misuse.
 
 #include <SDL3/SDL.h>
@@ -53,7 +59,8 @@ constexpr const char* kUsage =
         "                          [--frames N] [--rounds N] [--seed S]\n"
         "                          [--grid N] [--lods N] [--assets-dir DIR]\n"
         "                          [--golden PATH] [--write-golden PATH]\n"
-        "                          [--ppm PATH]";
+        "                          [--ppm PATH] [--pipelined] [--seconds S]\n"
+        "                          [--no-occlusion]";
 
 constexpr int kTextureCount          = 16;
 constexpr uint32_t kTextureSize      = 512;
@@ -83,6 +90,15 @@ struct Options {
 	std::string write_golden;
 	/// Writes the fidelity frame as a binary PPM for eyeballing.
 	std::string ppm;
+	/// Throughput mode: frames go out back to back, waiting for the GPU only
+	/// through the renderer's frames-in-flight limit, for `seconds` of wall
+	/// time; the report is frames per second instead of per-phase medians.
+	bool pipelined{false};
+	double seconds{3.0};
+	/// Hi-Z occlusion culling (the engine's normal behaviour). Off pins the
+	/// workload: with frames in flight the culling history a frame sees
+	/// depends on timing.
+	bool occlusion{true};
 };
 
 bool parse_int(const std::string& text, long long& out)
@@ -100,6 +116,14 @@ bool parse_options(int argc, char** argv, Options& options)
 {
 	for (int i = 1; i < argc; ++i) {
 		const std::string flag = argv[i];
+		if (flag == "--pipelined") {
+			options.pipelined = true;
+			continue;
+		}
+		if (flag == "--no-occlusion") {
+			options.occlusion = false;
+			continue;
+		}
 		if (i + 1 >= argc) {
 			std::cerr << "lotus_render_bench: flag '" << flag
 			          << "' needs a value\n";
@@ -157,6 +181,15 @@ bool parse_options(int argc, char** argv, Options& options)
 				return false;
 			}
 			options.lods = static_cast<int>(number);
+		} else if (flag == "--seconds") {
+			char* end       = nullptr;
+			options.seconds = std::strtod(value.c_str(), &end);
+			if (end == value.c_str() || *end != '\0' || options.seconds <= 0.0) {
+				std::cerr << "lotus_render_bench: flag '--seconds' needs a "
+				             "positive number, got '"
+				          << value << "'\n";
+				return false;
+			}
 		} else if (flag == "--assets-dir") {
 			options.assets_dir = value;
 		} else if (flag == "--golden") {
@@ -737,6 +770,108 @@ bool capture_fidelity(GpuRenderer& gpu, Scene& scene, World& world,
 	return true;
 }
 
+/// What a throughput run measured; the per-phase fields are sums.
+struct Throughput {
+	uint64_t frames{0};
+	double seconds{0};
+	double begin_ms{0};
+	double build_ms{0};
+	double record_ms{0};
+	double submit_ms{0};
+	double vertices{0};
+	double drawn{0};
+};
+
+/// Frames go out back to back for options.seconds of wall time, waiting for
+/// the GPU only through the renderer's own frames-in-flight limit, so the rate
+/// is what a real loop reaches. begin_frame_offscreen is where that limit
+/// blocks: its share grows when the GPU is the bottleneck and shrinks when the
+/// CPU is.
+Throughput run_throughput(GpuRenderer& gpu, Scene& scene, World& world,
+                          float aspect, const Options& options)
+{
+	Throughput totals;
+	int index        = 0;
+	const auto frame = [&](bool timed) {
+		animate(scene, world,
+		        static_cast<float>(index % options.frames) /
+		                static_cast<float>(options.frames));
+		++index;
+		const auto t0 = Clock::now();
+		gpu.begin_frame_offscreen();
+		const auto t1 = Clock::now();
+		scene.upload(gpu, aspect);
+		const auto t2 = Clock::now();
+		gpu.begin_scene_pass();
+		scene.draw(gpu);
+		if (!options.occlusion) {
+			gpu.suppress_occlusion_record();
+		}
+		gpu.end_scene_pass();
+		const auto t3 = Clock::now();
+		gpu.end_frame();
+		const auto t4 = Clock::now();
+		if (timed) {
+			totals.begin_ms += elapsed_ms(t0, t1);
+			totals.build_ms += elapsed_ms(t1, t2);
+			totals.record_ms += elapsed_ms(t2, t3);
+			totals.submit_ms += elapsed_ms(t3, t4);
+			totals.vertices += scene.vertex_count();
+			totals.drawn += scene.drawn_entities();
+			++totals.frames;
+		}
+	};
+
+	// Warm up the way the run will go (pipelined), so clocks, pipeline caches,
+	// textures and the Hi-Z history have all settled before timing starts.
+	for (int i = 0; i < options.warmup + 60; ++i) {
+		frame(false);
+	}
+	gpu.wait_idle();
+
+	const auto start = Clock::now();
+	do {
+		for (int i = 0; i < 32; ++i) {
+			frame(true);
+		}
+	} while (elapsed_ms(start, Clock::now()) < options.seconds * 1000.0);
+	gpu.wait_idle();
+	totals.seconds = elapsed_ms(start, Clock::now()) / 1000.0;
+	return totals;
+}
+
+void print_throughput(const Throughput& throughput)
+{
+	const double frames = static_cast<double>(throughput.frames);
+	std::printf("bench: pipelined %llu frames in %.3f s\n",
+	            static_cast<unsigned long long>(throughput.frames),
+	            throughput.seconds);
+	std::printf("METRIC fps=%.2f\n", frames / throughput.seconds);
+	std::printf("METRIC mverts_per_s=%.2f\n",
+	            throughput.vertices / throughput.seconds / 1.0e6);
+	std::printf("METRIC pipe_frames=%llu\n",
+	            static_cast<unsigned long long>(throughput.frames));
+	std::printf("METRIC pipe_begin_ms=%.4f\n", throughput.begin_ms / frames);
+	std::printf("METRIC pipe_build_ms=%.4f\n", throughput.build_ms / frames);
+	std::printf("METRIC pipe_record_ms=%.4f\n", throughput.record_ms / frames);
+	std::printf("METRIC pipe_submit_ms=%.4f\n", throughput.submit_ms / frames);
+	std::printf("METRIC pipe_drawn_entities=%.1f\n", throughput.drawn / frames);
+}
+
+/// The device and the hash of the fidelity frame, which every mode reports so
+/// a run can be matched to the image it rendered.
+void print_identity(const std::string& device_name, uint64_t image_hash)
+{
+	std::string device_token = device_name;
+	for (char& c : device_token) {
+		if (!std::isalnum(static_cast<unsigned char>(c))) {
+			c = '_';
+		}
+	}
+	std::printf("ASI device=%s\n", device_token.c_str());
+	std::printf("ASI image_hash=%s\n", to_hex(image_hash).c_str());
+}
+
 int run_gpu(const Options& options, Scene& scene, World& world)
 {
 	GpuRenderer gpu;
@@ -760,6 +895,12 @@ int run_gpu(const Options& options, Scene& scene, World& world)
 	if (!capture_fidelity(gpu, scene, world, aspect, options, device_name,
 	                      counters, fidelity, image_hash)) {
 		return 1;
+	}
+
+	if (options.pipelined) {
+		print_throughput(run_throughput(gpu, scene, world, aspect, options));
+		print_identity(device_name, image_hash);
+		return 0;
 	}
 
 	std::vector<FrameSample> samples;
@@ -851,14 +992,7 @@ int run_gpu(const Options& options, Scene& scene, World& world)
 			std::printf("METRIC image_exact=%d\n", fidelity.exact ? 1 : 0);
 		}
 	}
-	std::string device_token = device_name;
-	for (char& c : device_token) {
-		if (!std::isalnum(static_cast<unsigned char>(c))) {
-			c = '_';
-		}
-	}
-	std::printf("ASI device=%s\n", device_token.c_str());
-	std::printf("ASI image_hash=%s\n", to_hex(image_hash).c_str());
+	print_identity(device_name, image_hash);
 	return 0;
 }
 
