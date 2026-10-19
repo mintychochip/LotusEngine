@@ -530,6 +530,19 @@ void PhysicsWorld::Impl::step_characters(Scene& scene, float dt)
 			                           glm::vec3{controller.desired_velocity.x,
 			                                     0.0f,
 			                                     controller.desired_velocity.z});
+			// The ground cancels downward and sideways motion, never a climb: a
+			// jump asked for while grounded (or already in flight, when the
+			// character is still reported as touching) keeps its upward speed.
+			// Without this the vertical component was always forced to the
+			// ground's, so a character could never leave it.
+			const float climb =
+			        controller.desired_velocity.y >
+			                        character->GetLinearVelocity().GetY()
+			                ? controller.desired_velocity.y
+			                : character->GetLinearVelocity().GetY();
+			if (climb > 0.0f) {
+				velocity.SetY(climb);
+			}
 		} else {
 			velocity += gravity * dt;
 			const JPH::Vec3 desired = to_jolt_vec3f(controller.desired_velocity);

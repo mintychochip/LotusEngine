@@ -11,6 +11,11 @@
 namespace lotus {
 namespace {
 
+/// Upward speed of a jump. With the physics world's gravity this clears a
+/// little under a metre, which is over the character's own height (a 0.85 m
+/// half-height capsule on top of a 0.35 m radius).
+constexpr float kJumpSpeed = 4.5f;
+
 Entity find_named(Scene& scene, const char* name)
 {
 	const Entity entity = scene.find(name);
@@ -103,7 +108,14 @@ void apply_character_movement_input(Scene& scene, PhysicsWorld& physics,
 		speed *= sprint_multiplier;
 	}
 
-	physics.set_character_velocity(scene, player, direction * speed);
+	glm::vec3 velocity = direction * speed;
+	// Jump on Space: an upward request, made only while the character stands on
+	// something, so it cannot be stacked in mid-air. The physics world keeps the
+	// climb once the character has left the ground.
+	if (keys[SDL_SCANCODE_SPACE] && controller->grounded) {
+		velocity.y = kJumpSpeed;
+	}
+	physics.set_character_velocity(scene, player, velocity);
 }
 
 void update_follow_camera(Scene& scene, const FollowCameraSettings& settings)
