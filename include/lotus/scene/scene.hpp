@@ -170,17 +170,46 @@ public:
 	const AssetRegistry* assets() const { return assets_; }
 
 private:
+	/// One entity that survived culling this frame, queued for emission.
+	/// The pointers address registry storage: valid from build_frame() until
+	/// the registry is next modified, i.e. across the emit_frame() that
+	/// follows it in upload()/build_vertices().
+	struct DrawItem {
+		const std::string* albedo{nullptr};
+		const Transform* transform{nullptr};
+		const Mesh* mesh{nullptr};     // null for a 2D sprite
+		const Sprite* sprite{nullptr}; // null for a 3D mesh
+		glm::vec3 color{1.0f};
+		float roughness{0.5f};
+		uint32_t vertex_count{0};
+		uint32_t first_vertex{0};
+	};
+
 	std::string resolve_mesh_path(const MeshSource& source) const;
 
 	void sync_meshes();
 	void sync_lod();
+
+	/// Resolves the camera, culls, picks LOD levels and orders the survivors
+	/// into draw_items_ / draw_batches_ / frame_vertex_total_. No vertex is
+	/// generated yet.
+	void build_frame(float aspect, const DepthPyramid* occlusion);
+	/// Writes the vertices and UVs of draw_items_ into arrays of at least
+	/// frame_vertex_total_ elements.
+	void emit_frame(GpuVertex* vertices, glm::vec2* uvs) const;
 
 	std::string name_;
 	Registry registry_;
 	uint32_t vertex_count_{0};
 	uint32_t draw_call_count_{0};
 	std::vector<GpuDrawBatch> draw_batches_;
+	/// Persistent per-frame buffers. They only grow (to the high-water mark),
+	/// so a steady-state frame neither allocates nor re-initialises them; the
+	/// live element count is frame_vertex_total_, not size().
+	std::vector<GpuVertex> frame_vertices_;
 	std::vector<glm::vec2> frame_uvs_;
+	std::vector<DrawItem> draw_items_;
+	uint32_t frame_vertex_total_{0};
 	uint32_t drawn_entities_{0};
 	uint32_t culled_entities_{0};
 	uint32_t occluded_entities_{0};

@@ -67,7 +67,20 @@ bool ray_hits_sphere(const glm::vec3& origin, const glm::vec3& direction,
 	return true;
 }
 
-/// Emits world-space lit vertices for an indexed mesh.
+/// Number of indices that address an existing vertex: exactly what
+/// emit_mesh() writes. A well-formed mesh has them all.
+std::uint32_t count_valid_indices(const Mesh& mesh)
+{
+	const std::size_t vertex_count = mesh.positions.size();
+	std::uint32_t valid            = 0;
+	for (const std::uint32_t index : mesh.indices) {
+		valid += index < vertex_count ? 1u : 0u;
+	}
+	return valid;
+}
+
+/// Writes the world-space lit vertices of an indexed mesh to \p out and
+/// \p uvs_out: count_valid_indices(mesh) entries each.
 ///
 /// Each distinct vertex is transformed once and then gathered through the
 /// index list: the lists repeat vertices heavily (every vertex of a UV sphere
@@ -75,9 +88,8 @@ bool ray_hits_sphere(const glm::vec3& origin, const glm::vec3& direction,
 /// matrix, normalize) costs far more than the copy. Each vertex's value is a
 /// pure function of (world, position, normal), so the output is bit-identical
 /// to transforming per index.
-void emit_mesh(std::vector<GpuVertex>& out, std::vector<glm::vec2>& uvs_out,
-               const Transform& transform, const Mesh& mesh,
-               const glm::vec3& color, float roughness)
+void emit_mesh(GpuVertex* out, glm::vec2* uvs_out, const Transform& transform,
+               const Mesh& mesh, const glm::vec3& color, float roughness)
 {
 	// Correct for rotation and uniform scale; non-uniform scale would need the
 	// inverse transpose.
@@ -104,79 +116,40 @@ void emit_mesh(std::vector<GpuVertex>& out, std::vector<glm::vec2>& uvs_out,
 		vertex.roughness = roughness;
 	}
 
-	out.reserve(out.size() + mesh.indices.size());
-	uvs_out.reserve(uvs_out.size() + mesh.indices.size());
 	for (const std::uint32_t index : mesh.indices) {
 		if (index >= vertex_count) {
 			continue;
 		}
-		out.push_back(transformed[index]);
-		uvs_out.push_back(has_uvs ? mesh.uvs[index] : glm::vec2{0.0f, 0.0f});
+		*out++     = transformed[index];
+		*uvs_out++ = has_uvs ? mesh.uvs[index] : glm::vec2{0.0f, 0.0f};
 	}
 }
 
-glm::vec3 material_color(const Registry& registry, Entity entity)
+/// Writes the six vertices of a 2D sprite: an axis-aligned quad facing +Z.
+void emit_sprite(GpuVertex* out, glm::vec2* uvs_out, const Transform& transform,
+                 const Sprite& sprite)
 {
-	if (const Material* material = registry.try_get<Material>(entity)) {
-		return material->base_color;
+	const float hx = sprite.size.x * 0.5f;
+	const float hy = sprite.size.y * 0.5f;
+	const glm::vec4 corners[4] = {
+	        {-hx,  hy, 0.0f, 1.0f},
+	        { hx,  hy, 0.0f, 1.0f},
+	        { hx, -hy, 0.0f, 1.0f},
+	        {-hx, -hy, 0.0f, 1.0f},
+	};
+	glm::vec3 world_vertices[4];
+	for (int i = 0; i < 4; ++i) {
+		world_vertices[i] = glm::vec3{transform.world * corners[i]};
 	}
-	return glm::vec3{1.0f};
-}
-
-std::string material_albedo_id(const Registry& registry, Entity entity)
-{
-	if (const Material* material = registry.try_get<Material>(entity)) {
-		return material->albedo_id;
-	}
-	return {};
-}
-
-float material_roughness(const Registry& registry, Entity entity)
-{
-	if (const Material* material = registry.try_get<Material>(entity)) {
-		return material->roughness;
-	}
-	return 0.5f;
-}
-
-struct VertexChunk {
-	std::string albedo_id;
-	std::vector<GpuVertex> vertices;
-	std::vector<glm::vec2> uvs;
-};
-
-void append_chunk(std::vector<GpuVertex>& out, std::vector<glm::vec2>& uvs_out,
-                  std::vector<GpuDrawBatch>& batches, VertexChunk&& chunk)
-{
-	if (chunk.vertices.empty()) {
-		return;
-	}
-	if (!batches.empty() && batches.back().albedo_id == chunk.albedo_id) {
-		batches.back().vertex_count +=
-		        static_cast<std::uint32_t>(chunk.vertices.size());
-	} else {
-		batches.push_back(GpuDrawBatch{chunk.albedo_id,
-		                               static_cast<std::uint32_t>(out.size()),
-		                               static_cast<std::uint32_t>(
-		                                       chunk.vertices.size())});
-	}
-	out.insert(out.end(), chunk.vertices.begin(), chunk.vertices.end());
-	uvs_out.insert(uvs_out.end(), chunk.uvs.begin(), chunk.uvs.end());
-}
-
-void finalize_vertices(std::vector<GpuVertex>& out, std::vector<glm::vec2>& uvs_out,
-                       std::vector<GpuDrawBatch>& batches,
-                       std::vector<VertexChunk>&& chunks)
-{
-	std::sort(chunks.begin(), chunks.end(),
-	          [](const VertexChunk& a, const VertexChunk& b) {
-		          return a.albedo_id < b.albedo_id;
-	          });
-	out.clear();
-	uvs_out.clear();
-	batches.clear();
-	for (VertexChunk& chunk : chunks) {
-		append_chunk(out, uvs_out, batches, std::move(chunk));
+	const glm::vec3 color{sprite.color};
+	static constexpr int order[6] = {0, 1, 2, 0, 2, 3};
+	for (const int index : order) {
+		GpuVertex vertex{};
+		vertex.position = world_vertices[index];
+		vertex.normal   = glm::vec3{0.0f, 0.0f, 1.0f};
+		vertex.color    = color;
+		*out++          = vertex;
+		*uvs_out++      = glm::vec2{0.0f};
 	}
 }
 
@@ -666,8 +639,7 @@ void Scene::sync_lod()
 	}
 }
 
-std::vector<GpuVertex> Scene::build_vertices(float aspect,
-                                              const DepthPyramid* occlusion)
+void Scene::build_frame(float aspect, const DepthPyramid* occlusion)
 {
 	// Resolve the camera once, then reuse it for culling and drawing.
 	if (const Camera3D* camera = active_camera3d()) {
@@ -684,52 +656,54 @@ std::vector<GpuVertex> Scene::build_vertices(float aspect,
 	}
 	const Frustum frustum = Frustum::from_view_projection(view_projection_);
 
-	std::vector<VertexChunk> chunks;
 	drawn_entities_    = 0;
 	culled_entities_   = 0;
 	occluded_entities_ = 0;
+	draw_items_.clear();
+
+	// Frustum, then occlusion; counts the outcome either way.
+	const auto visible = [&](const BoundingSphere& world) {
+		if (!frustum.intersects(world)) {
+			++culled_entities_;
+			return false;
+		}
+		if (hidden(occlusion, view_, view_projection_, world)) {
+			++occluded_entities_;
+			++culled_entities_;
+			return false;
+		}
+		++drawn_entities_;
+		return true;
+	};
+
+	// Albedo key of sprites and of entities without a Material.
+	static const std::string no_albedo;
+	const auto push_mesh = [&](Entity entity, const Transform& transform,
+	                           const Mesh& mesh) {
+		const Material* material = registry_.try_get<Material>(entity);
+		DrawItem item;
+		item.albedo       = material ? &material->albedo_id : &no_albedo;
+		item.color        = material ? material->base_color : glm::vec3{1.0f};
+		item.roughness    = material ? material->roughness : 0.5f;
+		item.transform    = &transform;
+		item.mesh         = &mesh;
+		item.vertex_count = count_valid_indices(mesh);
+		draw_items_.push_back(item);
+	};
 
 	// 2D sprites: axis-aligned quads facing +Z.
 	const auto sprite_view = registry_.view<Transform, Sprite>();
 	sprite_view.each([&](const Transform& transform, const Sprite& sprite) {
 		const BoundingSphere local{glm::vec3{0.0f}, glm::length(sprite.size) * 0.5f};
-		const BoundingSphere world = world_bounds(transform, local);
-		if (!frustum.intersects(world)) {
-			++culled_entities_;
+		if (!visible(world_bounds(transform, local))) {
 			return;
 		}
-		if (hidden(occlusion, view_, view_projection_, world)) {
-			++occluded_entities_;
-			++culled_entities_;
-			return;
-		}
-		++drawn_entities_;
-
-		const float hx = sprite.size.x * 0.5f;
-		const float hy = sprite.size.y * 0.5f;
-		const glm::vec4 corners[4] = {
-		        {-hx,  hy, 0.0f, 1.0f},
-		        { hx,  hy, 0.0f, 1.0f},
-		        { hx, -hy, 0.0f, 1.0f},
-		        {-hx, -hy, 0.0f, 1.0f},
-		};
-		glm::vec3 world_vertices[4];
-		for (int i = 0; i < 4; ++i) {
-			world_vertices[i] = glm::vec3{transform.world * corners[i]};
-		}
-		const glm::vec3 color{sprite.color};
-		static constexpr int order[6] = {0, 1, 2, 0, 2, 3};
-		VertexChunk chunk;
-		chunk.albedo_id.clear();
-		for (const int index : order) {
-			GpuVertex vertex{};
-			vertex.position = world_vertices[index];
-			vertex.normal   = glm::vec3{0.0f, 0.0f, 1.0f};
-			vertex.color    = color;
-			chunk.vertices.push_back(vertex);
-			chunk.uvs.push_back(glm::vec2{0.0f});
-		}
-		chunks.push_back(std::move(chunk));
+		DrawItem item;
+		item.albedo       = &no_albedo;
+		item.transform    = &transform;
+		item.sprite       = &sprite;
+		item.vertex_count = 6;
+		draw_items_.push_back(item);
 	});
 
 	// 3D meshes (entities without Lod).
@@ -739,26 +713,14 @@ std::vector<GpuVertex> Scene::build_vertices(float aspect,
 		if (mesh.empty() || registry_.all_of<Lod>(entity)) {
 			return;
 		}
-		const BoundingSphere world = world_bounds(transform, mesh.bounds);
-		if (!frustum.intersects(world)) {
-			++culled_entities_;
+		if (!visible(world_bounds(transform, mesh.bounds))) {
 			return;
 		}
-		if (hidden(occlusion, view_, view_projection_, world)) {
-			++occluded_entities_;
-			++culled_entities_;
-			return;
-		}
-		++drawn_entities_;
-		VertexChunk chunk;
-		chunk.albedo_id = material_albedo_id(registry_, entity);
-		emit_mesh(chunk.vertices, chunk.uvs, transform, mesh,
-		          material_color(registry_, entity),
-		          material_roughness(registry_, entity));
-		chunks.push_back(std::move(chunk));
+		push_mesh(entity, transform, mesh);
 	});
 
 	// Lod entities: pick a level by distance, then cull that level's bounds.
+	thread_local std::vector<float> max_distances;
 	const auto lod_view = registry_.view<Transform, Lod>();
 	lod_view.each([&](const Entity entity, const Transform& transform,
 	                  const Lod& lod) {
@@ -769,8 +731,7 @@ std::vector<GpuVertex> Scene::build_vertices(float aspect,
 		const glm::vec3 world_position = glm::vec3{transform.world[3]};
 		const float distance = glm::length(world_position - camera_position_);
 
-		std::vector<float> max_distances;
-		max_distances.reserve(lod.levels.size());
+		max_distances.clear();
 		for (const LodLevel& level : lod.levels) {
 			max_distances.push_back(level.max_distance);
 		}
@@ -780,30 +741,71 @@ std::vector<GpuVertex> Scene::build_vertices(float aspect,
 			return;
 		}
 		const Mesh& mesh = geometry->levels[static_cast<std::size_t>(level)];
-		const BoundingSphere world = world_bounds(transform, mesh.bounds);
-		if (!frustum.intersects(world)) {
-			++culled_entities_;
+		if (!visible(world_bounds(transform, mesh.bounds))) {
 			return;
 		}
-		if (hidden(occlusion, view_, view_projection_, world)) {
-			++occluded_entities_;
-			++culled_entities_;
-			return;
-		}
-		++drawn_entities_;
-		VertexChunk chunk;
-		chunk.albedo_id = material_albedo_id(registry_, entity);
-		emit_mesh(chunk.vertices, chunk.uvs, transform, mesh,
-		          material_color(registry_, entity),
-		          material_roughness(registry_, entity));
-		chunks.push_back(std::move(chunk));
+		push_mesh(entity, transform, mesh);
 	});
 
-	std::vector<GpuVertex> vertices;
-	finalize_vertices(vertices, frame_uvs_, draw_batches_, std::move(chunks));
-	draw_call_count_ = vertices.empty() ? 0u
-	                                    : static_cast<std::uint32_t>(
-	                                              draw_batches_.size());
+	// Group by albedo texture. Same std::sort and predicate over the same
+	// sequence (sprites, meshes, LODs) as the per-entity chunks it replaces:
+	// introsort's permutation depends only on comparison outcomes, never on
+	// element size, so equal-albedo entities keep exactly the draw order they
+	// always had. That order is observable (coplanar faces z-fight, and the
+	// later draw wins), so a stable or counting sort here would change pixels.
+	std::sort(draw_items_.begin(), draw_items_.end(),
+	          [](const DrawItem& a, const DrawItem& b) {
+		          return *a.albedo < *b.albedo;
+	          });
+
+	draw_batches_.clear();
+	uint32_t total = 0;
+	for (DrawItem& item : draw_items_) {
+		item.first_vertex = total;
+		if (item.vertex_count == 0) {
+			continue;
+		}
+		if (!draw_batches_.empty() &&
+		    draw_batches_.back().albedo_id == *item.albedo) {
+			draw_batches_.back().vertex_count += item.vertex_count;
+		} else {
+			draw_batches_.push_back(
+			        GpuDrawBatch{*item.albedo, total, item.vertex_count});
+		}
+		total += item.vertex_count;
+	}
+	frame_vertex_total_ = total;
+	draw_call_count_    = total == 0 ? 0u
+	                                 : static_cast<std::uint32_t>(
+	                                           draw_batches_.size());
+}
+
+void Scene::emit_frame(GpuVertex* vertices, glm::vec2* uvs) const
+{
+	for (const DrawItem& item : draw_items_) {
+		if (item.vertex_count == 0) {
+			continue;
+		}
+		GpuVertex* out    = vertices + item.first_vertex;
+		glm::vec2* uv_out = uvs + item.first_vertex;
+		if (item.mesh != nullptr) {
+			emit_mesh(out, uv_out, *item.transform, *item.mesh, item.color,
+			          item.roughness);
+		} else {
+			emit_sprite(out, uv_out, *item.transform, *item.sprite);
+		}
+	}
+}
+
+std::vector<GpuVertex> Scene::build_vertices(float aspect,
+                                              const DepthPyramid* occlusion)
+{
+	build_frame(aspect, occlusion);
+	std::vector<GpuVertex> vertices(frame_vertex_total_);
+	if (frame_uvs_.size() < frame_vertex_total_) {
+		frame_uvs_.resize(frame_vertex_total_);
+	}
+	emit_frame(vertices.data(), frame_uvs_.data());
 	return vertices;
 }
 
@@ -812,11 +814,20 @@ void Scene::upload(GpuRenderer& gpu, float aspect)
 	const DepthPyramid* occlusion = occlusion_for_pass(
 	        gpu.occlusion_pyramid(), gpu.occlusion_ready(),
 	        gpu.occlusion_aspect(), aspect);
-	const std::vector<GpuVertex> vertices = build_vertices(aspect, occlusion);
-	vertex_count_ = static_cast<std::uint32_t>(vertices.size());
-	if (vertex_count_ != 0) {
-		gpu.upload_vertices(vertices.data(), frame_uvs_.data(), vertex_count_);
+	build_frame(aspect, occlusion);
+	vertex_count_ = frame_vertex_total_;
+	if (vertex_count_ == 0) {
+		return;
 	}
+	if (frame_vertices_.size() < vertex_count_) {
+		frame_vertices_.resize(vertex_count_);
+	}
+	if (frame_uvs_.size() < vertex_count_) {
+		frame_uvs_.resize(vertex_count_);
+	}
+	emit_frame(frame_vertices_.data(), frame_uvs_.data());
+	gpu.upload_vertices(frame_vertices_.data(), frame_uvs_.data(),
+	                    vertex_count_);
 }
 
 void Scene::draw(GpuRenderer& gpu)
