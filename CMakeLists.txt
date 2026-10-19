@@ -67,6 +67,14 @@ list(REMOVE_ITEM LOTUS_SOURCES
     "${CMAKE_SOURCE_DIR}/src/main.cpp"
     "${CMAKE_SOURCE_DIR}/src/main.cc")
 
+# Graphics backend seam: only the selected backend directory is compiled.
+set(LOTUS_GPU_BACKEND "sdlgpu" CACHE STRING "Graphics backend: sdlgpu | vulkan | d3d12 | d3d11")
+foreach(backend sdlgpu vulkan d3d12 d3d11)
+    if(NOT LOTUS_GPU_BACKEND STREQUAL backend)
+        list(FILTER LOTUS_SOURCES EXCLUDE REGEX "src/gpu/${backend}/.*")
+    endif()
+endforeach()
+
 add_library(lotus_engine STATIC ${LOTUS_SOURCES})
 
 target_include_directories(lotus_engine PUBLIC

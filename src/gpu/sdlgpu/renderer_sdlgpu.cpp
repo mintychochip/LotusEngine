@@ -1,4 +1,4 @@
-#include "lotus/gpu/renderer.hpp"
+#include "gpu/sdlgpu/renderer_sdlgpu.hpp"
 
 #include "lotus/scene/assets.hpp"
 #include "stb_image.h"
@@ -303,12 +303,12 @@ void lit_vertex_descriptions(
 
 } // namespace
 
-GpuRenderer::~GpuRenderer()
+GpuRendererSdlGpu::~GpuRendererSdlGpu()
 {
 	shutdown();
 }
 
-void GpuRenderer::init(SDL_Window* window, bool debug_device)
+void GpuRendererSdlGpu::init(SDL_Window* window, bool debug_device)
 {
 	if (device_) {
 		return;
@@ -337,7 +337,7 @@ void GpuRenderer::init(SDL_Window* window, bool debug_device)
 	ensure_white_texture();
 }
 
-void GpuRenderer::init_offscreen(uint32_t width, uint32_t height)
+void GpuRendererSdlGpu::init_offscreen(uint32_t width, uint32_t height)
 {
 	if (device_) {
 		return;
@@ -386,7 +386,7 @@ void GpuRenderer::init_offscreen(uint32_t width, uint32_t height)
 	ensure_white_texture();
 }
 
-void GpuRenderer::ensure_default_sampler()
+void GpuRendererSdlGpu::ensure_default_sampler()
 {
 	if (default_sampler_ || !device_) {
 		return;
@@ -404,7 +404,7 @@ void GpuRenderer::ensure_default_sampler()
 	}
 }
 
-void GpuRenderer::ensure_white_texture()
+void GpuRendererSdlGpu::ensure_white_texture()
 {
 	if (white_texture_ || !device_) {
 		return;
@@ -468,7 +468,7 @@ void GpuRenderer::ensure_white_texture()
 	SDL_ReleaseGPUTransferBuffer(device_, transfer);
 }
 
-void GpuRenderer::destroy_textures()
+void GpuRendererSdlGpu::destroy_textures()
 {
 	for (auto& [key, entry] : albedo_textures_) {
 		if (entry.texture) {
@@ -488,7 +488,7 @@ void GpuRenderer::destroy_textures()
 	}
 }
 
-bool GpuRenderer::load_texture_from_file(const std::string& path,
+bool GpuRendererSdlGpu::load_texture_from_file(const std::string& path,
                                          const std::string& cache_key)
 {
 	if (!device_ || path.empty()) {
@@ -596,7 +596,7 @@ bool GpuRenderer::load_texture_from_file(const std::string& path,
 	return true;
 }
 
-SDL_GPUTexture* GpuRenderer::texture_for_albedo(const std::string& albedo_id,
+SDL_GPUTexture* GpuRendererSdlGpu::texture_for_albedo(const std::string& albedo_id,
                                                 const AssetRegistry* assets)
 {
 	ensure_white_texture();
@@ -623,7 +623,7 @@ SDL_GPUTexture* GpuRenderer::texture_for_albedo(const std::string& albedo_id,
 	return albedo_textures_[albedo_id].texture;
 }
 
-void GpuRenderer::create_pipeline()
+void GpuRendererSdlGpu::create_pipeline()
 {
 	SDL_GPUShader* vert = create_shader(device_, true);
 	SDL_GPUShader* frag = create_shader(device_, false);
@@ -674,7 +674,7 @@ void GpuRenderer::create_pipeline()
 	}
 }
 
-void GpuRenderer::shadow_light_matrices(glm::mat4& view, glm::mat4& vp) const
+void GpuRendererSdlGpu::shadow_light_matrices(glm::mat4& view, glm::mat4& vp) const
 {
 	glm::vec3 direction = glm::length(lighting_.direction) > 0.0f
 	                            ? glm::normalize(lighting_.direction)
@@ -691,7 +691,7 @@ void GpuRenderer::shadow_light_matrices(glm::mat4& view, glm::mat4& vp) const
 	       view;
 }
 
-bool GpuRenderer::shadows_ready()
+bool GpuRendererSdlGpu::shadows_ready()
 {
 	if (!lighting_.shadows_enabled || !device_) {
 		return false;
@@ -715,7 +715,7 @@ bool GpuRenderer::shadows_ready()
 	return shadows_supported_;
 }
 
-void GpuRenderer::ensure_shadow_resources()
+void GpuRendererSdlGpu::ensure_shadow_resources()
 {
 	if (!device_ || !shadows_supported_) {
 		return;
@@ -807,7 +807,7 @@ void GpuRenderer::ensure_shadow_resources()
 	}
 }
 
-void GpuRenderer::render_shadow_map()
+void GpuRendererSdlGpu::render_shadow_map()
 {
 	if (shadow_rendered_ || !cmd_ || geometry_draws_.empty() ||
 	    !instance_buffer_) {
@@ -846,7 +846,7 @@ void GpuRenderer::render_shadow_map()
 	shadow_rendered_ = true;
 }
 
-void GpuRenderer::destroy_shadows()
+void GpuRendererSdlGpu::destroy_shadows()
 {
 	if (shadow_pipeline_) {
 		SDL_ReleaseGPUGraphicsPipeline(device_, shadow_pipeline_);
@@ -864,7 +864,7 @@ void GpuRenderer::destroy_shadows()
 	light_vp_        = glm::mat4{1.0f};
 }
 
-bool GpuRenderer::ensure_fxaa_source(uint32_t width, uint32_t height)
+bool GpuRendererSdlGpu::ensure_fxaa_source(uint32_t width, uint32_t height)
 {
 	if (!device_ || width == 0 || height == 0 ||
 	    swapchain_format_ == SDL_GPU_TEXTUREFORMAT_INVALID) {
@@ -903,7 +903,7 @@ bool GpuRenderer::ensure_fxaa_source(uint32_t width, uint32_t height)
 	return true;
 }
 
-bool GpuRenderer::ensure_fxaa_pipeline()
+bool GpuRendererSdlGpu::ensure_fxaa_pipeline()
 {
 	if (!device_ || swapchain_format_ == SDL_GPU_TEXTUREFORMAT_INVALID) {
 		return false;
@@ -966,7 +966,7 @@ bool GpuRenderer::ensure_fxaa_pipeline()
 	return true;
 }
 
-void GpuRenderer::fxaa_resolve(SDL_GPUTexture* destination, uint32_t width,
+void GpuRendererSdlGpu::fxaa_resolve(SDL_GPUTexture* destination, uint32_t width,
                                uint32_t height)
 {
 	if (!cmd_ || !destination || !fxaa_source_ || width == 0 || height == 0 ||
@@ -995,7 +995,7 @@ void GpuRenderer::fxaa_resolve(SDL_GPUTexture* destination, uint32_t width,
 	SDL_EndGPURenderPass(pass);
 }
 
-void GpuRenderer::destroy_fxaa()
+void GpuRendererSdlGpu::destroy_fxaa()
 {
 	if (fxaa_pipeline_) {
 		SDL_ReleaseGPUGraphicsPipeline(device_, fxaa_pipeline_);
@@ -1016,7 +1016,7 @@ void GpuRenderer::destroy_fxaa()
 	pass_destination_ = nullptr;
 }
 
-bool GpuRenderer::ensure_sky_pipeline()
+bool GpuRendererSdlGpu::ensure_sky_pipeline()
 {
 	if (!device_ || swapchain_format_ == SDL_GPU_TEXTUREFORMAT_INVALID) {
 		return false;
@@ -1089,7 +1089,7 @@ bool GpuRenderer::ensure_sky_pipeline()
 	return true;
 }
 
-void GpuRenderer::draw_sky(const glm::mat4& view_projection,
+void GpuRendererSdlGpu::draw_sky(const glm::mat4& view_projection,
                            const glm::vec3& camera_position)
 {
 	// Once per pass, after the geometry of the first draw() that has any:
@@ -1134,7 +1134,7 @@ void GpuRenderer::draw_sky(const glm::mat4& view_projection,
 	SDL_DrawGPUPrimitives(pass_, 3, 1, 0, 0);
 }
 
-void GpuRenderer::set_pass_viewport(float max_depth)
+void GpuRendererSdlGpu::set_pass_viewport(float max_depth)
 {
 	SDL_GPUViewport viewport{};
 	viewport.w         = static_cast<float>(pass_width_);
@@ -1144,7 +1144,7 @@ void GpuRenderer::set_pass_viewport(float max_depth)
 	SDL_SetGPUViewport(pass_, &viewport);
 }
 
-void GpuRenderer::destroy_sky()
+void GpuRendererSdlGpu::destroy_sky()
 {
 	if (sky_pipeline_) {
 		SDL_ReleaseGPUGraphicsPipeline(device_, sky_pipeline_);
@@ -1153,7 +1153,7 @@ void GpuRenderer::destroy_sky()
 	sky_format_ = SDL_GPU_TEXTUREFORMAT_INVALID;
 }
 
-void GpuRenderer::set_blob_casters(const glm::vec4* spheres, uint32_t count)
+void GpuRendererSdlGpu::set_blob_casters(const glm::vec4* spheres, uint32_t count)
 {
 	blob_count_ = 0;
 	if (spheres == nullptr || count == 0) {
@@ -1165,12 +1165,12 @@ void GpuRenderer::set_blob_casters(const glm::vec4* spheres, uint32_t count)
 	}
 }
 
-void GpuRenderer::clear_blob_casters()
+void GpuRendererSdlGpu::clear_blob_casters()
 {
 	blob_count_ = 0;
 }
 
-bool GpuRenderer::ensure_ssao_resources(uint32_t width, uint32_t height)
+bool GpuRendererSdlGpu::ensure_ssao_resources(uint32_t width, uint32_t height)
 {
 	if (!device_ || width == 0 || height == 0 ||
 	    swapchain_format_ == SDL_GPU_TEXTUREFORMAT_INVALID) {
@@ -1212,7 +1212,7 @@ bool GpuRenderer::ensure_ssao_resources(uint32_t width, uint32_t height)
 	return true;
 }
 
-bool GpuRenderer::ensure_ssao_pipeline()
+bool GpuRendererSdlGpu::ensure_ssao_pipeline()
 {
 	if (!device_ || swapchain_format_ == SDL_GPU_TEXTUREFORMAT_INVALID) {
 		return false;
@@ -1284,7 +1284,7 @@ bool GpuRenderer::ensure_ssao_pipeline()
 	return true;
 }
 
-void GpuRenderer::run_ssao_pass(uint32_t width, uint32_t height)
+void GpuRendererSdlGpu::run_ssao_pass(uint32_t width, uint32_t height)
 {
 	if (!cmd_ || !pyramid_texture_ || width == 0 || height == 0 ||
 	    !ensure_ssao_pipeline() ||
@@ -1317,7 +1317,7 @@ void GpuRenderer::run_ssao_pass(uint32_t width, uint32_t height)
 	ssao_target_height_ = height;
 }
 
-void GpuRenderer::destroy_ssao()
+void GpuRendererSdlGpu::destroy_ssao()
 {
 	if (ssao_pipeline_) {
 		SDL_ReleaseGPUGraphicsPipeline(device_, ssao_pipeline_);
@@ -1341,7 +1341,7 @@ void GpuRenderer::destroy_ssao()
 	ssao_target_height_  = 0;
 }
 
-void GpuRenderer::destroy_buffers()
+void GpuRendererSdlGpu::destroy_buffers()
 {
 	if (vertex_buffer_) {
 		SDL_ReleaseGPUBuffer(device_, vertex_buffer_);
@@ -1363,7 +1363,7 @@ void GpuRenderer::destroy_buffers()
 	uv_capacity_ = 0;
 }
 
-void GpuRenderer::ensure_vertex_capacity(uint32_t vertex_bytes, uint32_t uv_bytes)
+void GpuRendererSdlGpu::ensure_vertex_capacity(uint32_t vertex_bytes, uint32_t uv_bytes)
 {
 	if (vertex_bytes <= capacity_ && uv_bytes <= uv_capacity_) {
 		return;
@@ -1413,7 +1413,7 @@ void GpuRenderer::ensure_vertex_capacity(uint32_t vertex_bytes, uint32_t uv_byte
 	uv_capacity_ = uv_next;
 }
 
-bool GpuRenderer::create_occlusion_pipeline()
+bool GpuRendererSdlGpu::create_occlusion_pipeline()
 {
 	SDL_GPUComputePipelineCreateInfo info{};
 	info.code       = depth_comp_spv;
@@ -1435,7 +1435,7 @@ bool GpuRenderer::create_occlusion_pipeline()
 
 // Size-scoped teardown: everything that depends on the frame's dimensions.
 // The compute pipeline is device-scoped and deliberately survives a resize.
-void GpuRenderer::destroy_pyramid()
+void GpuRendererSdlGpu::destroy_pyramid()
 {
 	// A pyramid download still in flight is simply forgotten: its frame's
 	// fence belongs to frame_fences_ and is reaped like any other, and SDL
@@ -1458,7 +1458,7 @@ void GpuRenderer::destroy_pyramid()
 	occlusion_ready_   = false;
 }
 
-void GpuRenderer::destroy_occlusion()
+void GpuRendererSdlGpu::destroy_occlusion()
 {
 	destroy_pyramid();
 	if (hiz_pipeline_) {
@@ -1468,7 +1468,7 @@ void GpuRenderer::destroy_occlusion()
 	occlusion_enabled_ = false;
 }
 
-void GpuRenderer::reap_frame_fences()
+void GpuRendererSdlGpu::reap_frame_fences()
 {
 	// Query, never wait. A frame that has not finished stays queued and is
 	// retried next time; nothing here may stall the loop.
@@ -1480,7 +1480,7 @@ void GpuRenderer::reap_frame_fences()
 	}
 }
 
-void GpuRenderer::wait_for_frame_slot()
+void GpuRendererSdlGpu::wait_for_frame_slot()
 {
 	reap_frame_fences();
 	while (frame_fences_.size() >= kFramesInFlight) {
@@ -1492,7 +1492,7 @@ void GpuRenderer::wait_for_frame_slot()
 	}
 }
 
-void GpuRenderer::release_frame_fences()
+void GpuRendererSdlGpu::release_frame_fences()
 {
 	// Only called with the GPU idle, so every fence is signalled and this
 	// cannot block.
@@ -1503,7 +1503,7 @@ void GpuRenderer::release_frame_fences()
 	completed_serial_ = submit_serial_;
 }
 
-void GpuRenderer::ensure_pyramid(uint32_t width, uint32_t height)
+void GpuRendererSdlGpu::ensure_pyramid(uint32_t width, uint32_t height)
 {
 	if (pyramid_reduction_unavailable_) {
 		// The reduction is permanently off. A resize must still be able to
@@ -1542,7 +1542,7 @@ void GpuRenderer::ensure_pyramid(uint32_t width, uint32_t height)
 /// render pass with one target against a two-target pipeline. Writing the
 /// depth into a texture nothing ever reads keeps the two in agreement and
 /// costs one mip.
-void GpuRenderer::ensure_pyramid_stand_in(uint32_t width, uint32_t height)
+void GpuRendererSdlGpu::ensure_pyramid_stand_in(uint32_t width, uint32_t height)
 {
 	SDL_GPUTextureCreateInfo info{};
 	info.type                 = SDL_GPU_TEXTURETYPE_2D;
@@ -1571,7 +1571,7 @@ void GpuRenderer::ensure_pyramid_stand_in(uint32_t width, uint32_t height)
 	pyramid_levels_ = 0; // nothing to reduce and nothing to read back
 }
 
-void GpuRenderer::ensure_pyramid_texture(uint32_t width, uint32_t height)
+void GpuRendererSdlGpu::ensure_pyramid_texture(uint32_t width, uint32_t height)
 {
 	// Only mips 0..K exist: the query reads mip K and nothing coarser, so
 	// reducing further and transferring more would be pure waste.
@@ -1645,7 +1645,7 @@ void GpuRenderer::ensure_pyramid_texture(uint32_t width, uint32_t height)
 	pyramid_levels_ = levels;
 }
 
-void GpuRenderer::poll_pyramid_fence()
+void GpuRendererSdlGpu::poll_pyramid_fence()
 {
 	// Collects the frames that have finished. Polls, never waits.
 	reap_frame_fences();
@@ -1707,7 +1707,7 @@ void GpuRenderer::poll_pyramid_fence()
 	                : 0.0f;
 }
 
-void GpuRenderer::record_pyramid()
+void GpuRendererSdlGpu::record_pyramid()
 {
 	// Gated on occlusion_enabled_, not merely on hiz_pipeline_: the pyramid
 	// texture always exists because the scene pass writes it as color target 1,
@@ -1789,7 +1789,7 @@ void GpuRenderer::record_pyramid()
 	pyramid_recorded_ = true;
 }
 
-void GpuRenderer::ensure_depth_target(uint32_t width, uint32_t height)
+void GpuRendererSdlGpu::ensure_depth_target(uint32_t width, uint32_t height)
 {
 	if (depth_texture_ && depth_width_ == width && depth_height_ == height) {
 		return;
@@ -1821,7 +1821,7 @@ void GpuRenderer::ensure_depth_target(uint32_t width, uint32_t height)
 	depth_height_ = height;
 }
 
-void GpuRenderer::begin_frame_offscreen()
+void GpuRendererSdlGpu::begin_frame_offscreen()
 {
 	if (!offscreen_ || !offscreen_color_) {
 		return;
@@ -1840,7 +1840,7 @@ void GpuRenderer::begin_frame_offscreen()
 	pass_destination_ = nullptr;
 }
 
-std::vector<uint8_t> GpuRenderer::capture_rgba(uint32_t& width, uint32_t& height)
+std::vector<uint8_t> GpuRendererSdlGpu::capture_rgba(uint32_t& width, uint32_t& height)
 {
 	width  = 0;
 	height = 0;
@@ -1852,7 +1852,7 @@ std::vector<uint8_t> GpuRenderer::capture_rgba(uint32_t& width, uint32_t& height
 	return download_rgba(offscreen_color_, width, height);
 }
 
-std::vector<uint8_t> GpuRenderer::capture_viewport_rgba(uint32_t& width,
+std::vector<uint8_t> GpuRendererSdlGpu::capture_viewport_rgba(uint32_t& width,
                                                         uint32_t& height)
 {
 	width  = 0;
@@ -1865,7 +1865,7 @@ std::vector<uint8_t> GpuRenderer::capture_viewport_rgba(uint32_t& width,
 	return download_rgba(viewport_texture_, width, height);
 }
 
-std::vector<uint8_t> GpuRenderer::download_rgba(SDL_GPUTexture* texture,
+std::vector<uint8_t> GpuRendererSdlGpu::download_rgba(SDL_GPUTexture* texture,
                                                 uint32_t width, uint32_t height)
 {
 	SDL_WaitForGPUIdle(device_);
@@ -1911,7 +1911,7 @@ std::vector<uint8_t> GpuRenderer::download_rgba(SDL_GPUTexture* texture,
 	return pixels;
 }
 
-bool GpuRenderer::resize_offscreen(uint32_t width, uint32_t height)
+bool GpuRendererSdlGpu::resize_offscreen(uint32_t width, uint32_t height)
 {
 	if (!offscreen_ || !offscreen_color_ || width == 0 || height == 0) {
 		return false;
@@ -1952,7 +1952,7 @@ bool GpuRenderer::resize_offscreen(uint32_t width, uint32_t height)
 	return true;
 }
 
-bool GpuRenderer::resize_viewport(uint32_t width, uint32_t height)
+bool GpuRendererSdlGpu::resize_viewport(uint32_t width, uint32_t height)
 {
 	if (!device_ || width == 0 || height == 0 ||
 	    swapchain_format_ == SDL_GPU_TEXTUREFORMAT_INVALID) {
@@ -2032,7 +2032,7 @@ bool GpuRenderer::resize_viewport(uint32_t width, uint32_t height)
 	return true;
 }
 
-bool GpuRenderer::begin_viewport_pass()
+bool GpuRendererSdlGpu::begin_viewport_pass()
 {
 	if (!cmd_ || !viewport_texture_ || !viewport_pyramid_ || !viewport_depth_) {
 		return false;
@@ -2082,7 +2082,7 @@ bool GpuRenderer::begin_viewport_pass()
 	return pass_ != nullptr;
 }
 
-void GpuRenderer::end_viewport_pass()
+void GpuRendererSdlGpu::end_viewport_pass()
 {
 	if (pass_) {
 		SDL_EndGPURenderPass(pass_);
@@ -2099,7 +2099,7 @@ void GpuRenderer::end_viewport_pass()
 	}
 }
 
-bool GpuRenderer::write_ppm(const std::string& path, std::string* error)
+bool GpuRendererSdlGpu::write_ppm(const std::string& path, std::string* error)
 {
 	uint32_t width  = 0;
 	uint32_t height = 0;
@@ -2127,7 +2127,7 @@ bool GpuRenderer::write_ppm(const std::string& path, std::string* error)
 	return static_cast<bool>(out);
 }
 
-void GpuRenderer::shutdown()
+void GpuRendererSdlGpu::shutdown()
 {
 	if (!device_) {
 		return;
@@ -2188,7 +2188,7 @@ void GpuRenderer::shutdown()
 	device_ = nullptr;
 }
 
-void GpuRenderer::begin_frame(SDL_Window* window, float clear_r, float clear_g,
+void GpuRendererSdlGpu::begin_frame(SDL_Window* window, float clear_r, float clear_g,
                               float clear_b)
 {
 	clear_r_ = clear_r;
@@ -2231,7 +2231,7 @@ void GpuRenderer::begin_frame(SDL_Window* window, float clear_r, float clear_g,
 	pass_destination_ = nullptr;
 }
 
-void GpuRenderer::begin_geometry_frame()
+void GpuRendererSdlGpu::begin_geometry_frame()
 {
 	abandon_geometry_staging();
 	// The draw list belongs to the frame that uploaded it: a frame that
@@ -2245,22 +2245,22 @@ void GpuRenderer::begin_geometry_frame()
 	}
 }
 
-bool GpuRenderer::mesh_live(GpuMeshId mesh) const
+bool GpuRendererSdlGpu::mesh_live(GpuMeshId mesh) const
 {
 	return mesh < meshes_.size() && meshes_[mesh].live;
 }
 
-uint32_t GpuRenderer::mesh_index_count(GpuMeshId mesh) const
+uint32_t GpuRendererSdlGpu::mesh_index_count(GpuMeshId mesh) const
 {
 	return mesh_live(mesh) ? meshes_[mesh].index_count : 0u;
 }
 
-uint32_t GpuRenderer::cached_mesh_count() const
+uint32_t GpuRendererSdlGpu::cached_mesh_count() const
 {
 	return static_cast<uint32_t>(mesh_ids_.size());
 }
 
-void GpuRenderer::release_mesh(GpuMeshId mesh)
+void GpuRendererSdlGpu::release_mesh(GpuMeshId mesh)
 {
 	if (!mesh_live(mesh)) {
 		return;
@@ -2285,7 +2285,7 @@ void GpuRenderer::release_mesh(GpuMeshId mesh)
 	free_mesh_ids_.push_back(mesh);
 }
 
-void GpuRenderer::evict_idle_meshes()
+void GpuRendererSdlGpu::evict_idle_meshes()
 {
 	for (GpuMeshId id = 0; id < meshes_.size(); ++id) {
 		const CachedMesh& cached = meshes_[id];
@@ -2295,7 +2295,7 @@ void GpuRenderer::evict_idle_meshes()
 	}
 }
 
-void GpuRenderer::destroy_meshes()
+void GpuRendererSdlGpu::destroy_meshes()
 {
 	for (GpuMeshId id = 0; id < meshes_.size(); ++id) {
 		release_mesh(id);
@@ -2306,7 +2306,7 @@ void GpuRenderer::destroy_meshes()
 	pending_meshes_.clear();
 }
 
-GpuMeshId GpuRenderer::acquire_mesh(const std::string& key,
+GpuMeshId GpuRendererSdlGpu::acquire_mesh(const std::string& key,
                                     const GpuMeshData& data)
 {
 	if (!device_ || data.positions == nullptr || data.indices == nullptr ||
@@ -2401,7 +2401,7 @@ GpuMeshId GpuRenderer::acquire_mesh(const std::string& key,
 	return id;
 }
 
-void GpuRenderer::upload_pending_meshes(SDL_GPUCopyPass* copy)
+void GpuRendererSdlGpu::upload_pending_meshes(SDL_GPUCopyPass* copy)
 {
 	if (pending_meshes_.empty()) {
 		return;
@@ -2462,7 +2462,7 @@ void GpuRenderer::upload_pending_meshes(SDL_GPUCopyPass* copy)
 	pending_meshes_.clear();
 }
 
-void GpuRenderer::ensure_instance_capacity(uint32_t bytes)
+void GpuRendererSdlGpu::ensure_instance_capacity(uint32_t bytes)
 {
 	if (instance_buffer_ && instance_transfer_ && bytes <= instance_capacity_) {
 		return;
@@ -2493,7 +2493,7 @@ void GpuRenderer::ensure_instance_capacity(uint32_t bytes)
 	instance_capacity_ = next;
 }
 
-void GpuRenderer::destroy_instance_buffers()
+void GpuRendererSdlGpu::destroy_instance_buffers()
 {
 	if (instance_buffer_) {
 		SDL_ReleaseGPUBuffer(device_, instance_buffer_);
@@ -2506,7 +2506,7 @@ void GpuRenderer::destroy_instance_buffers()
 	instance_capacity_ = 0;
 }
 
-void GpuRenderer::abandon_geometry_staging()
+void GpuRendererSdlGpu::abandon_geometry_staging()
 {
 	if (!geometry_mapped_) {
 		return;
@@ -2521,7 +2521,7 @@ void GpuRenderer::abandon_geometry_staging()
 	staged_instances_ = 0;
 }
 
-GpuRenderer::GeometryStaging GpuRenderer::begin_geometry_upload(
+GpuRendererSdlGpu::GeometryStaging GpuRendererSdlGpu::begin_geometry_upload(
         uint32_t immediate_vertices, uint32_t instance_count)
 {
 	abandon_geometry_staging();
@@ -2573,7 +2573,7 @@ GpuRenderer::GeometryStaging GpuRenderer::begin_geometry_upload(
 	return staging;
 }
 
-void GpuRenderer::commit_geometry_upload(const GpuDrawBatch* batches,
+void GpuRendererSdlGpu::commit_geometry_upload(const GpuDrawBatch* batches,
                                          uint32_t batch_count)
 {
 	if (!geometry_mapped_) {
@@ -2630,7 +2630,7 @@ void GpuRenderer::commit_geometry_upload(const GpuDrawBatch* batches,
 	SDL_EndGPUCopyPass(copy);
 }
 
-void GpuRenderer::record_geometry_draw(SDL_GPURenderPass* pass,
+void GpuRendererSdlGpu::record_geometry_draw(SDL_GPURenderPass* pass,
                                        const GeometryDraw& draw)
 {
 	SDL_GPUBufferBinding bindings[kVertexBufferSlots]{};
@@ -2657,7 +2657,7 @@ void GpuRenderer::record_geometry_draw(SDL_GPURenderPass* pass,
 	                             0, draw.first_instance + kReservedInstances);
 }
 
-void GpuRenderer::begin_scene_pass()
+void GpuRendererSdlGpu::begin_scene_pass()
 {
 	if (!cmd_ || !swapchain_) {
 		return;
@@ -2729,7 +2729,7 @@ void GpuRenderer::begin_scene_pass()
 	}
 }
 
-void GpuRenderer::bind_lit_state(const glm::mat4& view,
+void GpuRendererSdlGpu::bind_lit_state(const glm::mat4& view,
                                  const glm::mat4& view_projection,
                                  const glm::vec3& camera_position)
 {
@@ -2835,7 +2835,7 @@ void GpuRenderer::bind_lit_state(const glm::mat4& view,
 	SDL_BindGPUFragmentSamplers(pass_, 2, &ssao_binding, 1);
 }
 
-void GpuRenderer::draw(const glm::mat4& view, const glm::mat4& view_projection,
+void GpuRendererSdlGpu::draw(const glm::mat4& view, const glm::mat4& view_projection,
                        const glm::vec3& camera_position,
                        const GpuDrawBatch* batches, uint32_t batch_count,
                        const AssetRegistry* assets)
@@ -2887,7 +2887,7 @@ void GpuRenderer::draw(const glm::mat4& view, const glm::mat4& view_projection,
 	}
 }
 
-void GpuRenderer::end_scene_pass()
+void GpuRendererSdlGpu::end_scene_pass()
 {
 	if (pass_) {
 		SDL_EndGPURenderPass(pass_);
@@ -2925,7 +2925,7 @@ void GpuRenderer::end_scene_pass()
 	}
 }
 
-void GpuRenderer::end_frame()
+void GpuRendererSdlGpu::end_frame()
 {
 	end_scene_pass();
 	if (cmd_) {
@@ -2966,12 +2966,12 @@ void GpuRenderer::end_frame()
 	swapchain_ = nullptr;
 }
 
-const char* GpuRenderer::driver_name() const
+const char* GpuRendererSdlGpu::driver_name() const
 {
 	return device_ ? SDL_GetGPUDeviceDriver(device_) : "";
 }
 
-void GpuRenderer::wait_idle()
+void GpuRendererSdlGpu::wait_idle()
 {
 	if (device_) {
 		SDL_WaitForGPUIdle(device_);
@@ -2979,14 +2979,14 @@ void GpuRenderer::wait_idle()
 	}
 }
 
-const char* GpuRenderer::device_name() const
+const char* GpuRendererSdlGpu::device_name() const
 {
 	return device_ ? SDL_GetStringProperty(SDL_GetGPUDeviceProperties(device_),
 	                                       SDL_PROP_GPU_DEVICE_NAME_STRING, "?")
 	               : "";
 }
 
-const char* GpuRenderer::device_driver() const
+const char* GpuRendererSdlGpu::device_driver() const
 {
 	return device_ ? SDL_GetStringProperty(
 	                         SDL_GetGPUDeviceProperties(device_),
@@ -2994,7 +2994,7 @@ const char* GpuRenderer::device_driver() const
 	               : "";
 }
 
-bool GpuRenderer::init_ui_backend()
+bool GpuRendererSdlGpu::init_ui_backend()
 {
 	if (!device_) {
 		return false;
@@ -3006,17 +3006,17 @@ bool GpuRenderer::init_ui_backend()
 	return ImGui_ImplSDLGPU3_Init(&info);
 }
 
-void GpuRenderer::shutdown_ui_backend()
+void GpuRendererSdlGpu::shutdown_ui_backend()
 {
 	ImGui_ImplSDLGPU3_Shutdown();
 }
 
-void GpuRenderer::ui_backend_new_frame()
+void GpuRendererSdlGpu::ui_backend_new_frame()
 {
 	ImGui_ImplSDLGPU3_NewFrame();
 }
 
-void GpuRenderer::render_ui(ImDrawData* draw_data)
+void GpuRendererSdlGpu::render_ui(ImDrawData* draw_data)
 {
 	if (!draw_data || draw_data->CmdListsCount == 0 || !cmd_ || !swapchain_) {
 		return;
@@ -3033,7 +3033,7 @@ void GpuRenderer::render_ui(ImDrawData* draw_data)
 	SDL_EndGPURenderPass(pass);
 }
 
-uint64_t GpuRenderer::viewport_ui_texture() const
+uint64_t GpuRendererSdlGpu::viewport_ui_texture() const
 {
 	return reinterpret_cast<uint64_t>(viewport_texture_);
 }

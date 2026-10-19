@@ -966,7 +966,8 @@ void Application::run(int width, int height, const std::string& title)
 			console_.warn("audio: " + audio_error);
 		}
 		Window window{width, height, title};
-		GpuRenderer gpu;
+		const std::unique_ptr<GpuRenderer> owned = create_gpu_renderer();
+		GpuRenderer& gpu = *owned;
 		gpu.init(window.handle(), settings_.debug_device);
 		editor_.init(window.handle(), gpu);
 		if (const char* no_ui = std::getenv("LOTUS_NO_UI")) {

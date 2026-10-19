@@ -47,7 +47,8 @@ protected:
 /// presentation), which is why this drives init_offscreen instead.
 TEST_F(OcclusionGpuTest, PyramidReachesTheCpuWithoutBlocking)
 {
-	GpuRenderer gpu;
+	const std::unique_ptr<GpuRenderer> owned = create_gpu_renderer();
+	GpuRenderer& gpu = *owned;
 	ASSERT_NO_THROW(gpu.init_offscreen(256, 256));
 	ASSERT_TRUE(gpu.occlusion_enabled()) << "compute pipeline unavailable";
 
@@ -198,7 +199,8 @@ TEST_F(OcclusionGpuTest, RenderingALongRunNeverBlocks)
 
 	// --- the loop under test: no wait call anywhere in it ---
 	{
-		GpuRenderer gpu;
+		const std::unique_ptr<GpuRenderer> owned = create_gpu_renderer();
+		GpuRenderer& gpu = *owned;
 		ASSERT_NO_THROW(gpu.init_offscreen(256, 256));
 		ASSERT_TRUE(gpu.occlusion_enabled()) << "compute pipeline unavailable";
 		Scene scene = make_wall_and_cube_scene();
@@ -227,7 +229,8 @@ TEST_F(OcclusionGpuTest, RenderingALongRunNeverBlocks)
 
 	// --- the control: what blocking actually costs here ---
 	{
-		GpuRenderer gpu;
+		const std::unique_ptr<GpuRenderer> owned = create_gpu_renderer();
+		GpuRenderer& gpu = *owned;
 		ASSERT_NO_THROW(gpu.init_offscreen(256, 256));
 		Scene scene = make_wall_and_cube_scene();
 
@@ -261,7 +264,8 @@ TEST_F(OcclusionGpuTest, RenderingALongRunNeverBlocks)
 /// camera would cull geometry against depths that no longer describe it.
 TEST_F(OcclusionGpuTest, ResizingMidRunInvalidatesThenRebuildsThePyramid)
 {
-	GpuRenderer gpu;
+	const std::unique_ptr<GpuRenderer> owned = create_gpu_renderer();
+	GpuRenderer& gpu = *owned;
 	ASSERT_NO_THROW(gpu.init_offscreen(256, 256));
 	ASSERT_TRUE(gpu.occlusion_enabled()) << "compute pipeline unavailable";
 	Scene scene = make_wall_and_cube_scene();
@@ -353,7 +357,8 @@ TEST_F(OcclusionGpuTest, ResizingMidRunInvalidatesThenRebuildsThePyramid)
 TEST_F(OcclusionGpuTest, ReadbackKeepsTheEndOfEveryRowOfARaggedWidth)
 {
 	constexpr uint32_t kRagged = 250;
-	GpuRenderer gpu;
+	const std::unique_ptr<GpuRenderer> owned = create_gpu_renderer();
+	GpuRenderer& gpu = *owned;
 	ASSERT_NO_THROW(gpu.init_offscreen(kRagged, kRagged));
 	ASSERT_TRUE(gpu.occlusion_enabled()) << "compute pipeline unavailable";
 	Scene scene = make_wall_and_cube_scene();

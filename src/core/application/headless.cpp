@@ -65,7 +65,8 @@ bool capture_screenshot(Scene& scene, const HeadlessOptions& options,
 	bool ok = false;
 	{
 		try {
-			GpuRenderer gpu;
+			const std::unique_ptr<GpuRenderer> owned = create_gpu_renderer();
+			GpuRenderer& gpu = *owned;
 			gpu.init_offscreen(options.width, options.height);
 			if (scene.has_settings()) {
 				const SceneSettings& s = scene.settings();

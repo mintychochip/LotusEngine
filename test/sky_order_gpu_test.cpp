@@ -231,7 +231,8 @@ void expect_sky_fills_only_where_nothing_is_drawn(
 /// same, and the sky must be there on the rest.
 TEST_F(SkyOrderGpuTest, TheSkyFillsOnlyWhereNothingIsDrawn)
 {
-	GpuRenderer gpu;
+	const std::unique_ptr<GpuRenderer> owned = create_gpu_renderer();
+	GpuRenderer& gpu = *owned;
 	ASSERT_NO_THROW(gpu.init_offscreen(kWidth, kHeight));
 	Scene scene = make_scene(true);
 
@@ -244,7 +245,8 @@ TEST_F(SkyOrderGpuTest, TheSkyFillsOnlyWhereNothingIsDrawn)
 /// target, whose extent the sky's depth range depends on.
 TEST_F(SkyOrderGpuTest, TheViewportPassDrawsTheSkyTheSameWay)
 {
-	GpuRenderer gpu;
+	const std::unique_ptr<GpuRenderer> owned = create_gpu_renderer();
+	GpuRenderer& gpu = *owned;
 	ASSERT_NO_THROW(gpu.init_offscreen(kWidth, kHeight));
 	ASSERT_TRUE(gpu.resize_viewport(kViewportWidth, kViewportHeight));
 	Scene scene = make_scene(true);
@@ -261,7 +263,8 @@ TEST_F(SkyOrderGpuTest, TheViewportPassDrawsTheSkyTheSameWay)
 /// must not draw it.
 TEST_F(SkyOrderGpuTest, AFrameWithNothingToDrawKeepsTheClearColor)
 {
-	GpuRenderer gpu;
+	const std::unique_ptr<GpuRenderer> owned = create_gpu_renderer();
+	GpuRenderer& gpu = *owned;
 	ASSERT_NO_THROW(gpu.init_offscreen(kWidth, kHeight));
 	Scene scene = make_scene(false);
 

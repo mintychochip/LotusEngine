@@ -882,7 +882,8 @@ void print_identity(const std::string& device_name, uint64_t image_hash)
 
 int run_gpu(const Options& options, Scene& scene, World& world)
 {
-	GpuRenderer gpu;
+	const std::unique_ptr<GpuRenderer> owned = create_gpu_renderer();
+	GpuRenderer& gpu = *owned;
 	gpu.init_offscreen(options.width, options.height);
 	configure_lighting(gpu);
 

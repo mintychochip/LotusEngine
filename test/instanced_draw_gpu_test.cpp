@@ -184,7 +184,8 @@ TEST_F(InstancedDrawGpuTest, InstancedMeshesRenderLikeTheirWorldSpaceVertices)
 	const auto picture = [](const std::array<bool, 3>& instanced,
 	                        uint32_t expected_cached, uint32_t& draw_calls,
 	                        uint32_t& vertices) {
-		GpuRenderer gpu;
+		const std::unique_ptr<GpuRenderer> owned = create_gpu_renderer();
+		GpuRenderer& gpu = *owned;
 		EXPECT_NO_THROW(gpu.init_offscreen(kSize, kSize));
 		Scene scene = make_scene(instanced);
 		const std::vector<uint8_t> image = render(gpu, scene, 3);
@@ -219,7 +220,8 @@ TEST_F(InstancedDrawGpuTest, InstancedMeshesRenderLikeTheirWorldSpaceVertices)
 
 	// The comparison is only meaningful if something was drawn: the same
 	// frame with the shapes removed looks very different.
-	GpuRenderer gpu;
+	const std::unique_ptr<GpuRenderer> owned = create_gpu_renderer();
+	GpuRenderer& gpu = *owned;
 	ASSERT_NO_THROW(gpu.init_offscreen(kSize, kSize));
 	Scene empty{"empty"};
 	add_camera(empty);
@@ -232,7 +234,8 @@ TEST_F(InstancedDrawGpuTest, InstancedMeshesRenderLikeTheirWorldSpaceVertices)
 /// are, and a second albedo splits only the draw, never the cache.
 TEST_F(InstancedDrawGpuTest, EntitiesOfOneMeshShareOneCachedMeshAndOneDraw)
 {
-	GpuRenderer gpu;
+	const std::unique_ptr<GpuRenderer> owned = create_gpu_renderer();
+	GpuRenderer& gpu = *owned;
 	ASSERT_NO_THROW(gpu.init_offscreen(kSize, kSize));
 
 	Scene scene{"s"};
@@ -268,7 +271,8 @@ TEST_F(InstancedDrawGpuTest, EntitiesOfOneMeshShareOneCachedMeshAndOneDraw)
 /// back looking the same.
 TEST_F(InstancedDrawGpuTest, MeshesThatStopBeingDrawnAreReleasedAndComeBack)
 {
-	GpuRenderer gpu;
+	const std::unique_ptr<GpuRenderer> owned = create_gpu_renderer();
+	GpuRenderer& gpu = *owned;
 	ASSERT_NO_THROW(gpu.init_offscreen(64, 64));
 
 	Scene with_cube = make_scene({true, false, false});
@@ -297,7 +301,8 @@ TEST_F(InstancedDrawGpuTest, MeshesThatStopBeingDrawnAreReleasedAndComeBack)
 /// an instance of someone else's mesh.
 TEST_F(InstancedDrawGpuTest, ASourceReusedForOtherGeometryIsNotDrawnAsAnInstance)
 {
-	GpuRenderer gpu;
+	const std::unique_ptr<GpuRenderer> owned = create_gpu_renderer();
+	GpuRenderer& gpu = *owned;
 	ASSERT_NO_THROW(gpu.init_offscreen(kSize, kSize));
 
 	Scene scene{"s"};
