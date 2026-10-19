@@ -394,6 +394,12 @@ public:
 	/// \p view_projection because the vertex stage also writes view-space
 	/// depth for the occlusion pyramid. The batches must refer to geometry
 	/// uploaded this frame.
+	///
+	/// Rasterises into the lower half of the depth range and then draws the
+	/// sky (when enabled) over what nothing covered, so a pass is: geometry
+	/// first, sky last, and depth 1.0 means "untouched". Anything else added to
+	/// this pass with a depth test has to use that range too (see
+	/// set_pass_viewport).
 	void draw(const glm::mat4& view, const glm::mat4& view_projection,
 	          const glm::vec3& camera_position, const GpuDrawBatch* batches,
 	          uint32_t batch_count, const AssetRegistry* assets);
@@ -562,19 +568,25 @@ private:
 	void shadow_light_matrices(glm::mat4& view, glm::mat4& vp) const;
 	void destroy_shadows();
 	// --- Procedural sky background (gradient dome + sun disk, no textures) ---
-	// Drawn bufferless (fullscreen triangle from gl_VertexIndex) as the first
-	// step inside the scene pass, once per pass, before any geometry. The
-	// pipeline declares the same two colour targets plus depth as the lit
-	// pipeline, so the occlusion-pyramid location-1 contract is untouched;
-	// sky.frag writes the far sentinel there, and depth-writes 1.0 with
-	// LESS_OR_EQUAL so geometry overdraws it. Entry points keep their
-	// signatures: draw() draws it lazily on first use from the view matrices
-	// it already receives. sky_enabled=false restores the legacy clear-color
-	// path.
+	// Drawn bufferless (fullscreen triangle from gl_VertexIndex) inside the
+	// scene pass, once per pass, as the last step of the first draw() that has
+	// geometry: it shades only the pixels no geometry covered, so its fragment
+	// shader never runs under a surface. That needs depth to tell "untouched"
+	// from "geometry past the far plane" (the pipelines clamp depth, so such
+	// geometry lands at the top of its range): geometry is rasterised into
+	// [0, 0.5] through the viewport and the sky sits at 1.0 (LESS_OR_EQUAL,
+	// no depth write). The pipeline declares the same two colour targets plus
+	// depth as the lit pipeline, so the occlusion-pyramid location-1 contract
+	// is untouched; it masks that target's write, because the pass clears it
+	// to the far sentinel sky.frag would write. Entry points keep their
+	// signatures: draw() draws it from the view matrices it already receives.
+	// sky_enabled=false restores the legacy clear-color path.
 	bool ensure_sky_pipeline();
 	void draw_sky(const glm::mat4& view_projection,
 	              const glm::vec3& camera_position);
 	void destroy_sky();
+	// Viewport of the open pass: its whole target, depth range [0, max_depth].
+	void set_pass_viewport(float max_depth);
 	// --- FXAA 3.11 console post pass ---
 	// The scene renders into fxaa_source_; end_scene_pass()/end_viewport_pass()
 	// resolve it onto the real target (swapchain, viewport, offscreen) with a
@@ -707,6 +719,10 @@ private:
 	// True once the sky has been drawn into the current pass_; reset by
 	// begin_scene_pass()/begin_viewport_pass().
 	bool sky_drawn_{false};
+	// Size of the open pass's target (what its default viewport covers), set
+	// by begin_scene_pass()/begin_viewport_pass(), for set_pass_viewport().
+	uint32_t pass_width_{0};
+	uint32_t pass_height_{0};
 	// Set by begin_scene_pass()/begin_viewport_pass() when the scene renders
 	// into fxaa_source_; the matching end_*_pass() resolves onto the target.
 	bool pass_redirected_{false};

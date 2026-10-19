@@ -35,6 +35,23 @@ constexpr uint32_t kInitialVertexBytes = 128 * 1024;
 constexpr uint32_t kVertexStride       = sizeof(GpuVertex);
 constexpr SDL_GPUTextureFormat kDepthFormat = SDL_GPU_TEXTUREFORMAT_D32_FLOAT;
 
+/// Geometry in the lit pass is rasterised into the lower half of the depth
+/// range, [0, kGeometryDepthMax], through the viewport; the sky is drawn last,
+/// at depth 1.0, into the half no geometry reaches.
+///
+/// The pipelines clamp depth rather than clip it, so geometry beyond the far
+/// plane lands at the top of its range. With the full range that is 1.0, the
+/// value a pixel nothing has touched keeps, and a sky drawn after the geometry
+/// could not tell the two apart: it would paint over every ground plane that
+/// runs past the far plane. With this range clamped geometry lands at 0.5 and
+/// "depth 1.0" means "untouched".
+///
+/// A power of two, so that this is exact. Depth is a float, and scaling a
+/// float by a power of two only moves its exponent: every depth the full range
+/// produces maps to a distinct value, in the same order, with the same ties.
+/// The picture is the one the full range gives, pixel for pixel.
+constexpr float kGeometryDepthMax = 0.5f;
+
 /// Shadow map: 1024px D16 depth rendered from the light each frame, then
 /// sampled by lit.frag with a 3x3 PCF. D16 (not D32) because it is the one
 /// depth format universally sampler-supported; devices that reject even this
@@ -1023,6 +1040,12 @@ bool GpuRenderer::ensure_sky_pipeline()
 		SDL_GPUColorTargetDescription targets[2]{};
 		targets[0].format = swapchain_format_;
 		targets[1].format = SDL_GPU_TEXTUREFORMAT_R32_FLOAT;
+		// The sky leaves the linear-depth target alone. Every pass that draws
+		// it clears that target to kDepthFar, which is exactly what sky.frag
+		// writes, so the write changes nothing; masked off, it is memory
+		// traffic saved on every sky pixel.
+		targets[1].blend_state.enable_color_write_mask = true;
+		targets[1].blend_state.color_write_mask        = 0;
 		SDL_GPUGraphicsPipelineCreateInfo pipe{};
 		pipe.vertex_shader   = vert;
 		pipe.fragment_shader = frag;
@@ -1037,10 +1060,12 @@ bool GpuRenderer::ensure_sky_pipeline()
 		pipe.vertex_input_state.vertex_attributes          = nullptr;
 		pipe.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
 		pipe.multisample_state.sample_count = SDL_GPU_SAMPLECOUNT_1;
-		// Drawn first at far: geometry depth-tests LESS_OR_EQUAL against
-		// the cleared 1.0, passes, and overdraws the sky.
+		// Drawn last, at depth 1.0, over what no geometry reached (see
+		// kGeometryDepthMax): the test passes only on pixels still holding the
+		// cleared 1.0. It writes no depth: it is the last draw of the pass, and
+		// writing 1.0 over 1.0 changes nothing.
 		pipe.depth_stencil_state.enable_depth_test  = true;
-		pipe.depth_stencil_state.enable_depth_write = true;
+		pipe.depth_stencil_state.enable_depth_write = false;
 		pipe.depth_stencil_state.compare_op = SDL_GPU_COMPAREOP_LESS_OR_EQUAL;
 		sky_pipeline_ = SDL_CreateGPUGraphicsPipeline(device_, &pipe);
 	}
@@ -1065,9 +1090,10 @@ bool GpuRenderer::ensure_sky_pipeline()
 void GpuRenderer::draw_sky(const glm::mat4& view_projection,
                            const glm::vec3& camera_position)
 {
-	// Once per pass, first geometry draw wins; a pass with no draws stays a
-	// clear (e.g. the editor's clear-only window pass). Disabled restores
-	// the exact legacy clear-color path.
+	// Once per pass, after the geometry of the first draw() that has any:
+	// over a pixel only where nothing was drawn, so geometry is never shaded
+	// twice. A pass with no draws stays a clear (e.g. the editor's clear-only
+	// window pass). Disabled restores the exact legacy clear-color path.
 	if (sky_drawn_ || !pass_ || !lighting_.sky_enabled) {
 		return;
 	}
@@ -1097,9 +1123,23 @@ void GpuRenderer::draw_sky(const glm::mat4& view_projection,
 	SDL_PushGPUFragmentUniformData(cmd_, 0, &fragment_uniforms,
 	                               sizeof(fragment_uniforms));
 
+	// The geometry just drawn used the lower half of the depth range; the sky
+	// sits at the far end of the full one, above all of it.
+	set_pass_viewport(1.0f);
+
 	SDL_BindGPUGraphicsPipeline(pass_, sky_pipeline_);
 	// Bufferless fullscreen triangle from sky.vert; covers both targets.
 	SDL_DrawGPUPrimitives(pass_, 3, 1, 0, 0);
+}
+
+void GpuRenderer::set_pass_viewport(float max_depth)
+{
+	SDL_GPUViewport viewport{};
+	viewport.w         = static_cast<float>(pass_width_);
+	viewport.h         = static_cast<float>(pass_height_);
+	viewport.min_depth = 0.0f;
+	viewport.max_depth = max_depth;
+	SDL_SetGPUViewport(pass_, &viewport);
 }
 
 void GpuRenderer::destroy_sky()
@@ -2002,6 +2042,10 @@ bool GpuRenderer::begin_viewport_pass()
 	depth.stencil_load_op  = SDL_GPU_LOADOP_DONT_CARE;
 	depth.stencil_store_op = SDL_GPU_STOREOP_DONT_CARE;
 
+	// The size SDL gives the pass's default viewport: that of its first colour
+	// target, which is the viewport texture or the FXAA source made from it.
+	pass_width_  = viewport_width_;
+	pass_height_ = viewport_height_;
 	pass_ = SDL_BeginGPURenderPass(cmd_, targets, 2, &depth);
 	if (!pass_) {
 		pass_redirected_  = false;
@@ -2649,6 +2693,10 @@ void GpuRenderer::begin_scene_pass()
 	depth.stencil_load_op  = SDL_GPU_LOADOP_DONT_CARE;
 	depth.stencil_store_op = SDL_GPU_STOREOP_DONT_CARE;
 
+	// The size SDL gives the pass's default viewport: that of its first colour
+	// target, which is the swapchain or the FXAA source made from it.
+	pass_width_  = target_width;
+	pass_height_ = target_height;
 	pass_ = SDL_BeginGPURenderPass(cmd_, targets, target_count,
 	                               depth_texture_ ? &depth : nullptr);
 	if (!pass_) {
@@ -2784,10 +2832,9 @@ void GpuRenderer::draw(const glm::mat4& view, const glm::mat4& view_projection,
 			continue;
 		}
 		if (!state_bound) {
-			// Background step for this pass: draws the sky dome once,
-			// before any geometry, on every target (swapchain, viewport,
-			// offscreen). A pass with no draws keeps the legacy clear color.
-			draw_sky(view_projection, camera_position);
+			// Geometry takes the lower half of the depth range and the sky,
+			// below, the top of it (see kGeometryDepthMax).
+			set_pass_viewport(kGeometryDepthMax);
 			bind_lit_state(view, view_projection, camera_position);
 			state_bound = true;
 		}
@@ -2803,6 +2850,15 @@ void GpuRenderer::draw(const glm::mat4& view, const glm::mat4& view_projection,
 		        pass_, GeometryDraw{batch.mesh, batch.first_vertex,
 		                            batch.vertex_count, batch.first_instance,
 		                            batch.instance_count});
+	}
+
+	// Background step for this pass, on every target (swapchain, viewport,
+	// offscreen): the sky dome, once, over the pixels no geometry covers. It
+	// goes after the geometry so that its fragment shader never runs where a
+	// surface already stands. A pass with no draws keeps the legacy clear
+	// colour.
+	if (state_bound) {
+		draw_sky(view_projection, camera_position);
 	}
 }
 

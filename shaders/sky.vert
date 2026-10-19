@@ -3,10 +3,13 @@
 // Procedural sky dome vertex stage. Bufferless fullscreen triangle generated
 // from gl_VertexIndex (same pattern as fxaa.vert): the pipeline binds zero
 // vertex state. The triangle is pinned at far (z == w, depth 1.0 in the
-// zero-to-one range) and depth-writes there with LESS_OR_EQUAL, so scene
-// geometry drawn after it overdraws it. The world-space position on the far
-// plane is passed through; the fragment stage subtracts the camera position
-// to recover the view direction.
+// zero-to-one range) and is drawn AFTER the scene geometry with LESS_OR_EQUAL
+// and no depth write. The renderer rasterises geometry into the lower half of
+// the depth range, so only a pixel no geometry touched still holds the
+// cleared 1.0 and takes the sky; the fragment stage never runs under a
+// surface. The world-space position on the far plane is passed through; the
+// fragment stage subtracts the camera position to recover the view
+// direction.
 
 layout(set = 1, binding = 0) uniform SkyVertexUniforms {
     mat4 inv_view_projection;

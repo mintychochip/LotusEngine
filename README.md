@@ -55,6 +55,14 @@ pass replays the same draws. Sprites and hand-built meshes with an empty
 an empty source for geometry that changes at runtime. Cached meshes that stop
 being drawn are released after `GpuRenderer::kMeshIdleFrames` frames.
 
+Within the lit pass, geometry is rasterised into the lower half of the depth
+range (`[0, 0.5]`, through the viewport) and the procedural sky is drawn last,
+at depth 1.0, over the pixels nothing covered, so its fragment shader never runs
+under a surface. Depth is clamped, not clipped, so geometry past the far plane
+lands on the top of its range; the halved range keeps that apart from an
+untouched pixel. Anything else added to those passes with a depth test has to
+use the same range (see `GpuRenderer::draw` and `set_pass_viewport`).
+
 ### Render benchmark
 
 `lotus_render_bench` renders a fixed, seeded synthetic scene (~950 entities,
@@ -62,8 +70,9 @@ shadows, SSAO, FXAA, sky, fog, Hi-Z occlusion) through the offscreen pipeline
 one synchronous frame at a time and reports per-phase times (begin, build,
 record, submit, GPU wait) plus a fidelity check of the final frame against
 `bench/golden/render_bench.png`. `./autoresearch.sh` builds it and runs it on
-the system's Vulkan device and on lavapipe; the metrics are documented in its
-header.
+the system's Vulkan device, on lavapipe and, when the machine has one, on an
+integrated GPU (which can show costs a discrete card hides, such as readback
+from write-combined memory); the metrics are documented in its header.
 
 ```bash
 ./autoresearch.sh
