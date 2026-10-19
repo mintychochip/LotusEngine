@@ -110,7 +110,7 @@ void DepthPyramid::build(const float* depth, uint32_t width, uint32_t height)
 }
 
 void DepthPyramid::adopt(uint32_t width, uint32_t height, uint32_t total_levels,
-	                    const std::vector<std::vector<float>>& mips)
+	                    std::vector<std::vector<float>> mips)
 {
 	// A rejected upload must leave no pyramid at all, never the previous
 	// frame's chain paired with this frame's camera.
@@ -137,9 +137,15 @@ void DepthPyramid::adopt(uint32_t width, uint32_t height, uint32_t total_levels,
 		}
 	}
 
-	levels_.assign(total_levels, {});
-	for (uint32_t level = kDepthPyramidMinLevel; level < total_levels; ++level) {
-		levels_[level] = mips[level];
+	// Keep the levels from kDepthPyramidMinLevel up as they are, without
+	// copying them (the mip the query reads is a quarter of a megabyte, per
+	// frame), and drop the rest: below it nothing is ever read, and anything
+	// past total_levels is not part of the chain.
+	levels_ = std::move(mips);
+	levels_.resize(total_levels);
+	for (uint32_t level = 0;
+	     level < std::min(kDepthPyramidMinLevel, total_levels); ++level) {
+		levels_[level].clear();
 	}
 }
 

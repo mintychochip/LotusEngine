@@ -344,6 +344,42 @@ TEST_F(OcclusionGpuTest, ResizingMidRunInvalidatesThenRebuildsThePyramid)
 	    gpu.occlusion_pyramid().height(), captured_w, captured_h);
 }
 
+/// The pyramid read back from the GPU has every texel it should, whatever the
+/// row width. The readback copies each row in 64-byte lines and finishes the
+/// remainder one float at a time, so a width that is not a multiple of 16 is
+/// the case that can lose or mangle the end of every row. 250 pixels give a
+/// 62-texel mip, 14 past the last whole line. The wall fills the screen, so
+/// every texel must read as the wall's depth, not as zero or as "nothing".
+TEST_F(OcclusionGpuTest, ReadbackKeepsTheEndOfEveryRowOfARaggedWidth)
+{
+	constexpr uint32_t kRagged = 250;
+	GpuRenderer gpu;
+	ASSERT_NO_THROW(gpu.init_offscreen(kRagged, kRagged));
+	ASSERT_TRUE(gpu.occlusion_enabled()) << "compute pipeline unavailable";
+	Scene scene = make_wall_and_cube_scene();
+
+	for (int frame = 0; frame < 16 && !gpu.occlusion_ready(); ++frame) {
+		render_frame(gpu, scene, 1.0f);
+		SDL_WaitForGPUIdle(gpu.device());
+	}
+	ASSERT_TRUE(gpu.occlusion_ready()) << "pyramid never reached the CPU";
+
+	const uint32_t side = gpu.occlusion_pyramid().level_width(2);
+	ASSERT_EQ(side, kRagged >> 2);
+	ASSERT_EQ(side % 16, 14u) << "this size must leave a tail to copy";
+	const std::vector<float> mip = gpu.occlusion_pyramid().level(2);
+	ASSERT_EQ(mip.size(), static_cast<std::size_t>(side) *
+	                              gpu.occlusion_pyramid().level_height(2));
+
+	// The wall is at world z=5 with the camera at z=10, so depth 5.
+	std::size_t wrong = 0;
+	for (const float depth : mip) {
+		wrong += (depth > 4.5f && depth < 5.5f) ? 0u : 1u;
+	}
+	EXPECT_EQ(wrong, 0u) << wrong << " of " << mip.size()
+	                     << " texels are not the wall's depth";
+}
+
 /// clear() resets every derived counter, occlusion included.
 ///
 /// Not a restatement of the line: occluded_entities_ is read by the GPU gate

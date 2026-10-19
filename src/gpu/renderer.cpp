@@ -19,6 +19,9 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <cstring>
+#if defined(__SSE4_1__)
+#include <smmintrin.h>
+#endif
 #include <algorithm>
 #include <iostream>
 #include <fstream>
@@ -55,6 +58,44 @@ constexpr float kShadowFar           = 60.0f;
 /// of this. D3D12 requires 256; matching it everywhere avoids SDL inserting a
 /// repacking copy on every download.
 constexpr uint32_t kTransferRowAlignment = 256;
+
+/// Copies \p count floats out of mapped GPU memory into ordinary memory.
+///
+/// Memory the GPU wrote and the CPU maps can be write-combined, i.e.
+/// uncached: an ordinary load then pays a full memory round trip, and on an
+/// integrated GPU copying the 230 KB depth pyramid that way took 0.85 ms a
+/// frame, 50 times what the same copy costs from cached memory. A streaming
+/// load (MOVNTDQA) fetches a whole 64-byte line through a dedicated buffer
+/// instead, which is what that memory is fast at; on cached memory it is an
+/// ordinary load. Without SSE4.1, or for an unaligned source, this is a
+/// plain copy.
+void read_mapped_floats(float* destination, const float* source,
+                        std::size_t count)
+{
+	std::size_t done = 0;
+#if defined(__SSE4_1__)
+	if ((reinterpret_cast<std::uintptr_t>(source) & 15u) == 0) {
+		// Four loads of one line back to back, so the line is fetched once.
+		for (; done + 16 <= count; done += 16) {
+			auto* line = reinterpret_cast<__m128i*>(
+			        const_cast<float*>(source + done));
+			const __m128i a = _mm_stream_load_si128(line);
+			const __m128i b = _mm_stream_load_si128(line + 1);
+			const __m128i c = _mm_stream_load_si128(line + 2);
+			const __m128i d = _mm_stream_load_si128(line + 3);
+			auto* out       = reinterpret_cast<__m128i*>(destination + done);
+			_mm_storeu_si128(out, a);
+			_mm_storeu_si128(out + 1, b);
+			_mm_storeu_si128(out + 2, c);
+			_mm_storeu_si128(out + 3, d);
+		}
+	}
+#endif
+	if (done < count) {
+		std::memcpy(destination + done, source + done,
+		            (count - done) * sizeof(float));
+	}
+}
 
 /// Must match shaders/lit.vert (set 1, binding 0). shadow.vert reuses the
 /// same layout: the renderer uploads the light VP in view_projection.
@@ -1596,10 +1637,8 @@ void GpuRenderer::poll_pyramid_fence()
 			const auto* row = reinterpret_cast<const float*>(
 			    bytes + pyramid_offset_[level] +
 			    static_cast<std::size_t>(y) * pitch);
-			std::copy(row, row + w,
-			          texels.begin() +
-			              static_cast<std::ptrdiff_t>(
-			                  static_cast<std::size_t>(y) * w));
+			read_mapped_floats(texels.data() + static_cast<std::size_t>(y) * w,
+			                   row, w);
 		}
 	}
 	SDL_UnmapGPUTransferBuffer(device_, pyramid_transfer_);
@@ -1610,7 +1649,7 @@ void GpuRenderer::poll_pyramid_fence()
 	// false reassurance an empty pyramid is worst at: an empty pyramid never
 	// occludes, so the failure is invisible in the culling counts.
 	occlusion_pyramid_.adopt(pyramid_width_, pyramid_height_, pyramid_levels_,
-	                         mips);
+	                         std::move(mips));
 	occlusion_ready_ = !occlusion_pyramid_.empty();
 	occlusion_aspect_ =
 	        occlusion_ready_ && occlusion_pyramid_.height() > 0

@@ -60,6 +60,8 @@ public:
 	std::vector<float> level(uint32_t level) const;
 
 	/// Replaces the chain with mips the GPU already reduced, indexed by level.
+	/// Taken by value so a caller that is done with them can move them in,
+	/// which is what the renderer does every frame.
 	///
 	/// \p mips must have \p total_levels entries. Levels below
 	/// kDepthPyramidMinLevel may be empty: the renderer never transfers them and
@@ -74,7 +76,7 @@ public:
 	/// means a caller cannot tell a rejected upload from an empty one by looking
 	/// at the result alone.
 	void adopt(uint32_t width, uint32_t height, uint32_t total_levels,
-	           const std::vector<std::vector<float>>& mips);
+	           std::vector<std::vector<float>> mips);
 
 	/// True when \p world_sphere is entirely behind everything already drawn.
 	///
