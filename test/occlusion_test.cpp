@@ -480,6 +480,31 @@ TEST(DepthPyramidOcclusion, SphereInFrontOfTheWallIsVisible)
 	                              {{0.0f, 0.0f, 8.0f}, 0.5f}));
 }
 
+/// The sphere is hidden exactly when its nearest depth is at or beyond the
+/// farthest occluder under it. A wall AT that depth hides it; one float step
+/// nearer hides it too; one float step farther does not. The scan stops at the
+/// first texel deeper than the sphere, and this is where a comparison written
+/// one character wrong would change the answer.
+TEST(DepthPyramidOcclusion, TheDepthBoundaryIsExact)
+{
+	const TestCamera camera = camera_from_z(10.0f);
+	// The view matrix is a pure translation along z here, so the sphere's
+	// nearest depth is exactly this, computed the way occluded() does.
+	const float radius      = 0.5f;
+	const float nearest     = 10.0f - radius * 1.02f;
+	const BoundingSphere ball{{0.0f, 0.0f, 0.0f}, radius};
+
+	const float nearer  = std::nextafter(nearest, 0.0f);
+	const float farther = std::nextafter(nearest, 100.0f);
+
+	EXPECT_TRUE(solid_wall(64, nearest)
+	                    .occluded(camera.view, camera.view_projection, ball));
+	EXPECT_TRUE(solid_wall(64, nearer)
+	                    .occluded(camera.view, camera.view_projection, ball));
+	EXPECT_FALSE(solid_wall(64, farther)
+	                     .occluded(camera.view, camera.view_projection, ball));
+}
+
 TEST(DepthPyramidOcclusion, SphereStraddlingTheNearPlaneIsVisible)
 {
 	const DepthPyramid pyramid = solid_wall(64, 5.0f);

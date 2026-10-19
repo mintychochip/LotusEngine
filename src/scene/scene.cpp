@@ -39,11 +39,19 @@ BoundingSphere world_bounds(const Transform& transform,
 {
 	BoundingSphere world;
 	world.center = glm::vec3{transform.world * glm::vec4{local.center, 1.0f}};
-	// Column lengths of the upper 3x3 are the axis scale factors.
-	const float scale_x = glm::length(glm::vec3{transform.world[0]});
-	const float scale_y = glm::length(glm::vec3{transform.world[1]});
-	const float scale_z = glm::length(glm::vec3{transform.world[2]});
-	world.radius = local.radius * std::max({scale_x, scale_y, scale_z});
+	// Column lengths of the upper 3x3 are the axis scale factors. The
+	// largest is the square root of the largest squared length: the root is
+	// monotonic and correctly rounded, so this is bit for bit the largest of
+	// the three roots, for the price of one.
+	const auto length_squared = [](const glm::vec4& column) {
+		const glm::vec3 axis{column};
+		return glm::dot(axis, axis);
+	};
+	const float largest_squared =
+	        std::max({length_squared(transform.world[0]),
+	                  length_squared(transform.world[1]),
+	                  length_squared(transform.world[2])});
+	world.radius = local.radius * std::sqrt(largest_squared);
 	return world;
 }
 

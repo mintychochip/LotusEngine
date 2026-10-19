@@ -278,8 +278,15 @@ bool DepthPyramid::occluded(const glm::mat4& view,
 		const std::size_t row = static_cast<std::size_t>(y) * mip_w;
 		for (uint32_t x = x0; x < x1; ++x) {
 			farthest = std::max(farthest, mip[row + x]);
-			if (farthest >= kDepthFar) {
-				return false; // nothing there: visible, and stop scanning
+			// `farthest` only grows, and the sphere is hidden only when its
+			// nearest depth is at or beyond it, so the first texel deeper
+			// than the sphere settles the answer: visible, and nothing
+			// below it needs reading. That is the whole of the test for a
+			// visible sphere, which is most of them. A "nothing here"
+			// texel (kDepthFar, the veto described above) is deeper than
+			// any real sphere, so it ends the scan the same way.
+			if (farthest >= kDepthFar || farthest > nearest_depth) {
+				return false;
 			}
 		}
 	}
