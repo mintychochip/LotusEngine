@@ -52,11 +52,11 @@ constexpr SDL_GPUTextureFormat kDepthFormat = SDL_GPU_TEXTUREFORMAT_D32_FLOAT;
 /// The picture is the one the full range gives, pixel for pixel.
 constexpr float kGeometryDepthMax = 0.5f;
 
-/// Shadow map: 1024px D16 depth rendered from the light each frame, then
-/// sampled by lit.frag with a 3x3 PCF. D16 (not D32) because it is the one
+/// Shadow map: 2048px D16 depth rendered from the light each frame, then
+/// sampled by lit.frag with a 5x5 PCF. D16 (not D32) because it is the one
 /// depth format universally sampler-supported; devices that reject even this
 /// combination take the legacy unshadowed path via shadows_supported_.
-constexpr uint32_t kShadowMapSize = 1024;
+constexpr uint32_t kShadowMapSize = 2048;
 constexpr SDL_GPUTextureFormat kShadowFormat = SDL_GPU_TEXTUREFORMAT_D16_UNORM;
 /// Constant bias in shadow-depth units plus a world-space normal offset.
 /// Matches shadow_params.y/z uploaded to lit.frag.
@@ -66,7 +66,7 @@ constexpr float kShadowNormalOffset = 0.05f;
 /// renderer entry point signature-stable (no scene bounds needed); large
 /// scenes outside the box read as lit, failing open rather than into
 /// darkness.
-constexpr float kShadowOrthoHalf     = 15.0f;
+constexpr float kShadowOrthoHalf     = 20.0f;
 constexpr float kShadowLightDistance = 30.0f;
 constexpr float kShadowNear          = 1.0f;
 constexpr float kShadowFar           = 60.0f;
@@ -147,9 +147,13 @@ struct FragmentUniforms {
 	glm::vec4 blob_params;    // x: count; y: sun angular radius; zw reserved
 	glm::vec4 ssao_params;    // x: enabled; yzw reserved
 	glm::vec4 ssao_texel;     // xy: 1/width, 1/height; zw reserved
+	glm::vec4 environment_params; // x: analytic env specular intensity
+	glm::vec4 point_positions[8]; // xyz: world; w: range
+	glm::vec4 point_colors[8];    // rgb: colour; a: intensity
+	glm::vec4 point_params;       // x: active count
 };
 
-static_assert(sizeof(FragmentUniforms) == 368,
+static_assert(sizeof(FragmentUniforms) == 656,
               "must match lit.frag's std140 block");
 
 /// Must match shaders/ssao.frag (set 3, binding 0).
@@ -202,8 +206,8 @@ SDL_GPUShader* create_shader(SDL_GPUDevice* device, bool vertex)
 		info.code      = lit_vert_spv;
 		info.code_size = lit_vert_spv_len;
 	} else {
-		// Albedo (binding 0), shadow map (binding 1), SSAO (binding 2).
-		info.num_samplers = 3;
+		// Albedo (0), shadow map (1), SSAO (2), normal map (3).
+		info.num_samplers = 4;
 		info.code      = lit_frag_spv;
 		info.code_size = lit_frag_spv_len;
 	}
@@ -234,7 +238,7 @@ SDL_GPUShader* create_graphics_shader(SDL_GPUDevice* device,
 /// Vertex buffer slots of the lit and shadow pipelines: a mesh vertex (0), its
 /// UV (1), and one GpuInstance per instance (2).
 constexpr uint32_t kVertexBufferSlots = 3;
-constexpr uint32_t kVertexAttributes  = 10;
+constexpr uint32_t kVertexAttributes  = 11;
 
 /// Instance 0 of the instance buffer is the identity the immediate stream
 /// draws with; the instances of a frame's batches follow it.
@@ -297,6 +301,11 @@ void lit_vertex_descriptions(
 	attrs[9].buffer_slot = 2;
 	attrs[9].format      = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4;
 	attrs[9].offset      = offsetof(GpuInstance, color);
+	// rgb emissive + metallic, location 13.
+	attrs[10].location    = 13;
+	attrs[10].buffer_slot = 2;
+	attrs[10].format      = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4;
+	attrs[10].offset      = offsetof(GpuInstance, material);
 }
 
 } // namespace
@@ -333,6 +342,7 @@ void GpuRenderer::init(SDL_Window* window, bool debug_device)
 	ensure_vertex_capacity(kInitialVertexBytes, kInitialVertexBytes / 2u);
 	ensure_default_sampler();
 	ensure_white_texture();
+	ensure_flat_normal_texture();
 }
 
 void GpuRenderer::init_offscreen(uint32_t width, uint32_t height)
@@ -382,6 +392,7 @@ void GpuRenderer::init_offscreen(uint32_t width, uint32_t height)
 	ensure_vertex_capacity(kInitialVertexBytes, kInitialVertexBytes / 2u);
 	ensure_default_sampler();
 	ensure_white_texture();
+	ensure_flat_normal_texture();
 }
 
 void GpuRenderer::ensure_default_sampler()
@@ -466,6 +477,76 @@ void GpuRenderer::ensure_white_texture()
 	SDL_ReleaseGPUTransferBuffer(device_, transfer);
 }
 
+void GpuRenderer::ensure_flat_normal_texture()
+{
+	if (flat_normal_texture_ || !device_) {
+		return;
+	}
+	SDL_GPUTextureCreateInfo info{};
+	info.type                 = SDL_GPU_TEXTURETYPE_2D;
+	info.format               = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+	info.usage                = SDL_GPU_TEXTUREUSAGE_SAMPLER;
+	info.width                = 1;
+	info.height               = 1;
+	info.layer_count_or_depth = 1;
+	info.num_levels           = 1;
+	info.sample_count         = SDL_GPU_SAMPLECOUNT_1;
+	flat_normal_texture_      = SDL_CreateGPUTexture(device_, &info);
+	if (!flat_normal_texture_) {
+		throw std::runtime_error(SDL_GetError());
+	}
+	const std::uint8_t pixel[4] = {128, 128, 255, 0};
+	SDL_GPUTransferBufferCreateInfo transfer_info{};
+	transfer_info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+	transfer_info.size  = sizeof(pixel);
+	SDL_GPUTransferBuffer* transfer =
+	        SDL_CreateGPUTransferBuffer(device_, &transfer_info);
+	if (!transfer) {
+		SDL_ReleaseGPUTexture(device_, flat_normal_texture_);
+		flat_normal_texture_ = nullptr;
+		throw std::runtime_error(SDL_GetError());
+	}
+	void* mapped = SDL_MapGPUTransferBuffer(device_, transfer, true);
+	if (!mapped) {
+		SDL_ReleaseGPUTransferBuffer(device_, transfer);
+		SDL_ReleaseGPUTexture(device_, flat_normal_texture_);
+		flat_normal_texture_ = nullptr;
+		throw std::runtime_error(SDL_GetError());
+	}
+	std::memcpy(mapped, pixel, sizeof(pixel));
+	SDL_UnmapGPUTransferBuffer(device_, transfer);
+	SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(device_);
+	if (!cmd) {
+		SDL_ReleaseGPUTransferBuffer(device_, transfer);
+		SDL_ReleaseGPUTexture(device_, flat_normal_texture_);
+		flat_normal_texture_ = nullptr;
+		throw std::runtime_error(SDL_GetError());
+	}
+	SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(cmd);
+	SDL_GPUTextureTransferInfo src{};
+	src.transfer_buffer = transfer;
+	src.offset          = 0;
+	src.pixels_per_row  = 1;
+	src.rows_per_layer  = 1;
+	SDL_GPUTextureRegion dst{};
+	dst.texture   = flat_normal_texture_;
+	dst.mip_level = 0;
+	dst.layer     = 0;
+	dst.x         = 0;
+	dst.y         = 0;
+	dst.z         = 0;
+	dst.w         = 1;
+	dst.h         = 1;
+	dst.d         = 1;
+	SDL_UploadToGPUTexture(copy, &src, &dst, true);
+	SDL_EndGPUCopyPass(copy);
+	if (SDL_SubmitGPUCommandBuffer(cmd)) {
+		SDL_ReleaseGPUTransferBuffer(device_, transfer);
+	} else {
+		SDL_ReleaseGPUTransferBuffer(device_, transfer);
+	}
+}
+
 void GpuRenderer::destroy_textures()
 {
 	for (auto& [key, entry] : albedo_textures_) {
@@ -476,6 +557,15 @@ void GpuRenderer::destroy_textures()
 		(void)key;
 	}
 	albedo_textures_.clear();
+	for (auto& [key, entry] : normal_textures_) {
+		(void)key;
+		(void)entry;
+	}
+	normal_textures_.clear();
+	if (flat_normal_texture_) {
+		SDL_ReleaseGPUTexture(device_, flat_normal_texture_);
+		flat_normal_texture_ = nullptr;
+	}
 	if (white_texture_) {
 		SDL_ReleaseGPUTexture(device_, white_texture_);
 		white_texture_ = nullptr;
@@ -621,6 +711,35 @@ SDL_GPUTexture* GpuRenderer::texture_for_albedo(const std::string& albedo_id,
 	return albedo_textures_[albedo_id].texture;
 }
 
+SDL_GPUTexture* GpuRenderer::texture_for_normal(
+        const std::string& normal_id, const AssetRegistry* assets)
+{
+	ensure_flat_normal_texture();
+	if (normal_id.empty()) {
+		return flat_normal_texture_;
+	}
+	const auto it = normal_textures_.find(normal_id);
+	if (it != normal_textures_.end() && it->second.texture) {
+		return it->second.texture;
+	}
+	std::string path;
+	if (assets != nullptr) {
+		const std::string* registered = assets->find(normal_id);
+		if (registered != nullptr && !registered->empty()) {
+			path = *registered;
+		}
+	}
+	if (path.empty() || !load_texture_from_file(path, "normal:" + normal_id)) {
+		return flat_normal_texture_;
+	}
+	const auto cached = albedo_textures_.find("normal:" + normal_id);
+	if (cached == albedo_textures_.end()) {
+		return flat_normal_texture_;
+	}
+	normal_textures_[normal_id] = cached->second;
+	return cached->second.texture;
+}
+
 void GpuRenderer::create_pipeline()
 {
 	SDL_GPUShader* vert = create_shader(device_, true);
@@ -743,7 +862,7 @@ void GpuRenderer::ensure_shadow_resources()
 		}
 	}
 	if (!shadow_sampler_) {
-		// Nearest, clamp-to-edge: lit.frag does its own 3x3 PCF with
+		// Nearest, clamp-to-edge: lit.frag does its own 5x5 PCF with
 		// texelFetch-free texture() taps, so no depth-filtering support is
 		// required from the device beyond plain depth sampling.
 		SDL_GPUSamplerCreateInfo info{};
@@ -1167,6 +1286,16 @@ void GpuRenderer::clear_blob_casters()
 {
 	blob_count_ = 0;
 }
+void GpuRenderer::set_point_lights(const glm::vec4* positions,
+                                   const glm::vec4* colors, uint32_t count)
+{
+	point_light_count_ = std::min(count, 8u);
+	for (uint32_t i = 0; i < point_light_count_; ++i) {
+		point_light_positions_[i] = positions[i];
+		point_light_colors_[i]    = colors[i];
+	}
+}
+
 
 bool GpuRenderer::ensure_ssao_resources(uint32_t width, uint32_t height)
 {
@@ -2778,6 +2907,19 @@ void GpuRenderer::bind_lit_state(const glm::mat4& view,
 	                            1.0f / static_cast<float>(ssao_target_height_),
 	                            0.0f, 0.0f}
 	                : glm::vec4{0.0f};
+	fragment_uniforms.environment_params =
+	        glm::vec4{lighting_.environment_intensity, 0.0f, 0.0f, 0.0f};
+	for (uint32_t i = 0; i < 8; ++i) {
+		fragment_uniforms.point_positions[i] =
+		        i < point_light_count_ ? point_light_positions_[i]
+		                               : glm::vec4{0.0f};
+		fragment_uniforms.point_colors[i] =
+		        i < point_light_count_ ? point_light_colors_[i]
+		                               : glm::vec4{0.0f};
+	}
+	fragment_uniforms.point_params =
+	        glm::vec4{static_cast<float>(point_light_count_), 0.0f, 0.0f,
+	                  0.0f};
 
 	SDL_PushGPUVertexUniformData(cmd_, 0, &vertex_uniforms,
 	                             sizeof(vertex_uniforms));
@@ -2808,6 +2950,10 @@ void GpuRenderer::bind_lit_state(const glm::mat4& view,
 		ssao_binding.sampler = default_sampler_;
 	}
 	SDL_BindGPUFragmentSamplers(pass_, 2, &ssao_binding, 1);
+	SDL_GPUTextureSamplerBinding normal_binding{};
+	normal_binding.texture = flat_normal_texture_;
+	normal_binding.sampler = default_sampler_;
+	SDL_BindGPUFragmentSamplers(pass_, 3, &normal_binding, 1);
 }
 
 void GpuRenderer::draw(const glm::mat4& view, const glm::mat4& view_projection,
@@ -2822,8 +2968,9 @@ void GpuRenderer::draw(const glm::mat4& view, const glm::mat4& view_projection,
 	ensure_default_sampler();
 	ensure_white_texture();
 
-	bool state_bound             = false;
-	SDL_GPUTexture* bound_albedo = nullptr;
+	bool state_bound              = false;
+	SDL_GPUTexture* bound_albedo  = nullptr;
+	SDL_GPUTexture* bound_normal  = nullptr;
 	for (uint32_t i = 0; i < batch_count; ++i) {
 		const GpuDrawBatch& batch = batches[i];
 		const bool instanced      = batch.mesh != kNoGpuMesh;
@@ -2845,6 +2992,14 @@ void GpuRenderer::draw(const glm::mat4& view, const glm::mat4& view_projection,
 			binding.sampler = default_sampler_;
 			SDL_BindGPUFragmentSamplers(pass_, 0, &binding, 1);
 			bound_albedo = albedo;
+		}
+		SDL_GPUTexture* normal = texture_for_normal(batch.normal_id, assets);
+		if (normal != bound_normal) {
+			SDL_GPUTextureSamplerBinding binding{};
+			binding.texture = normal;
+			binding.sampler = default_sampler_;
+			SDL_BindGPUFragmentSamplers(pass_, 3, &binding, 1);
+			bound_normal = normal;
 		}
 		record_geometry_draw(
 		        pass_, GeometryDraw{batch.mesh, batch.first_vertex,

@@ -65,6 +65,13 @@ bool ResidencySystem::load_catalog(const std::string& path, std::string* error)
 			if (entry.contains("radius") && entry.at("radius").is_number()) {
 				region.radius = entry.at("radius").get<float>();
 			}
+			if (entry.contains("scenes") && entry.at("scenes").is_array()) {
+				for (const auto& name : entry.at("scenes")) {
+					if (name.is_string()) {
+						region.scenes.push_back(name.get<std::string>());
+					}
+				}
+			}
 			if (!region.name.empty() && !region.path.empty()) {
 				parsed.push_back(std::move(region));
 			}
@@ -97,6 +104,11 @@ void ResidencySystem::update(Scene& scene, const glm::vec3& viewer)
 			}
 		}
 		if (!region) {
+			continue;
+		}
+		if (!region->scenes.empty() &&
+		    std::find(region->scenes.begin(), region->scenes.end(),
+		              scene.name()) == region->scenes.end()) {
 			continue;
 		}
 		std::string error;

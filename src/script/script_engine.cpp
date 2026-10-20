@@ -108,6 +108,18 @@ int l_rotate(lua_State* L)
 	return 0;
 }
 
+int l_set_rotation(lua_State* L)
+{
+	Transform* transform = transform_arg(L);
+	if (!transform) {
+		return 0;
+	}
+	transform->rotation.x = static_cast<float>(luaL_checknumber(L, 2));
+	transform->rotation.y = static_cast<float>(luaL_checknumber(L, 3));
+	transform->rotation.z = static_cast<float>(luaL_checknumber(L, 4));
+	return 0;
+}
+
 int l_set_color(lua_State* L)
 {
 	Scene* scene = current_scene(L);
@@ -155,6 +167,7 @@ void register_api(lua_State* L)
 	        {"get_position", l_get_position},
 	        {"set_position", l_set_position},
 	        {"rotate", l_rotate},
+	        {"set_rotation", l_set_rotation},
 	        {"set_color", l_set_color},
 	        {"get_name", l_get_name},
 	};

@@ -201,6 +201,16 @@ void to_json(nlohmann::json& j, const Material& m)
 	if (!m.albedo_id.empty()) {
 		j["albedo_id"] = m.albedo_id;
 	}
+	if (!m.normal_id.empty()) {
+		j["normal_id"] = m.normal_id;
+	}
+	if (m.metallic > 0.0f) {
+		j["metallic"] = tidy(m.metallic);
+	}
+	if (m.emissive.x > 0.0f || m.emissive.y > 0.0f ||
+	    m.emissive.z > 0.0f) {
+		j["emissive"] = arr3(m.emissive.x, m.emissive.y, m.emissive.z);
+	}
 }
 
 
@@ -282,6 +292,22 @@ void to_json(nlohmann::json& j, const MeshCollider&)
 
 void from_json(const nlohmann::json&, MeshCollider&) {}
 
+void to_json(nlohmann::json& j, const HeightFieldCollider& heightfield)
+{
+	j = nlohmann::json{{"min_height", tidy(heightfield.min_height)},
+	                   {"max_height", tidy(heightfield.max_height)}};
+}
+
+void from_json(const nlohmann::json& j, HeightFieldCollider& heightfield)
+{
+	if (j.contains("min_height") && j.at("min_height").is_number()) {
+		heightfield.min_height = j.at("min_height").get<float>();
+	}
+	if (j.contains("max_height") && j.at("max_height").is_number()) {
+		heightfield.max_height = j.at("max_height").get<float>();
+	}
+}
+
 void to_json(nlohmann::json& j, const CharacterController& controller)
 {
 	j = nlohmann::json{{"radius", tidy(controller.radius)},
@@ -307,6 +333,30 @@ void from_json(const nlohmann::json& j, BlobCaster& blob)
 {
 	if (j.contains("radius") && j.at("radius").is_number()) {
 		blob.radius = j.at("radius").get<float>();
+	}
+}
+
+void to_json(nlohmann::json& j, const PointLight& light)
+{
+	j = nlohmann::json{{"color", arr3(light.color.x, light.color.y,
+	                                  light.color.z)},
+	                   {"intensity", tidy(light.intensity)},
+	                   {"range", tidy(light.range)}};
+}
+
+void from_json(const nlohmann::json& j, PointLight& light)
+{
+	if (j.contains("color") && j.at("color").is_array() &&
+	    j.at("color").size() == 3) {
+		const auto& c = j.at("color");
+		light.color = {c[0].get<float>(), c[1].get<float>(),
+		               c[2].get<float>()};
+	}
+	if (j.contains("intensity") && j.at("intensity").is_number()) {
+		light.intensity = j.at("intensity").get<float>();
+	}
+	if (j.contains("range") && j.at("range").is_number()) {
+		light.range = j.at("range").get<float>();
 	}
 }
 
@@ -352,6 +402,18 @@ void from_json(const nlohmann::json& j, Material& m)
 	}
 	if (j.contains("roughness") && j.at("roughness").is_number()) {
 		m.roughness = j.at("roughness").get<float>();
+	}
+	if (j.contains("normal_id") && j.at("normal_id").is_string()) {
+		m.normal_id = j.at("normal_id").get<std::string>();
+	}
+	if (j.contains("metallic") && j.at("metallic").is_number()) {
+		m.metallic = j.at("metallic").get<float>();
+	}
+	if (j.contains("emissive") && j.at("emissive").is_array() &&
+	    j.at("emissive").size() == 3) {
+		const auto& e = j.at("emissive");
+		m.emissive = {e[0].get<float>(), e[1].get<float>(),
+		              e[2].get<float>()};
 	}
 }
 
@@ -652,6 +714,20 @@ ComponentCodecs& mutable_component_codecs()
 			        r.emplace_or_replace<MeshCollider>(e);
 		        });
 		c.add(
+		        "HeightFieldCollider",
+		        [](const Registry& r, Entity e, nlohmann::json& j) {
+			        const auto* value = r.try_get<HeightFieldCollider>(e);
+			        if (!value) {
+				        return false;
+			        }
+			        j = *value;
+			        return true;
+		        },
+		        [](Registry& r, Entity e, const nlohmann::json& j) {
+			        r.emplace_or_replace<HeightFieldCollider>(
+			                e, j.get<HeightFieldCollider>());
+		        });
+		c.add(
 		        "CharacterController",
 		        [](const Registry& r, Entity e, nlohmann::json& j) {
 			        const auto* value = r.try_get<CharacterController>(e);
@@ -664,6 +740,19 @@ ComponentCodecs& mutable_component_codecs()
 		        [](Registry& r, Entity e, const nlohmann::json& j) {
 			        r.emplace_or_replace<CharacterController>(
 			                e, j.get<CharacterController>());
+		        });
+		c.add(
+		        "PointLight",
+		        [](const Registry& r, Entity e, nlohmann::json& j) {
+			        const auto* value = r.try_get<PointLight>(e);
+			        if (!value) {
+				        return false;
+			        }
+			        j = *value;
+			        return true;
+		        },
+		        [](Registry& r, Entity e, const nlohmann::json& j) {
+			        r.emplace_or_replace<PointLight>(e, j.get<PointLight>());
 		        });
 		c.add(
 		        "Animator",
@@ -934,7 +1023,9 @@ std::string to_json_string(const Scene& scene)
 		                         s.bounce_color.z))
 		    << ", \"bounce_intensity\": " << tidy(s.bounce_intensity)
 		    << ", \"ssao_enabled\": "
-		    << (s.ssao_enabled ? "true" : "false") << "},\n";
+		    << (s.ssao_enabled ? "true" : "false")
+		    << ", \"environment_intensity\": "
+		    << tidy(s.environment_intensity) << "},\n";
 	}
 	out << "  \"entities\": [\n";
 	bool first = true;
@@ -1068,6 +1159,11 @@ bool scene_from_json(Scene& scene, const std::string& text, std::string* error)
 		if (s.contains("ssao_enabled") &&
 		    s.at("ssao_enabled").is_boolean()) {
 			settings.ssao_enabled = s.at("ssao_enabled").get<bool>();
+		}
+		if (s.contains("environment_intensity") &&
+		    s.at("environment_intensity").is_number()) {
+			settings.environment_intensity =
+			        s.at("environment_intensity").get<float>();
 		}
 		has_settings = true;
 	}

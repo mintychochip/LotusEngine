@@ -275,6 +275,8 @@ struct LightingSettings {
 	glm::vec3 bounce_color{0.40f, 0.28f, 0.20f};
 	float bounce_intensity{0.5f};
 	bool ssao_enabled{true};
+	/// Analytic environment specular strength (sky/ground reflection).
+	float environment_intensity{0.0f};
 };
 
 /// SDL3 GPU backend (Vulkan on Linux). Owns the device, the lit pipeline,
@@ -476,6 +478,12 @@ public:
 	uint32_t blob_count() const { return blob_count_; }
 	const glm::vec4* blob_spheres() const { return blob_spheres_; }
 
+	/// Point lights for the next lit draws. \p positions are xyz + range,
+	/// \p colors are rgb + intensity. Copies up to 8; extra entries ignored.
+	/// Scenes that never call this render exactly as before.
+	void set_point_lights(const glm::vec4* positions,
+	                      const glm::vec4* colors, uint32_t count);
+
 private:
 	/// A mesh in the cache; see acquire_mesh().
 	struct CachedMesh {
@@ -551,14 +559,17 @@ private:
 	void release_retired_fences();
 	void ensure_default_sampler();
 	void ensure_white_texture();
+	void ensure_flat_normal_texture();
 	void destroy_textures();
 	SDL_GPUTexture* texture_for_albedo(const std::string& albedo_id,
+	                                   const AssetRegistry* assets);
+	SDL_GPUTexture* texture_for_normal(const std::string& normal_id,
 	                                   const AssetRegistry* assets);
 	bool load_texture_from_file(const std::string& path,
 	                            const std::string& cache_key);
 	// --- directional shadow map ---
 	// Rendered from the light once per frame (first scene/viewport pass wins)
-	// into shadow_texture_, then sampled by lit.frag with a 3x3 PCF. All
+	// into shadow_texture_, then sampled by lit.frag with a 5x5 PCF. All
 	// entry points keep their signatures: the light VP is derived from
 	// lighting_.direction over a fixed ortho box, and the pass reuses the
 	// already-uploaded vertex buffers.
@@ -731,6 +742,9 @@ private:
 	SDL_GPUTexture* white_texture_{nullptr};
 	// --- Analytic blob shadows (up to 4 uniform spheres, direct lobe only)
 	glm::vec4 blob_spheres_[4]{};
+	glm::vec4 point_light_positions_[8]{};
+	glm::vec4 point_light_colors_[8]{};
+	uint32_t point_light_count_{0};
 	uint32_t blob_count_{0};
 	// --- SSAO (samples previous frame's linear depth, scales fill only)
 	SDL_GPUGraphicsPipeline* ssao_pipeline_{nullptr};
@@ -746,6 +760,8 @@ private:
 		SDL_GPUTexture* texture{nullptr};
 	};
 	std::unordered_map<std::string, CachedAlbedo> albedo_textures_;
+	std::unordered_map<std::string, CachedAlbedo> normal_textures_;
+	SDL_GPUTexture* flat_normal_texture_{nullptr};
 };
 
 } // namespace lotus

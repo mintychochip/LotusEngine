@@ -1201,6 +1201,8 @@ void Application::run(int width, int height, const std::string& title)
 				gpu.lighting().bounce_color     = s.bounce_color;
 				gpu.lighting().bounce_intensity = s.bounce_intensity;
 				gpu.lighting().ssao_enabled     = s.ssao_enabled;
+				gpu.lighting().environment_intensity =
+				        s.environment_intensity;
 			}
 			gpu.begin_frame(window.handle(), 0.05f, 0.05f, 0.08f);
 			if (gpu.has_frame()) {

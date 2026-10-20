@@ -145,6 +145,15 @@ struct Material {
 	glm::vec3 base_color{0.82f, 0.82f, 0.86f};
 	std::string albedo_id;
 	float roughness{0.5f};
+	/// Optional tangent-space normal map (asset registry key). Empty means
+	/// the surface uses its geometric normal.
+	std::string normal_id;
+	/// Metallic in [0, 1]: 0 is dielectric, 1 is metal. The dielectric F0 is
+	/// 0.04; metals tint F0 with base_color.
+	float metallic{0.0f};
+	/// Emissive radiance, sRGB-authored. Useful for flames, lamps and
+	/// fireflies; unaffected by the shadow map.
+	glm::vec3 emissive{0.0f};
 };
 
 /// Analytic blob shadow caster. The center is derived per frame from the
@@ -154,6 +163,14 @@ struct Material {
 /// only (ambient/hemisphere/bounce stay unshadowed).
 struct BlobCaster {
 	float radius{0.5f};
+};
+
+/// A point light. Position comes from the entity's world Transform; the
+/// renderer consumes up to eight per frame, nearest/strongest first.
+struct PointLight {
+	glm::vec3 color{1.0f};
+	float intensity{1.0f};
+	float range{8.0f};
 };
 
 /// Perspective camera.
@@ -300,6 +317,9 @@ struct SceneSettings {
 	glm::vec3 bounce_color{0.40f, 0.28f, 0.20f}; // sRGB-authored warm fill
 	float bounce_intensity{0.5f}; // linear
 	bool ssao_enabled{true};
+	/// Analytic sky/ground environment specular multiplier. 0 restores the
+	/// legacy direct-light-only path; scenes opt in for wet/metal surfaces.
+	float environment_intensity{0.0f};
 };
 
 } // namespace lotus

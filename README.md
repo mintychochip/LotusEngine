@@ -1,8 +1,15 @@
-# LotusEngine
+# Lotus
 
-A small C++ game engine: ECS scenes, SDL GPU renderer with Hi-Z occlusion, Jolt
-physics, transform animation, region streaming, Lua scripts, and an in-engine
-editor.
+Lotus is a compact C++ game engine for building living worlds. It pairs an ECS
+scene model with a normal-mapped SDL GPU renderer, Jolt physics, region
+streaming, Lua scripting, and an in-engine editor. The bundled jungle demo puts
+the whole stack to work in a dense, walkable scene.
+
+![Golden-hour trail through the jungle](docs/images/jungle-trail.webp)
+
+| Plank bridge over the stream | Campfire beneath the canopy |
+|---|---|
+| ![Plank bridge over the stream](docs/images/jungle-bridge.webp) | ![Campfire beneath the canopy](docs/images/jungle-campfire.webp) |
 
 ## Quick start
 
@@ -29,7 +36,57 @@ Movement is **camera-relative** on the XZ plane (WASD strafe relative to the vie
 The gold **bob_prop** sphere plays the `sample_bob` animation clip from
 `assets/`. Walk east (~40 m) toward the sign; when the camera enters another
 region from `scenes/regions.json`, additive scenes load (one region per frame by
-default).
+default). Region entries may list `"scenes": ["main"]` to restrict streaming to
+one active scene; the demo regions use this so standalone scenes stay clean.
+
+### Jungle scene (`scenes/jungle.json`)
+
+```bash
+cd build && ./bin/lotus --headless --scene jungle --ticks 600 \
+    --screenshot jungle.ppm
+```
+
+Or launch the scene directly:
+
+```bash
+cd build && ./bin/lotus --scene jungle
+```
+
+(`F2` → `scene.switch jungle` also works from a running instance.) The explorer starts on a
+winding trail in a dense, misty jungle: heightfield terrain, a carved stream and
+plank footbridge, buttressed hardwoods, palms, banana plants, tree ferns,
+strangler figs, bamboo, lianas, epiphytes, moss, layered broad/fine canopy
+variants, rocks, flowers, and dappled canopy light.
+
+The avatar is a single atlas-mapped mesh (2K face/clothing/leather/canvas/metal
+atlas) with a photo-projected face, painted hair and clothing detail, explorer
+kit, and an idle breathing animation. Scripted dragonflies, monarch/morpho butterflies, and bees fly
+orbit paths with continuously flapping wings (`scripts/insect_flight.lua`).
+**WASD** walks the trail; **F5** toggles first person.
+
+The renderer is a metallic/roughness PBR pipeline with tangent-space normal
+maps, emissive materials, up to eight unshadowed point lights, analytic
+sky/ground environment specular, hemispheric ambient, SSAO, a warm bounce fill,
+fog, and 2048px sun shadows filtered with 5x5 PCF. A campfire, trail lantern,
+and fireflies add warm local light under the canopy. It still has no
+alpha-cutout leaf cards or image-based lighting, so the scene is a detailed
+naturalistic render rather than a photograph; foliage remains geometric and
+the human avatar is procedural apart from the projected face texture.
+
+The scene is tuned to stay around 300 MB resident for its 7k entities; foliage
+clusters were consolidated and small plants use a compact leaf-tuft mesh so the
+engine's per-entity CPU mesh copies stay bounded.
+
+The whole scene is reproducible from source:
+
+```bash
+python3 tools/make_jungle.py
+```
+
+That regenerates `scenes/jungle.json`, the seamless albedo and normal textures,
+the terrain/trail/stream/trunk/foliage/avatar/insect/tree-species GLBs, the two
+animation clips, and the scripted insect flight file. It is deterministic
+(seed 7), so rerunning it produces the same bytes.
 
 ### Tests
 

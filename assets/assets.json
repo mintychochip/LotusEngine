@@ -1,6 +1,37 @@
 {
   "version": 1,
   "assets": {
-    "sample_bob": "animations/sample_bob.json"
+    "sample_bob": "animations/sample_bob.json",
+    "jungle_terrain": "assets/jungle_terrain.glb",
+    "jungle_path": "assets/jungle_path.glb",
+    "jungle_stream": "assets/jungle_stream.glb",
+    "jungle_ground": "assets/textures/jungle_ground.png",
+    "jungle_path_tex": "assets/textures/jungle_path.png",
+    "jungle_avatar": "assets/jungle_avatar.glb",
+    "jungle_avatar_atlas": "assets/textures/jungle_avatar_atlas.png",
+    "jungle_insect_wings": "assets/textures/jungle_insect_wings.png",
+    "jungle_palm_bark": "assets/textures/jungle_palm_bark.png",
+    "jungle_bark_smooth": "assets/textures/jungle_bark_smooth.png",
+    "jungle_leaf_grain": "assets/textures/jungle_leaf_grain.png",
+    "jungle_leaf_grain_light": "assets/textures/jungle_leaf_grain_light.png",
+    "jungle_bark": "assets/textures/jungle_bark.png",
+    "jungle_bark_pale": "assets/textures/jungle_bark_pale.png",
+    "jungle_rock": "assets/textures/jungle_rock.png",
+    "jungle_water": "assets/textures/jungle_water.png",
+    "jungle_canvas": "assets/textures/jungle_canvas.png",
+    "jungle_ground_normal": "assets/textures/jungle_ground_normal.png",
+    "jungle_path_tex_normal": "assets/textures/jungle_path_tex_normal.png",
+    "jungle_leaf_grain_normal": "assets/textures/jungle_leaf_grain_normal.png",
+    "jungle_leaf_grain_light_normal": "assets/textures/jungle_leaf_grain_light_normal.png",
+    "jungle_bark_normal": "assets/textures/jungle_bark_normal.png",
+    "jungle_bark_pale_normal": "assets/textures/jungle_bark_pale_normal.png",
+    "jungle_bark_smooth_normal": "assets/textures/jungle_bark_smooth_normal.png",
+    "jungle_palm_bark_normal": "assets/textures/jungle_palm_bark_normal.png",
+    "jungle_rock_normal": "assets/textures/jungle_rock_normal.png",
+    "jungle_water_normal": "assets/textures/jungle_water_normal.png",
+    "jungle_avatar_atlas_normal": "assets/textures/jungle_avatar_atlas_normal.png",
+    "jungle_insect_wings_normal": "assets/textures/jungle_insect_wings_normal.png",
+    "jungle_idle": "assets/animations/jungle_idle.json",
+    "jungle_sway": "assets/animations/jungle_sway.json"
   }
 }

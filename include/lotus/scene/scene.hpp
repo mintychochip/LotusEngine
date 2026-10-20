@@ -192,11 +192,14 @@ private:
 	/// that follows it.
 	struct DrawItem {
 		const std::string* albedo{nullptr};
+		const std::string* normal{nullptr};
 		const Transform* transform{nullptr};
 		const Mesh* mesh{nullptr};     // null for a 2D sprite
 		const Sprite* sprite{nullptr}; // null for a 3D mesh
 		glm::vec3 color{1.0f};
 		float roughness{0.5f};
+		glm::vec3 emissive{0.0f};
+		float metallic{0.0f};
 		/// Which mesh the item is an instance of: an index into mesh_slots_
 		/// (1-based), or 0 when it is written as world-space vertices.
 		uint32_t slot{0};
