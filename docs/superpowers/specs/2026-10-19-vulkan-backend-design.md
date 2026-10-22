@@ -262,10 +262,11 @@ on, N seconds, fps + Mverts/s + mean drawn entities. "vps" is read as fps; Mvert
 
 `master` (`84a9497`) kept changing the SDL_GPU renderer while this branch removed it: normal maps, metallic and
 emissive materials, up to eight point lights, analytic environment specular, a 2048² shadow map with a 5×5 PCF
-(`GpuInstance` 80 → 96 B, `FragmentUniforms` 368 → 656 B, a fourth sampler at set 2 binding 3). The merge took
-this branch's deletion of `src/gpu/renderer.cpp` and ported those changes to `GpuRendererVulkan`; the abstract
-`GpuRenderer` gained `set_point_lights()` and `LightingSettings::environment_intensity`. The SPIR-V headers are
-master's and regenerate byte-identically from the merged GLSL with glslang 16.2.0.
+and a 20-unit ortho half-extent (15 before), `GpuInstance` 80 → 96 B, `FragmentUniforms` 368 → 656 B, and a
+fourth sampler at set 2 binding 3. The merge took this branch's deletion of `src/gpu/renderer.cpp` and ported
+those changes to `GpuRendererVulkan`; the abstract `GpuRenderer` gained `set_point_lights()` and
+`LightingSettings::environment_intensity`. The SPIR-V headers are master's and regenerate byte-identically from
+the merged GLSL with glslang 16.2.0.
 
 Verified against master's SDL_GPU renderer built out of tree from the same commit (master's own `build/` was
 stale, so it is no oracle):

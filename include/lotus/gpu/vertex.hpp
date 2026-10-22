@@ -27,7 +27,8 @@ static_assert(sizeof(GpuVertex) == 48);
 /// material the instance multiplies into every vertex's colour and roughness.
 /// Read by lit.vert and shadow.vert as the vertex buffer in slot 2 with
 /// per-instance addressing; the layout must match the attribute descriptions
-/// in renderer.cpp and the locations in those shaders.
+/// in src/gpu/vk/vk_pipelines.cpp (lit) and src/gpu/vulkan/renderer_passes.cpp
+/// (shadow) and the locations in those shaders.
 struct GpuInstance {
 	glm::mat4 model{1.0f};
 	glm::vec3 color{1.0f};

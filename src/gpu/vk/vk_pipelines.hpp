@@ -11,11 +11,12 @@ VkShaderModule create_shader_module(const Api& api, VkDevice device,
                                     const unsigned char* bytes,
                                     unsigned long long size);
 
-/// The vertex input the lit and shadow pipelines share: slot 0 is a mesh vertex
-/// (`GpuVertex`, 48 B), slot 1 its UV (8 B), slot 2 one `GpuInstance` (96 B) at
-/// instance rate. Attributes land at locations 0..13 exactly as lit.vert and
-/// shadow.vert declare them; the fullscreen passes (sky, FXAA, SSAO) bind
-/// nothing.
+/// The lit pipeline's vertex input: slot 0 is a mesh vertex (`GpuVertex`, 48 B),
+/// slot 1 its UV (8 B), slot 2 one `GpuInstance` (96 B) at instance rate.
+/// Attributes land at locations 0..13 exactly as lit.vert declares them. The
+/// shadow pipeline declares the subset shadow.vert reads (position and model
+/// matrix) itself, with the same strides; the fullscreen passes (sky, FXAA,
+/// SSAO) bind nothing.
 void lit_vertex_input(VkVertexInputBindingDescription (&bindings)[3],
                       VkVertexInputAttributeDescription (&attributes)[11]);
 
