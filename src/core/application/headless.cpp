@@ -5,8 +5,6 @@
 #include "lotus/scene/scene.hpp"
 #include "lotus/scene/serialization.hpp"
 
-#include <SDL3/SDL.h>
-
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
@@ -52,64 +50,51 @@ bool parse_ulong(const std::string& text, const std::string& flag,
 bool capture_screenshot(Scene& scene, const HeadlessOptions& options,
                         std::string* error)
 {
-	// A headless Vulkan device still needs SDL's video subsystem. The
-	// offscreen driver needs no display; software Vulkan (lavapipe) is
-	// enough, which is what makes this work in containers.
-	SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "offscreen");
-	if (!SDL_Init(SDL_INIT_VIDEO)) {
+	// Offscreen rendering needs a Vulkan device and nothing else: software
+	// Vulkan (lavapipe) is enough, which is what makes this work in
+	// containers, and no window system is involved.
+	try {
+		const std::unique_ptr<GpuRenderer> owned = create_gpu_renderer();
+		GpuRenderer& gpu = *owned;
+		gpu.init_offscreen(options.width, options.height);
+		if (scene.has_settings()) {
+			const SceneSettings& s = scene.settings();
+			gpu.lighting().direction = s.light_direction;
+			gpu.lighting().color     = s.light_color;
+			gpu.lighting().intensity = s.light_intensity;
+			gpu.lighting().ambient   = s.ambient;
+			gpu.lighting().exposure = s.exposure;
+			gpu.lighting().sky_color       = s.sky_color;
+			gpu.lighting().ground_color    = s.ground_color;
+			gpu.lighting().shadows_enabled = s.shadows_enabled;
+			gpu.lighting().fxaa_enabled    = s.fxaa_enabled;
+			gpu.lighting().sky_enabled     = s.sky_enabled;
+			gpu.lighting().horizon_warmth  = s.horizon_warmth;
+			gpu.lighting().fog_enabled      = s.fog_enabled;
+			gpu.lighting().fog_density      = s.fog_density;
+			gpu.lighting().bounce_enabled   = s.bounce_enabled;
+			gpu.lighting().bounce_color     = s.bounce_color;
+			gpu.lighting().bounce_intensity = s.bounce_intensity;
+			gpu.lighting().ssao_enabled     = s.ssao_enabled;
+			gpu.lighting().environment_intensity =
+			        s.environment_intensity;
+		}
+		const float aspect = static_cast<float>(options.width) /
+		                     static_cast<float>(options.height);
+		gpu.begin_frame_offscreen();
+		scene.upload(gpu, aspect);
+		gpu.begin_scene_pass();
+		scene.draw(gpu);
+		gpu.end_scene_pass();
+		gpu.end_frame();
+		gpu.wait_idle();
+		return gpu.write_ppm(options.screenshot, error);
+	} catch (const std::exception& ex) {
 		if (error) {
-			*error = std::string{"SDL video init failed: "} + SDL_GetError();
+			*error = ex.what();
 		}
 		return false;
 	}
-	bool ok = false;
-	{
-		try {
-			const std::unique_ptr<GpuRenderer> owned = create_gpu_renderer();
-			GpuRenderer& gpu = *owned;
-			gpu.init_offscreen(options.width, options.height);
-			if (scene.has_settings()) {
-				const SceneSettings& s = scene.settings();
-				gpu.lighting().direction = s.light_direction;
-				gpu.lighting().color     = s.light_color;
-				gpu.lighting().intensity = s.light_intensity;
-				gpu.lighting().ambient   = s.ambient;
-				gpu.lighting().exposure = s.exposure;
-				gpu.lighting().sky_color       = s.sky_color;
-				gpu.lighting().ground_color    = s.ground_color;
-				gpu.lighting().shadows_enabled = s.shadows_enabled;
-				gpu.lighting().fxaa_enabled    = s.fxaa_enabled;
-				gpu.lighting().sky_enabled     = s.sky_enabled;
-				gpu.lighting().horizon_warmth  = s.horizon_warmth;
-				gpu.lighting().fog_enabled      = s.fog_enabled;
-				gpu.lighting().fog_density      = s.fog_density;
-				gpu.lighting().bounce_enabled   = s.bounce_enabled;
-				gpu.lighting().bounce_color     = s.bounce_color;
-				gpu.lighting().bounce_intensity = s.bounce_intensity;
-				gpu.lighting().ssao_enabled     = s.ssao_enabled;
-				gpu.lighting().environment_intensity =
-				        s.environment_intensity;
-			}
-			const float aspect =
-			        static_cast<float>(options.width) /
-			        static_cast<float>(options.height);
-			gpu.begin_frame_offscreen();
-			scene.upload(gpu, aspect);
-			gpu.begin_scene_pass();
-			scene.draw(gpu);
-			gpu.end_scene_pass();
-			gpu.end_frame();
-			gpu.wait_idle();
-			ok = gpu.write_ppm(options.screenshot, error);
-		} catch (const std::exception& ex) {
-			if (error) {
-				*error = ex.what();
-			}
-			ok = false;
-		}
-	} // GPU device destroyed before SDL_Quit()
-	SDL_Quit();
-	return ok;
 }
 
 } // namespace

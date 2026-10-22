@@ -48,11 +48,7 @@ void Context::init(const ContextOptions& options)
 	if (valid()) {
 		return;
 	}
-	if (!SDL_Vulkan_LoadLibrary(nullptr)) {
-		throw std::runtime_error(std::string{"no Vulkan loader: "} +
-		                         SDL_GetError());
-	}
-	loaded_library_ = true;
+	loader_.emplace();
 	try {
 		create(options);
 	} catch (...) {
@@ -63,8 +59,7 @@ void Context::init(const ContextOptions& options)
 
 void Context::create(const ContextOptions& options)
 {
-	api.load_global(reinterpret_cast<PFN_vkGetInstanceProcAddr>(
-	        SDL_Vulkan_GetVkGetInstanceProcAddr()));
+	api.load_global(loader_->get_instance_proc());
 
 	uint32_t loader_version = 0;
 	check(api.EnumerateInstanceVersion(&loader_version),
@@ -365,10 +360,7 @@ void Context::shutdown()
 		api.DestroyInstance(instance, nullptr);
 		instance = VK_NULL_HANDLE;
 	}
-	if (loaded_library_) {
-		SDL_Vulkan_UnloadLibrary();
-		loaded_library_ = false;
-	}
+	loader_.reset();
 }
 
 void Context::submit_and_wait(const std::function<void(VkCommandBuffer)>& record)

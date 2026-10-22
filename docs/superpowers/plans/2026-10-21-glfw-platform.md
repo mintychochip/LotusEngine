@@ -46,7 +46,7 @@ export VVL='VK_ADD_LAYER_PATH=/tmp/vvl/root/usr/share/vulkan/explicit_layer.d LD
       `keys()`); no `release_all()`, since GLFW itself sends the releases when focus is lost.
       Tests `test/input_test.cpp`: names round-trip for every key, parse is case-insensitive, unknown names fail, SDL's
       names kept, `Input` follows press/release/repeat and mouse events, the key snapshot is a copy.
-- [ ] **T3 Own Vulkan loader.** `src/gpu/vk/vk_loader.{hpp,cpp}`: `vk::Loader` opens the system loader
+- [x] **T3 Own Vulkan loader.** `src/gpu/vk/vk_loader.{hpp,cpp}`: `vk::Loader` opens the system loader
       (`libvulkan.so.1`, macOS and Windows names under `#if`) and exposes `vkGetInstanceProcAddr`. `vk::Context` owns
       one instead of calling `SDL_Vulkan_LoadLibrary`; `test/vulkan_device.hpp` probes through it; `headless.cpp`, the
       bench and every GPU test that only needed SDL for the loader drop `SDL_Init`/`SDL_SetHint`. The windowed path

@@ -1,32 +1,18 @@
 #include <gtest/gtest.h>
 
-#include <SDL3/SDL.h>
-
 #include "gpu/vk/vk_context.hpp"
 #include "vulkan_device.hpp"
 
 using namespace lotus;
 
-/// A headless Vulkan device still needs SDL's video subsystem; the offscreen
-/// video driver needs no display, which is what lets this run in a container.
+/// Skips (or fails, under LOTUS_REQUIRE_VULKAN) when the machine has no Vulkan
+/// device; creating a context needs no window system.
 class VkContextTest : public ::testing::Test {
 protected:
 	void SetUp() override
 	{
-		SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "offscreen");
-		owned_sdl_ = SDL_Init(SDL_INIT_VIDEO);
-		ASSERT_TRUE(owned_sdl_) << SDL_GetError();
 		LOTUS_SKIP_WITHOUT_VULKAN_DEVICE();
 	}
-
-	void TearDown() override
-	{
-		if (owned_sdl_) {
-			SDL_Quit();
-		}
-	}
-
-	bool owned_sdl_{false};
 };
 
 TEST_F(VkContextTest, DeviceIsVulkan13WithTheRequiredFeatures)

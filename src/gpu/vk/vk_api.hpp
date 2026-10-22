@@ -114,8 +114,8 @@ namespace lotus::vk {
 	X(AcquireNextImageKHR)                                                     \
 	X(QueuePresentKHR)
 
-/// The loaded entry points, resolved once from the loader SDL provides
-/// (SDL_Vulkan_LoadLibrary), so nothing is linked against libvulkan. Device
+/// The loaded entry points, resolved once from the loader `vk::Loader` opens
+/// (vk_loader.hpp), so nothing is linked against libvulkan. Device
 /// level commands come from vkGetDeviceProcAddr and skip the loader's
 /// per-call dispatch. Called as `api.CmdDraw(...)`: the name is the Vulkan
 /// one without its "vk" prefix.

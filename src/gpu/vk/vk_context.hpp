@@ -3,9 +3,11 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 
 #include "gpu/vk/vk_api.hpp"
+#include "gpu/vk/vk_loader.hpp"
 
 struct SDL_Window;
 
@@ -33,11 +35,10 @@ public:
 	Context(const Context&)            = delete;
 	Context& operator=(const Context&) = delete;
 
-	/// Loads the loader through SDL (SDL's video subsystem must be
-	/// initialised), creates the instance, picks the best suitable physical
-	/// device (discrete over integrated over virtual over software) and
-	/// creates the device. Throws std::runtime_error, leaving nothing behind,
-	/// when there is no Vulkan 1.3 device.
+	/// Opens the Vulkan loader, creates the instance, picks the best suitable
+	/// physical device (discrete over integrated over virtual over software)
+	/// and creates the device. Throws std::runtime_error, leaving nothing
+	/// behind, when there is no Vulkan loader or no Vulkan 1.3 device.
 	void init(const ContextOptions& options);
 	void shutdown();
 	bool valid() const { return device != VK_NULL_HANDLE; }
@@ -70,7 +71,7 @@ private:
 	void create(const ContextOptions& options);
 	void pick_physical_device(bool windowed);
 
-	bool loaded_library_{false};
+	std::optional<Loader> loader_;
 	VkDebugUtilsMessengerEXT messenger_{VK_NULL_HANDLE};
 	VkCommandPool one_shot_pool_{VK_NULL_HANDLE};
 	VkFence one_shot_fence_{VK_NULL_HANDLE};

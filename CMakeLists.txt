@@ -96,6 +96,7 @@ target_link_libraries(lotus_engine
     lua
     imgui
     Jolt
+    ${CMAKE_DL_LIBS}
 )
 lotus_apply_warning_flags(lotus_engine)
 

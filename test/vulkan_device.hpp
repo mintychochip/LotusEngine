@@ -16,16 +16,16 @@
 
 #include <gtest/gtest.h>
 
-#include <SDL3/SDL.h>
-#include <SDL3/SDL_vulkan.h>
-
 #include <vulkan/vulkan.h>
 
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <string>
 #include <vector>
+
+#include "gpu/vk/vk_loader.hpp"
 
 namespace lotus::test {
 
@@ -40,7 +40,7 @@ struct VulkanProbe {
 
 namespace detail {
 
-/// Asks a loaded Vulkan loader, given SDL's vkGetInstanceProcAddr.
+/// Asks a loaded Vulkan loader, given its vkGetInstanceProcAddr.
 inline VulkanProbe probe_loader(PFN_vkGetInstanceProcAddr get_instance_proc)
 {
 	VulkanProbe probe;
@@ -50,7 +50,7 @@ inline VulkanProbe probe_loader(PFN_vkGetInstanceProcAddr get_instance_proc)
 		return probe;
 	};
 	if (get_instance_proc == nullptr) {
-		return fail("SDL provides no vkGetInstanceProcAddr");
+		return fail("the Vulkan loader provides no vkGetInstanceProcAddr");
 	}
 	const auto enumerate_extensions =
 	        reinterpret_cast<PFN_vkEnumerateInstanceExtensionProperties>(
@@ -142,28 +142,18 @@ inline VulkanProbe probe_loader(PFN_vkGetInstanceProcAddr get_instance_proc)
 	return probe;
 }
 
-/// Loads the loader through SDL, as the renderer does, and asks it.
+/// Opens the loader the way the renderer does, and asks it.
 inline VulkanProbe probe_vulkan()
 {
-	// SDL needs its video subsystem to load the loader. The offscreen driver
-	// needs no display.
-	SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "offscreen");
-	if (!SDL_InitSubSystem(SDL_INIT_VIDEO)) {
-		// Not a Vulkan question: the fixture's own SDL init reports it.
-		return {};
-	}
-	VulkanProbe probe;
-	if (SDL_Vulkan_LoadLibrary(nullptr)) {
-		probe = probe_loader(reinterpret_cast<PFN_vkGetInstanceProcAddr>(
-		        SDL_Vulkan_GetVkGetInstanceProcAddr()));
-		SDL_Vulkan_UnloadLibrary();
-	} else {
-		probe.no_device =
-		        std::string{"SDL cannot load Vulkan: "} + SDL_GetError();
+	try {
+		const vk::Loader loader;
+		return probe_loader(loader.get_instance_proc());
+	} catch (const std::exception& error) {
+		VulkanProbe probe;
+		probe.no_device           = error.what();
 		probe.no_headless_surface = probe.no_device;
+		return probe;
 	}
-	SDL_QuitSubSystem(SDL_INIT_VIDEO);
-	return probe;
 }
 
 } // namespace detail
