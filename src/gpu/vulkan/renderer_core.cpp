@@ -31,19 +31,18 @@ GpuRendererVulkan::~GpuRendererVulkan()
 	shutdown();
 }
 
-void GpuRendererVulkan::init(SDL_Window* window, bool debug_device)
+void GpuRendererVulkan::init(PresentTarget* target, bool debug_device)
 {
 	(void)debug_device;
 	if (device_valid_) {
 		return;
 	}
-	// A window means the context carries the surface extensions and picks a
+	// A target means the context carries the surface extensions and picks a
 	// device that can present; null stays offscreen. The swapchain itself is
 	// created lazily in begin_frame, when the drawable size is known.
-	window_   = window;
-	windowed_ = window != nullptr;
+	windowed_ = target != nullptr;
 	vk::ContextOptions options;
-	options.window     = window;
+	options.target     = target;
 	options.validation = false;   // LOTUS_VK_VALIDATION=1 still asks inside
 	context_.init(options);
 	memory_.init(context_);
@@ -119,7 +118,6 @@ void GpuRendererVulkan::shutdown()
 	device_valid_ = false;
 	offscreen_   = false;
 	windowed_    = false;
-	window_      = nullptr;
 }
 
 void GpuRendererVulkan::init_offscreen(uint32_t width, uint32_t height)

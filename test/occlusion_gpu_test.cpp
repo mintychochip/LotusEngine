@@ -6,8 +6,6 @@
 #include <cstdio>
 #include <vector>
 
-#include <SDL3/SDL.h>
-
 #include "lotus/gpu/renderer.hpp"
 #include "lotus/scene/depth_pyramid.hpp"
 #include "lotus/scene/scene.hpp"
@@ -16,28 +14,14 @@
 using namespace lotus;
 
 namespace {
-/// A headless Vulkan device still needs SDL's video subsystem: there is no
-/// window, but the Vulkan loader comes from SDL, which must be initialised.
-/// The offscreen video driver needs no display, which is what lets this run in
-/// a container.
+/// Skips (or fails, under LOTUS_REQUIRE_VULKAN) when the machine has no Vulkan
+/// device; the offscreen renderer needs no window system.
 class OcclusionGpuTest : public ::testing::Test {
 protected:
 	void SetUp() override
 	{
-		SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "offscreen");
-		owned_sdl_ = SDL_Init(SDL_INIT_VIDEO);
-		ASSERT_TRUE(owned_sdl_) << SDL_GetError();
 		LOTUS_SKIP_WITHOUT_VULKAN_DEVICE();
 	}
-
-	void TearDown() override
-	{
-		if (owned_sdl_) {
-			SDL_Quit();
-		}
-	}
-
-	bool owned_sdl_{false};
 };
 
 
@@ -103,7 +87,7 @@ TEST_F(OcclusionGpuTest, PyramidReachesTheCpuWithoutBlocking)
 
 	// Readiness alone is NOT sufficient evidence. `occlusion_ready()` goes
 	// true on an all-sky pyramid, and a descriptor-set mismatch produced a
-	// valid pipeline with an empty SDL_GetError() and an all-zero pyramid --
+	// valid pipeline with no error reported and an all-zero pyramid --
 	// which reads as "geometry zero units away" and culls nothing. Assert that
 	// real depth actually arrived, at a level the query reads.
 	ASSERT_GE(gpu.occlusion_pyramid().level_count(), 3u);

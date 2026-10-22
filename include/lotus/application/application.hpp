@@ -5,8 +5,8 @@
 
 #include "lotus/application/headless.hpp"
 #include "lotus/application/window.hpp"
-#include "lotus/audio/audio_system.hpp"
 #include "lotus/console/console.hpp"
+#include "lotus/input/input.hpp"
 #include "lotus/input/keybinds.hpp"
 #include "lotus/io/file_watcher.hpp"
 #include "lotus/physics/physics_world.hpp"
@@ -39,7 +39,7 @@ public:
 
 	/// Headless verify loop: loads a scene, steps fixed-dt ticks, optionally
 	/// dumps scene JSON and captures a screenshot, then exits. No window,
-	/// editor, audio, or hot-reload. Returns the process exit code: 0 ok,
+	/// editor, or hot-reload. Returns the process exit code: 0 ok,
 	/// 1 run failure. Screenshots need a Vulkan device (software lavapipe
 	/// is enough); everything else is GPU-free.
 	int run_headless(const HeadlessOptions& options);
@@ -50,6 +50,9 @@ public:
 	PhysicsWorld& physics() { return physics_; }
 	Console& console() { return console_; }
 	Keybinds& keybinds() { return keybinds_; }
+	/// What is held right now: the window's input while run() is going,
+	/// nothing otherwise.
+	const Input& input() const;
 
 	/// Watches \p path; when it changes, the active scene is reloaded. The
 	/// reload is atomic, so a half-written file is rejected and the live
@@ -107,7 +110,6 @@ public:
 	void tick_simulation(float dt, bool game_input_enabled);
 
 protected:
-	void on_start();
 	/// Called once after the GPU device and editor exist.
 	virtual void on_ready(Window& window, GpuRenderer& gpu) = 0;
 	virtual void on_update(float dt)                       = 0;
@@ -141,7 +143,6 @@ private:
 	std::string pending_async_scene_;
 	Editor editor_;
 	ScriptEngine scripts_;
-	AudioSystem audio_;
 	Console console_;
 	Keybinds keybinds_;
 	FileWatcher watcher_;
@@ -155,6 +156,7 @@ private:
 	std::string assets_path_;
 	std::string assets_status_;
 	bool quit_requested_{false};
+	const Input* input_{nullptr};
 };
 
 // Legacy aliases while migrating call sites.

@@ -1,7 +1,5 @@
 #pragma once
 
-#include <SDL3/SDL.h>
-
 #include "lotus/application.hpp"
 #include "lotus/rpg/codecs.hpp"
 #include "lotus/rpg/components.hpp"
@@ -43,7 +41,7 @@ private:
     int kill_count_{0};
 
     // Key state tracking for edge detection
-    bool prev_keys_[SDL_SCANCODE_COUNT]{};
+    KeySet prev_keys_;
 
     // Camera orbit drag state
     bool camera_mouse_down_{false};

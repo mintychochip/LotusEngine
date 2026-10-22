@@ -4,8 +4,6 @@
 #include <cstring>
 #include <vector>
 
-#include <SDL3/SDL.h>
-
 #include "gpu/vk/vk_barrier.hpp"
 #include "gpu/vk/vk_context.hpp"
 #include "gpu/vk/vk_memory.hpp"
@@ -20,9 +18,6 @@ class VkBarrierTest : public ::testing::Test {
 protected:
 	void SetUp() override
 	{
-		SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "offscreen");
-		owned_sdl_ = SDL_Init(SDL_INIT_VIDEO);
-		ASSERT_TRUE(owned_sdl_) << SDL_GetError();
 		LOTUS_SKIP_WITHOUT_VULKAN_DEVICE();
 		context_.init({});
 		ASSERT_TRUE(context_.valid());
@@ -34,12 +29,8 @@ protected:
 		memory_.shutdown();
 		EXPECT_EQ(context_.validation_messages(), 0u);
 		context_.shutdown();
-		if (owned_sdl_) {
-			SDL_Quit();
-		}
 	}
 
-	bool owned_sdl_{false};
 	vk::Context context_;
 	vk::Memory memory_;
 };

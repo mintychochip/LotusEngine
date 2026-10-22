@@ -1,7 +1,7 @@
 #include "lotus/ui/editor.hpp"
 
 #include <imgui.h>
-#include <imgui_impl_sdl3.h>
+#include <imgui_impl_glfw.h>
 
 #include <algorithm>
 #include <cmath>
@@ -49,7 +49,7 @@ Editor::~Editor()
 	shutdown();
 }
 
-bool Editor::init(SDL_Window* window, GpuRenderer& gpu)
+bool Editor::init(GLFWwindow* window, GpuRenderer& gpu)
 {
 	if (initialized_) {
 		return true;
@@ -62,12 +62,13 @@ bool Editor::init(SDL_Window* window, GpuRenderer& gpu)
 
 	// The platform backend only needs to know which graphics API the window
 	// serves; the renderer backend itself is owned by the GpuRenderer behind
-	// its UI hooks.
-	if (!ImGui_ImplSDL3_InitForVulkan(window)) {
+	// its UI hooks. The platform backend installs its GLFW callbacks after the
+	// window's own and chains to them, so the window still sees every event.
+	if (!ImGui_ImplGlfw_InitForVulkan(window, true)) {
 		return false;
 	}
 	if (!gpu.init_ui_backend()) {
-		ImGui_ImplSDL3_Shutdown();
+		ImGui_ImplGlfw_Shutdown();
 		return false;
 	}
 	initialized_ = true;
@@ -81,19 +82,10 @@ void Editor::shutdown()
 		return;
 	}
 	gpu_->shutdown_ui_backend();
-	ImGui_ImplSDL3_Shutdown();
+	ImGui_ImplGlfw_Shutdown();
 	ImGui::DestroyContext();
 	initialized_ = false;
 }
-
-void Editor::process_event(const SDL_Event& event)
-{
-	if (!initialized_ || !visible_) {
-		return;
-	}
-ImGui_ImplSDL3_ProcessEvent(&event);
-}
-
 
 bool Editor::captures_keyboard() const
 {
@@ -117,7 +109,7 @@ void Editor::begin_frame()
 	if (!initialized_) {
 		return;
 	}
-	ImGui_ImplSDL3_NewFrame();
+	ImGui_ImplGlfw_NewFrame();
 	gpu_->ui_backend_new_frame();
 	ImGui::NewFrame();
 	frame_open_ = true;

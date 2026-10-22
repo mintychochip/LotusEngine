@@ -16,16 +16,16 @@
 
 #include <gtest/gtest.h>
 
-#include <SDL3/SDL.h>
-#include <SDL3/SDL_vulkan.h>
-
 #include <vulkan/vulkan.h>
 
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <string>
 #include <vector>
+
+#include "gpu/vk/vk_loader.hpp"
 
 namespace lotus::test {
 
@@ -34,13 +34,13 @@ namespace lotus::test {
 struct VulkanProbe {
 	/// A Vulkan device the renderer could use (Vulkan 1.3) exists.
 	std::string no_device;
-	/// A window on SDL's offscreen video driver can get a headless surface.
+	/// The loader offers VK_EXT_headless_surface, so a surface needs no window.
 	std::string no_headless_surface;
 };
 
 namespace detail {
 
-/// Asks a loaded Vulkan loader, given SDL's vkGetInstanceProcAddr.
+/// Asks a loaded Vulkan loader, given its vkGetInstanceProcAddr.
 inline VulkanProbe probe_loader(PFN_vkGetInstanceProcAddr get_instance_proc)
 {
 	VulkanProbe probe;
@@ -50,7 +50,7 @@ inline VulkanProbe probe_loader(PFN_vkGetInstanceProcAddr get_instance_proc)
 		return probe;
 	};
 	if (get_instance_proc == nullptr) {
-		return fail("SDL provides no vkGetInstanceProcAddr");
+		return fail("the Vulkan loader provides no vkGetInstanceProcAddr");
 	}
 	const auto enumerate_extensions =
 	        reinterpret_cast<PFN_vkEnumerateInstanceExtensionProperties>(
@@ -142,28 +142,18 @@ inline VulkanProbe probe_loader(PFN_vkGetInstanceProcAddr get_instance_proc)
 	return probe;
 }
 
-/// Loads the loader through SDL, as the renderer does, and asks it.
+/// Opens the loader the way the renderer does, and asks it.
 inline VulkanProbe probe_vulkan()
 {
-	// SDL needs its video subsystem to load the loader. The offscreen driver
-	// needs no display.
-	SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "offscreen");
-	if (!SDL_InitSubSystem(SDL_INIT_VIDEO)) {
-		// Not a Vulkan question: the fixture's own SDL init reports it.
-		return {};
-	}
-	VulkanProbe probe;
-	if (SDL_Vulkan_LoadLibrary(nullptr)) {
-		probe = probe_loader(reinterpret_cast<PFN_vkGetInstanceProcAddr>(
-		        SDL_Vulkan_GetVkGetInstanceProcAddr()));
-		SDL_Vulkan_UnloadLibrary();
-	} else {
-		probe.no_device =
-		        std::string{"SDL cannot load Vulkan: "} + SDL_GetError();
+	try {
+		const vk::Loader loader;
+		return probe_loader(loader.get_instance_proc());
+	} catch (const std::exception& error) {
+		VulkanProbe probe;
+		probe.no_device           = error.what();
 		probe.no_headless_surface = probe.no_device;
+		return probe;
 	}
-	SDL_QuitSubSystem(SDL_INIT_VIDEO);
-	return probe;
 }
 
 } // namespace detail
@@ -202,9 +192,10 @@ inline bool vulkan_required()
 		}                                                              \
 	} while (false)
 
-/// Skips the current test when a window on SDL's offscreen video driver cannot
-/// get a headless surface, which is a limit of the driver, not a bug. Unlike a
-/// missing device, LOTUS_REQUIRE_VULKAN does not turn it into a failure.
+/// Skips the current test when the loader lacks VK_EXT_headless_surface, so no
+/// surface can be made without a window system. That is a limit of the
+/// driver, not a bug: unlike a missing device, LOTUS_REQUIRE_VULKAN does not
+/// turn it into a failure.
 #define LOTUS_SKIP_WITHOUT_HEADLESS_SURFACE()                                  \
 	do {                                                                   \
 		const std::string& lotus_problem_ =                            \

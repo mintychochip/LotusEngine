@@ -46,8 +46,6 @@
 #include "gpu/vk/vk_memory.hpp"
 #include "gpu/vk/vk_pipelines.hpp"
 
-struct SDL_Window;
-
 namespace lotus {
 
 /// Must match shaders/lit.vert (set 1, binding 0).
@@ -197,7 +195,7 @@ public:
 	GpuRendererVulkan(const GpuRendererVulkan&)            = delete;
 	GpuRendererVulkan& operator=(const GpuRendererVulkan&) = delete;
 
-	void init(SDL_Window* window, bool debug_device = true) override;
+	void init(PresentTarget* target, bool debug_device = true) override;
 	void shutdown() override;
 	void init_offscreen(uint32_t width, uint32_t height) override;
 	void begin_frame_offscreen() override;
@@ -210,7 +208,7 @@ public:
 	const char* device_name() const override;
 	const char* device_driver() const override;
 	const char* driver_name() const override;
-	void begin_frame(SDL_Window* window, float clear_r, float clear_g,
+	void begin_frame(PresentTarget* target, float clear_r, float clear_g,
 	                 float clear_b) override;
 	GpuMeshId acquire_mesh(const std::string& key, const GpuMeshData& data) override;
 	uint32_t mesh_index_count(GpuMeshId mesh) const override;
@@ -270,7 +268,6 @@ private:
 	// --- device, frame ring -------------------------------------------------
 	vk::Context context_;
 	vk::Memory memory_;
-	SDL_Window* window_{nullptr};
 	bool offscreen_{false};
 	bool device_valid_{false};
 

@@ -9,8 +9,6 @@ RPGGame::RPGGame(GpuSettings settings) : Application(settings)
 
 } // namespace lotus::rpg
 
-#include <SDL3/SDL.h>
-
 #include <memory>
 #include "lotus/scene/mesh.hpp"
 #include "lotus/gpu/renderer.hpp"
@@ -277,10 +275,9 @@ void RPGGame::on_update(float dt)
 
         // Camera rotation: right-click drag to orbit around player
         if (Camera3D* camera = scene->active_camera3d()) {
-            float mouse_x = 0.0f, mouse_y = 0.0f;
-            const SDL_MouseButtonFlags buttons =
-                    SDL_GetMouseState(&mouse_x, &mouse_y);
-            const bool right_down = (buttons & SDL_BUTTON_RMASK) != 0;
+            const float mouse_x   = input().mouse_x();
+            const float mouse_y   = input().mouse_y();
+            const bool right_down = input().mouse_down(MouseButton::Right);
             if (right_down) {
                 if (!camera_mouse_down_) {
                     camera_last_mouse_x_ = mouse_x;
@@ -385,13 +382,14 @@ void RPGGame::handle_game_input()
         return;
     }
 
-    const bool* keys = SDL_GetKeyboardState(nullptr);
-    auto key_pressed = [&](SDL_Scancode sc) {
-        return keys[sc] && !prev_keys_[sc];
+    const KeySet& keys = input().keys();
+    auto key_pressed = [&](Key key) {
+        const auto index = static_cast<std::size_t>(key);
+        return keys[index] && !prev_keys_[index];
     };
 
     // E: interact
-    if (key_pressed(SDL_SCANCODE_E)) {
+    if (key_pressed(Key::E)) {
         const Entity target = rpg::find_nearest_interactable(*scene, player_);
         if (target != NullEntity) {
             if (rpg::is_npc(*scene, target)) {
@@ -410,7 +408,7 @@ void RPGGame::handle_game_input()
     }
 
     // Space: attack nearest enemy
-    if (key_pressed(SDL_SCANCODE_SPACE)) {
+    if (key_pressed(Key::Space)) {
         const Entity enemy = rpg::find_nearest_enemy(*scene, player_, 3.0f);
         if (enemy != NullEntity) {
             auto result = rpg::resolve_combat(*scene, player_, enemy);
@@ -436,22 +434,22 @@ void RPGGame::handle_game_input()
     }
 
     // I: toggle inventory
-    if (key_pressed(SDL_SCANCODE_I)) {
+    if (key_pressed(Key::I)) {
         rpg_ui_.toggle_inventory();
     }
 
     // Q: toggle quest log
-    if (key_pressed(SDL_SCANCODE_Q)) {
+    if (key_pressed(Key::Q)) {
         rpg_ui_.toggle_quest_log();
     }
 
     // C: toggle character panel
-    if (key_pressed(SDL_SCANCODE_C)) {
+    if (key_pressed(Key::C)) {
         rpg_ui_.toggle_character();
     }
 
     // R: re-enable camera follow
-    if (key_pressed(SDL_SCANCODE_R)) {
+    if (key_pressed(Key::R)) {
         if (Camera3D* camera = scene->active_camera3d()) {
             camera->follow = true;
             console().info("Camera follow re-enabled");
@@ -459,14 +457,12 @@ void RPGGame::handle_game_input()
     }
 
     // F1: exit play mode
-    if (key_pressed(SDL_SCANCODE_F1)) {
+    if (key_pressed(Key::F1)) {
         exit_play_mode();
     }
 
     // Update previous key state
-    for (int i = 0; i < SDL_SCANCODE_COUNT; ++i) {
-        prev_keys_[i] = keys[i] != 0;
-    }
+    prev_keys_ = keys;
 }
 
 void RPGGame::create_demo_scene()

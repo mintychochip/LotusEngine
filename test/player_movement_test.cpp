@@ -4,6 +4,7 @@
 
 #include <glm/glm.hpp>
 
+#include "lotus/input/input.hpp"
 #include "lotus/physics/physics_world.hpp"
 #include "lotus/scene/components.hpp"
 #include "lotus/scene/player_controller.hpp"
@@ -52,10 +53,80 @@ TEST(PlayerMovementTest, DisabledInputLeavesDesiredVelocity)
 	controller.desired_velocity = {3.0f, 0.0f, 1.0f};
 	PhysicsWorld physics;
 
-	apply_character_movement_input(scene, physics, false);
+	apply_character_movement_input(scene, physics, Input{}, false);
 
 	EXPECT_NEAR(controller.desired_velocity.x, 3.0f, 1e-4f);
 	EXPECT_NEAR(controller.desired_velocity.z, 1.0f, 1e-4f);
+}
+
+// Held keys reach the character through the Input the controller is handed:
+// with no camera, W walks toward -Z, Shift sprints, and letting go stops.
+TEST(PlayerMovementTest, HeldKeysDriveTheCharacter)
+{
+	Scene scene{"input"};
+	const Entity player = scene.create("player");
+	auto& controller    = scene.registry().emplace<CharacterController>(player);
+	PhysicsWorld physics;
+	Input input;
+
+	input.apply(KeyEvent{Key::W, Mod::None, true, false});
+	apply_character_movement_input(scene, physics, input, true);
+	EXPECT_NEAR(controller.desired_velocity.x, 0.0f, 1e-4f);
+	EXPECT_NEAR(controller.desired_velocity.z, -4.0f, 1e-4f);
+
+	input.apply(KeyEvent{Key::LeftShift, Mod::Shift, true, false});
+	apply_character_movement_input(scene, physics, input, true);
+	EXPECT_NEAR(controller.desired_velocity.z, -4.0f * 1.75f, 1e-4f);
+
+	input.apply(KeyEvent{Key::W, Mod::None, false, false});
+	input.apply(KeyEvent{Key::LeftShift, Mod::None, false, false});
+	apply_character_movement_input(scene, physics, input, true);
+	EXPECT_NEAR(glm::length(controller.desired_velocity), 0.0f, 1e-4f);
+}
+
+TEST(PlayerMovementTest, ArrowKeysMoveLikeWasd)
+{
+	Scene scene{"input"};
+	const Entity player = scene.create("player");
+	auto& controller    = scene.registry().emplace<CharacterController>(player);
+	PhysicsWorld physics;
+	const struct {
+		Key key;
+		float x;
+		float z;
+	} cases[] = {{Key::Left, -4.0f, 0.0f},
+	             {Key::Right, 4.0f, 0.0f},
+	             {Key::Up, 0.0f, -4.0f},
+	             {Key::Down, 0.0f, 4.0f}};
+	for (const auto& step : cases) {
+		Input input;
+		input.apply(KeyEvent{step.key, Mod::None, true, false});
+		apply_character_movement_input(scene, physics, input, true);
+		EXPECT_NEAR(controller.desired_velocity.x, step.x, 1e-4f)
+		        << key_name(step.key);
+		EXPECT_NEAR(controller.desired_velocity.z, step.z, 1e-4f)
+		        << key_name(step.key);
+	}
+}
+
+// A jump is an upward request made only while the character stands on
+// something, so Space in mid-air does nothing.
+TEST(PlayerMovementTest, SpaceJumpsOnlyWhileGrounded)
+{
+	Scene scene{"input"};
+	const Entity player = scene.create("player");
+	auto& controller    = scene.registry().emplace<CharacterController>(player);
+	PhysicsWorld physics;
+	Input input;
+	input.apply(KeyEvent{Key::Space, Mod::None, true, false});
+
+	controller.grounded = false;
+	apply_character_movement_input(scene, physics, input, true);
+	EXPECT_FLOAT_EQ(controller.desired_velocity.y, 0.0f);
+
+	controller.grounded = true;
+	apply_character_movement_input(scene, physics, input, true);
+	EXPECT_GT(controller.desired_velocity.y, 0.0f);
 }
 
 TEST(PlayerMovementTest, NeutralInputYieldsZero)
@@ -221,8 +292,8 @@ TEST(PlayerMovementTest, LookDeltaYawsAndPitches)
 	const Entity camera_entity = scene.create("camera");
 	scene.registry().emplace<Camera3D>(camera_entity);
 
-	// Rightward drag turns the view right, upward drag looks up (SDL
-	// motion y grows downward).
+	// Rightward drag turns the view right, upward drag looks up (window y
+	// grows downward).
 	const CameraLookState look = apply_look_delta(scene, 100.0f, -50.0f);
 	EXPECT_NEAR(look.yaw_radians, 100.0f * kLookSensitivity, 1e-5f);
 	EXPECT_NEAR(look.pitch_radians, 50.0f * kLookSensitivity, 1e-5f);

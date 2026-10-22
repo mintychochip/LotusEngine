@@ -27,8 +27,6 @@
 //
 // Exit codes follow the engine CLI: 0 ok, 1 runtime failure, 2 CLI misuse.
 
-#include <SDL3/SDL.h>
-
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -1062,21 +1060,7 @@ int run(const Options& options)
 	animate(scene, world, 0.0f);
 	scene.update(0.0f);
 
-	SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "offscreen");
-	if (!SDL_Init(SDL_INIT_VIDEO)) {
-		std::cerr << "lotus_render_bench: SDL video init failed: "
-		          << SDL_GetError() << "\n";
-		return 1;
-	}
-	int status = 1;
-	try {
-		status = run_gpu(options, scene, world); // device dies before SDL_Quit
-	} catch (...) {
-		SDL_Quit();
-		throw;
-	}
-	SDL_Quit();
-	return status;
+	return run_gpu(options, scene, world);
 }
 
 } // namespace

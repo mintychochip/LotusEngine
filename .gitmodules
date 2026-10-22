@@ -4,9 +4,6 @@
 [submodule "dependencies/entt"]
 	path = dependencies/entt
 	url = https://github.com/skypjack/entt.git
-[submodule "dependencies/SDL"]
-	path = dependencies/SDL
-	url = https://github.com/libsdl-org/SDL.git
 [submodule "dependencies/imgui"]
 	path = dependencies/imgui
 	url = https://github.com/ocornut/imgui.git
@@ -19,3 +16,9 @@
 [submodule "dependencies/jolt"]
 	path = dependencies/jolt
 	url = https://github.com/jrouwe/JoltPhysics.git
+[submodule "dependencies/glfw"]
+	path = dependencies/glfw
+	url = https://github.com/glfw/glfw.git
+[submodule "dependencies/vulkan-headers"]
+	path = dependencies/vulkan-headers
+	url = https://github.com/KhronosGroup/Vulkan-Headers.git

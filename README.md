@@ -31,6 +31,24 @@ streaming, Lua scripting, and an in-engine editor.
 
 ## Quick start
 
+GLFW and the Vulkan headers are submodules, so a Linux build needs only a C++20
+compiler, CMake, and the development packages for GLFW's X11 and Wayland
+backends:
+
+```bash
+# Debian, Ubuntu
+sudo apt install cmake ninja-build build-essential pkg-config \
+    libwayland-dev libwayland-bin libxkbcommon-dev \
+    libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
+    libxext-dev
+
+# Fedora
+sudo dnf install cmake ninja-build gcc-c++ pkgconf-pkg-config \
+    wayland-devel libxkbcommon-devel \
+    libX11-devel libXrandr-devel libXinerama-devel libXcursor-devel \
+    libXi-devel libXext-devel
+```
+
 ```bash
 git submodule update --init --recursive
 cmake -B build -G Ninja
@@ -43,8 +61,9 @@ windowed application accepts `--scene NAME`, `--scene-dir DIR`,
 `--assets-dir DIR`, `--width W`, and `--height H`.
 
 Rendering uses Vulkan 1.3 directly (dynamic rendering and synchronization2;
-nothing links libvulkan, entry points load through SDL), so a Vulkan 1.3 device
-is required; lavapipe (software) is enough for the tests and headless runs.
+the engine loads the system Vulkan loader itself, so nothing links libvulkan),
+so a Vulkan 1.3 device is required; lavapipe (software) is enough for the tests
+and headless runs.
 
 Headless runs use the same scene and renderer path:
 
@@ -105,6 +124,7 @@ plus a fidelity check against `bench/golden/render_bench.png`.
 |---|---|
 | `LOTUS_NO_UI=1` | Hide the editor UI |
 | `LOTUS_MAX_FRAMES=N` | Exit after N frames |
+| `LOTUS_WINDOW_PLATFORM=wayland\|x11\|null` | Window system GLFW uses (default: the session's, from `XDG_SESSION_TYPE`, otherwise Wayland then X11); `null` needs no display and cannot present |
 | `LOTUS_CONSOLE="cmd; …"` | Run console commands at startup |
 | `LOTUS_PRESENT_MODE=mailbox\|immediate` | Vulkan backend: swapchain present mode (default FIFO, also used when the surface lacks the requested mode) |
 | `LOTUS_VK_VALIDATION=1\|sync` | Vulkan backend: Khronos validation layer when installed (`sync` adds synchronization validation); messages are printed and counted, and the Vulkan tests assert zero |

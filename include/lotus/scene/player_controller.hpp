@@ -2,6 +2,7 @@
 
 #include <glm/glm.hpp>
 
+#include "lotus/input/input.hpp"
 #include "lotus/scene/components.hpp"
 
 namespace lotus {
@@ -45,7 +46,7 @@ CameraLookState camera_look(Scene& scene);
 /// \c --exec-visible seam headless screenshots use (\c camera.look).
 void set_camera_look(Scene& scene, float yaw_radians, float pitch_radians);
 
-/// Applies a right-drag delta in pixels (SDL motion units: +x right, +y
+/// Applies a right-drag delta in pixels (window coordinates: +x right, +y
 /// down): horizontal motion yaws (unbounded, wrapping), vertical motion
 /// pitches (clamped, never flipping). Returns the resulting look state.
 /// No-op (neutral) without a camera.
@@ -57,10 +58,12 @@ CameraLookState apply_look_delta(Scene& scene, float dx_pixels,
 glm::vec3 movement_direction_from_camera(const Camera3D& camera,
                                          float forward_input, float right_input);
 
-/// Reads WASD (+ optional sprint with Shift) and drives \c CharacterController
-/// on entity \c "player". No-op when \p enable_input is false.
+/// Reads WASD or the arrow keys (+ optional sprint with Shift, jump with
+/// Space) from \p input and drives \c CharacterController on entity
+/// \c "player". No-op when \p enable_input is false.
 void apply_character_movement_input(Scene& scene, PhysicsWorld& physics,
-                                    bool enable_input, float move_speed = 4.0f,
+                                    const Input& input, bool enable_input,
+                                    float move_speed = 4.0f,
                                     float sprint_multiplier = 1.75f);
 
 /// Moving views the follow writer produces while \c Camera3D::follow is on.

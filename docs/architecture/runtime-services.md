@@ -105,8 +105,13 @@ rotation, or scale before physics runs.
 
 ## Input and camera
 
-- `Keybinds` maps SDL events to named actions and can be loaded from a
-  JSON file with defaults backfilled for missing actions.
+- `Keybinds` maps key events (a `Key` plus modifiers) to named actions and can
+  be loaded from a JSON file with defaults backfilled for missing actions. Keys
+  are physical positions named like a US layout, so a binding names the same
+  key on every keyboard layout.
+- `Input` is what the window currently holds (keys, mouse buttons, cursor
+  position), updated from its events; the player controller and the RPG read it
+  through `Application::input()`.
 - The player controller converts camera-relative movement into a
   `CharacterController` velocity.
 - The follow camera has a chase view and a first-person eye view; `follow`
@@ -136,7 +141,6 @@ session state needed to resume play.
 | Module | State |
 |---|---|
 | Networking | Session, transport, protocol, and byte-buffer types for reliable and unreliable channels |
-| Audio | SDL audio device initialization; sample playback is not implemented |
 | RPG | A separate example game target built on engine components and systems |
 
 ## Related documents

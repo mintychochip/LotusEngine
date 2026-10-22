@@ -26,9 +26,9 @@ constexpr uint32_t kDepthPyramidMinLevel = 2;
 /// Each further mip stores the minimum of the 2x2 block above it, so a mip
 /// answers "how far away is the farthest thing that could be here".
 ///
-/// Deliberately GPU-free: this header includes no SDL header, which is what
-/// keeps occlusion queryable in unit tests and keeps `Scene::build_vertices`
-/// pure CPU.
+/// Deliberately GPU-free: this header includes no graphics or window header,
+/// which is what keeps occlusion queryable in unit tests and keeps
+/// `Scene::build_vertices` pure CPU.
 class DepthPyramid {
 public:
 	/// Builds the chain from a tightly packed width*height image of linear

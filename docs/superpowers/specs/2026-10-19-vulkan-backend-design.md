@@ -5,6 +5,8 @@ Branch: `vulkan-backend` (worktree `../LotusEngine-vulkan`), based on `9a85f69`.
 Stage 2 (W1-W3) landed 2026-10-21: the windowed path is complete and SDL_GPU is removed from the tree
 (last present at `adb7a77`; `git show adb7a77:src/gpu/sdlgpu/renderer_sdlgpu.cpp` is the old
 behavioural reference).
+SDL3, which this design leaves supplying the window, input and Vulkan loader, was replaced by GLFW afterwards
+(`2026-10-21-glfw-platform-design.md`).
 Merged with `master` (`84a9497`) on 2026-10-21; its rendering additions were ported to this backend in the
 merge (see "Merge with master").
 

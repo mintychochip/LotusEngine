@@ -11,9 +11,6 @@
 namespace lotus {
 namespace {
 
-constexpr SDL_Keymod kRelevantMods =
-        SDL_KMOD_CTRL | SDL_KMOD_SHIFT | SDL_KMOD_ALT | SDL_KMOD_GUI;
-
 std::string lower(std::string text)
 {
 	std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) {
@@ -35,34 +32,29 @@ std::vector<std::string> split(const std::string& text, char separator)
 
 } // namespace
 
-bool KeyChord::matches(const SDL_Event& event) const
+bool KeyChord::matches(const KeyEvent& event) const
 {
-	if (event.type != SDL_EVENT_KEY_DOWN || event.key.repeat) {
-		return false;
-	}
-	if (event.key.key != key) {
-		return false;
-	}
-	return (event.key.mod & kRelevantMods) == (mods & kRelevantMods);
+	return event.pressed && !event.repeat && event.key == key &&
+	       event.mods == mods;
 }
 
 std::string KeyChord::to_string() const
 {
 	std::string out;
-	if (mods & SDL_KMOD_CTRL) {
+	if (any(mods & Mod::Ctrl)) {
 		out += "Ctrl+";
 	}
-	if (mods & SDL_KMOD_SHIFT) {
+	if (any(mods & Mod::Shift)) {
 		out += "Shift+";
 	}
-	if (mods & SDL_KMOD_ALT) {
+	if (any(mods & Mod::Alt)) {
 		out += "Alt+";
 	}
-	if (mods & SDL_KMOD_GUI) {
+	if (any(mods & Mod::Gui)) {
 		out += "Gui+";
 	}
-	const char* name = SDL_GetKeyName(key);
-	out += (name && *name) ? name : "?";
+	const std::string_view name = key_name(key);
+	out += name.empty() ? "?" : name;
 	return out;
 }
 
@@ -77,20 +69,20 @@ std::optional<KeyChord> parse_key_chord(const std::string& text)
 	for (std::size_t i = 0; i + 1 < parts.size(); ++i) {
 		const std::string modifier = lower(parts[i]);
 		if (modifier == "ctrl" || modifier == "control") {
-			chord.mods |= SDL_KMOD_CTRL;
+			chord.mods |= Mod::Ctrl;
 		} else if (modifier == "shift") {
-			chord.mods |= SDL_KMOD_SHIFT;
+			chord.mods |= Mod::Shift;
 		} else if (modifier == "alt") {
-			chord.mods |= SDL_KMOD_ALT;
+			chord.mods |= Mod::Alt;
 		} else if (modifier == "gui" || modifier == "super" || modifier == "cmd") {
-			chord.mods |= SDL_KMOD_GUI;
+			chord.mods |= Mod::Gui;
 		} else {
 			return std::nullopt;
 		}
 	}
 
-	chord.key = SDL_GetKeyFromName(parts.back().c_str());
-	if (chord.key == SDLK_UNKNOWN) {
+	chord.key = key_from_name(parts.back());
+	if (chord.key == Key::Unknown) {
 		return std::nullopt;
 	}
 	return chord;
@@ -121,7 +113,7 @@ std::optional<KeyChord> Keybinds::chord(const std::string& action) const
 	return it->second;
 }
 
-std::string Keybinds::action_for(const SDL_Event& event) const
+std::string Keybinds::action_for(const KeyEvent& event) const
 {
 	for (const auto& [action, chord] : bindings_) {
 		if (chord.matches(event)) {
@@ -217,17 +209,17 @@ bool Keybinds::save(const std::string& path, std::string* error) const
 Keybinds default_keybinds()
 {
 	Keybinds keybinds;
-	keybinds.define("editor.toggle", KeyChord{SDLK_F1, SDL_KMOD_NONE});
-	keybinds.define("console.toggle", KeyChord{SDLK_F2, SDL_KMOD_NONE});
+	keybinds.define("editor.toggle", KeyChord{Key::F1, Mod::None});
+	keybinds.define("console.toggle", KeyChord{Key::F2, Mod::None});
 	// F5 sits with the F1/F2 view keys, clear of gameplay (WASD, Shift,
 	// Space, mouse) and of the Ctrl+ editor chords.
 	keybinds.define("camera.toggle_third_person",
-	                KeyChord{SDLK_F5, SDL_KMOD_NONE});
-	keybinds.define("undo", KeyChord{SDLK_Z, SDL_KMOD_CTRL});
-	keybinds.define("redo", KeyChord{SDLK_Y, SDL_KMOD_CTRL});
-	keybinds.define("scene.save", KeyChord{SDLK_S, SDL_KMOD_CTRL});
-	keybinds.define("scene.reload", KeyChord{SDLK_R, SDL_KMOD_CTRL});
-	keybinds.define("quit", KeyChord{SDLK_Q, SDL_KMOD_CTRL});
+	                KeyChord{Key::F5, Mod::None});
+	keybinds.define("undo", KeyChord{Key::Z, Mod::Ctrl});
+	keybinds.define("redo", KeyChord{Key::Y, Mod::Ctrl});
+	keybinds.define("scene.save", KeyChord{Key::S, Mod::Ctrl});
+	keybinds.define("scene.reload", KeyChord{Key::R, Mod::Ctrl});
+	keybinds.define("quit", KeyChord{Key::Q, Mod::Ctrl});
 	return keybinds;
 }
 
