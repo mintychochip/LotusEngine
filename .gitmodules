@@ -19,3 +19,9 @@
 [submodule "dependencies/jolt"]
 	path = dependencies/jolt
 	url = https://github.com/jrouwe/JoltPhysics.git
+[submodule "dependencies/glfw"]
+	path = dependencies/glfw
+	url = https://github.com/glfw/glfw.git
+[submodule "dependencies/vulkan-headers"]
+	path = dependencies/vulkan-headers
+	url = https://github.com/KhronosGroup/Vulkan-Headers.git

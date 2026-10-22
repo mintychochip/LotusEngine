@@ -41,6 +41,15 @@ add_library(lua STATIC ${LUA_SOURCES})
 target_include_directories(lua PUBLIC ${CMAKE_SOURCE_DIR}/dependencies/lua)
 target_link_libraries(lua PUBLIC m)
 
+# === GLFW (window, input, Vulkan surface; built from the submodule) ===
+# Needs the X11 and Wayland development packages on Linux (README lists them);
+# pass -DGLFW_BUILD_X11=OFF or -DGLFW_BUILD_WAYLAND=OFF to build for one only.
+set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+add_subdirectory(dependencies/glfw EXCLUDE_FROM_ALL)
+
 include(FindLotusSDL3)
 include(FindLotusVulkanHeaders)
 
