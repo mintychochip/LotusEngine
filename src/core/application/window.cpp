@@ -11,8 +11,10 @@
 #include <cctype>
 #include <csignal>
 #include <cstdlib>
+#include <filesystem>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 
 #include "core/application/glfw_input.hpp"
 
@@ -69,6 +71,20 @@ std::string glfw_error()
 	const char* description = nullptr;
 	glfwGetError(&description);
 	return description != nullptr ? description : "unknown error";
+}
+
+/// The running executable's file name ("lotus", "lotus_rpg"): the name SDL gave
+/// windows, and what window rules and task bars match on. Linux reads it from
+/// /proc; elsewhere, or when that fails, "lotus" (only Wayland and X11 use it).
+std::string executable_name()
+{
+	std::error_code error;
+	const std::filesystem::path exe =
+	        std::filesystem::read_symlink("/proc/self/exe", error);
+	if (!error && exe.has_filename()) {
+		return exe.filename().string();
+	}
+	return "lotus";
 }
 
 /// Applies LOTUS_WINDOW_PLATFORM as GLFW's platform hint.
@@ -131,6 +147,13 @@ Window::Window(int width, int height, const std::string& title)
 	// Vulkan does the drawing: GLFW must not make an OpenGL context.
 	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 	glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
+	// How compositors and window managers know the application (window rules,
+	// task bars, icons). SDL named windows after the executable; GLFW leaves
+	// the name empty unless told.
+	const std::string app_id = executable_name();
+	glfwWindowHintString(GLFW_WAYLAND_APP_ID, app_id.c_str());
+	glfwWindowHintString(GLFW_X11_CLASS_NAME, app_id.c_str());
+	glfwWindowHintString(GLFW_X11_INSTANCE_NAME, app_id.c_str());
 	handle_ = glfwCreateWindow(width, height, title.c_str(), nullptr, nullptr);
 	if (handle_ == nullptr) {
 		const std::string why = glfw_error();

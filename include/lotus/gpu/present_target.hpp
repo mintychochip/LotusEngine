@@ -22,9 +22,11 @@ public:
 	virtual std::vector<std::string> vulkan_instance_extensions() const = 0;
 
 	/// Creates this target's Vulkan surface. \p instance is the VkInstance and
-	/// \p get_instance_proc the loader's vkGetInstanceProcAddr. Returns the
-	/// VkSurfaceKHR handle, which the caller destroys with vkDestroySurfaceKHR.
-	/// Throws std::runtime_error when no surface can be made.
+	/// \p get_instance_proc the loader's vkGetInstanceProcAddr, for a target
+	/// that has no Vulkan loader of its own (the headless test target); one
+	/// that does, like GLFW's window, may ignore it. Returns the VkSurfaceKHR
+	/// handle, which the caller destroys with vkDestroySurfaceKHR. Throws
+	/// std::runtime_error when no surface can be made.
 	virtual std::uint64_t create_vulkan_surface(void* instance,
 	                                            void* get_instance_proc) = 0;
 };

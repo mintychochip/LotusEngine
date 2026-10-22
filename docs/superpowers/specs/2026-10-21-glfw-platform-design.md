@@ -29,6 +29,8 @@ Acceptance (all must hold):
 | SDL3 use | Replacement |
 |---|---|
 | `SDL_CreateWindow`, `SDL_PollEvent`, quit/close events | `lotus::Window` on GLFW: `glfwCreateWindow`, `glfwPollEvents`; callbacks queue engine events |
+| SDL's handlers turning SIGINT and SIGTERM into a quit event (installed by `SDL_Init`) | `Window` takes both over while it exists, only when still at their default; `poll_events` turns them into a close request, so Ctrl-C and `kill` run the shutdown as before |
+| SDL's window identity: the executable name, as Wayland app id and as X11 instance and class | `Window` sets the same three from the executable name through GLFW's window hints |
 | `SDL_GetKeyboardState`, `SDL_Scancode` (player, RPG) | `lotus::Input`, the key state the window keeps from key events, and `lotus::Key` |
 | `SDL_Keycode`, `SDL_Keymod`, `SDL_GetKeyName`/`FromName` (keybinds) | `Key`, `Mod`, `key_name()`/`key_from_name()`; the names stay the ones `keybinds.json` already holds |
 | `SDL_GetMouseState`, `SDL_EVENT_MOUSE_MOTION` | `Input` mouse position and buttons; `MouseMoveEvent` with deltas |
@@ -91,9 +93,11 @@ Unit tests for key names, translation totality, `Input` state transitions, keybi
 key state, and `Window` fed the callbacks GLFW would call (on GLFW's null platform, no display). The whole suite on the
 three devices with validation. Windowed runs on Wayland and X11 with validation, close via the compositor, and the
 editor drawing. A fresh clone built from nothing. The operating-system-to-GLFW leg of the keyboard is checked on X11
-by injecting real key events with XTest (a bound key and an unbound control); Wayland and the mouse cannot be
-injected here (no `wtype`/`ydotool`, niri offers no virtual keyboard, and XTest pointer events would move the
-session's real cursor), so those are checked by running the application and by the tests above.
+by injecting real key events with XTest (a bound key and an unbound control). That only works on X11, and a key only
+lands while the window has focus, so the check has to confirm focus first; a run where another window had focus
+showed nothing arriving and proves nothing. Wayland and the mouse cannot be injected here (no `wtype`/`ydotool`, niri
+offers no virtual keyboard, and XTest pointer events would move the session's real cursor), so those are checked by
+running the application and by the tests above.
 
 ## Risks
 
