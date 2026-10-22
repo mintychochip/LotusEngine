@@ -165,6 +165,15 @@ std::vector<uint8_t> GpuRendererVulkan::download_image_rgba(
 		std::memcpy(pixels.data() + static_cast<std::size_t>(y) * row_bytes,
 		            src + y * pitch, row_bytes);
 	}
+	// The API promises RGBA, but a windowed session renders in the swapchain's
+	// format, which is BGRA on the drivers that can present here.
+	if (image.format == VK_FORMAT_B8G8R8A8_UNORM) {
+		for (std::size_t i = 0; i + 3 < pixels.size(); i += 4) {
+			const uint8_t blue = pixels[i];
+			pixels[i]          = pixels[i + 2];
+			pixels[i + 2]      = blue;
+		}
+	}
 	memory_.destroy_buffer(readback);
 	return pixels;
 }
@@ -693,7 +702,6 @@ void GpuRendererVulkan::end_viewport_pass()
 	if (!viewport_pass_open_) {
 		return;
 	}
-	viewport_pass_open_ = false;
 	if (cmd_ != VK_NULL_HANDLE) {
 		// A pass that drew nothing never began rendering: begin it now
 		// with the full clear, exactly as before.
@@ -713,6 +721,10 @@ void GpuRendererVulkan::end_viewport_pass()
 		// (begin_scene_pass / end_scene_pass) stays authoritative for
 		// occlusion.
 	}
+	// Cleared last: begin_rendering above takes the viewport's own
+	// linear-depth and depth images only while the pass is still open, so a
+	// pass that drew nothing must not close first, or it clears the scene's.
+	viewport_pass_open_ = false;
 }
 
 std::vector<uint8_t> GpuRendererVulkan::capture_viewport_rgba(

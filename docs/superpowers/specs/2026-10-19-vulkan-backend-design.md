@@ -205,6 +205,16 @@ Swapchain synchronisation (each point is a validation finding, not a style choic
 - A rebuild (resize, OUT_OF_DATE, SUBOPTIMAL) idles the device first: frames in flight still reference
   the old images, views and present semaphores, and a resize keeps the format, so the pipeline rebuild
   cannot be relied on to wait.
+- OUT_OF_DATE at acquire acquires nothing: the frame is skipped and the rebuild happens in the next
+  `begin_frame`, at the window's current size (rebuilding inside the acquire would use the stale stored
+  size, and a second consecutive OUT_OF_DATE would have no way out). A surface reporting 0x0 (a
+  minimized window) is a quiet skip, not a failure. A first-ever creation failure is fatal, as in
+  SDL_GPU (a window that runs but never draws is no fallback); a failed rebuild skips frames and says
+  so once.
+- The session's colour format is the swapchain's (B8G8R8A8 on every driver that can present here), so
+  the viewport follows it and `capture_viewport_rgba()` swizzles to the RGBA8 the API promises. A
+  viewport pass that draws nothing still begins rendering into the viewport's own targets
+  (`end_viewport_pass` closes the pass only after that).
 - ImGui resolves its entry points through `vkGetInstanceProcAddr` (it asks for instance- and
   device-level names alike; `vkGetDeviceProcAddr` is invalid for the former).
 

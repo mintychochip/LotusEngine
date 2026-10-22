@@ -1,10 +1,11 @@
-// Windowed-path test for the Vulkan backend: swapchain acquire, scene
-// rendering in the swapchain format, present and validation silence.
+// Windowed-path tests for the Vulkan backend: swapchain acquire, scene
+// rendering in the swapchain format, present, capture and validation silence.
 //
-// Backend-agnostic: on other backends it skips. The surface comes from SDL's
-// offscreen video driver, which creates a VK_EXT_headless_surface one: the
-// lavapipe and Intel drivers present to it, NVIDIA does not, so init throws
-// "no suitable Vulkan device" there and the test skips cleanly.
+// Backend-agnostic: on other backends they skip. The surface comes from SDL's
+// offscreen video driver, which creates a VK_EXT_headless_surface one: Intel's
+// driver presents to it. NVIDIA does not, so init throws "no suitable Vulkan
+// device" there, and lavapipe cannot either (see SetUp). Both skip cleanly;
+// their swapchains are covered by running the windowed application.
 
 #include <gtest/gtest.h>
 
@@ -38,13 +39,14 @@ uint32_t test_vulkan_validation_messages(const GpuRenderer& gpu);
 
 namespace {
 
-/// SDL video for a test that owns a window; the offscreen driver needs no
-/// display, which is what lets this run in a container.
+/// A windowed Vulkan session over a hidden window on SDL's offscreen video
+/// driver, which needs no display (that is what lets this run in a
+/// container). Skips when no device can present to such a surface.
 class VulkanWindowSwapchain : public ::testing::Test {
 protected:
 	void SetUp() override
 	{
-		// This test's point is a silent validation layer, so it asks for
+		// These tests' point is a silent validation layer, so they ask for
 		// it, synchronization validation included (the acquire/present
 		// hazards only show there), unless the caller already chose a mode.
 		// Honoured only where the layer is installed; undone in TearDown so
@@ -56,10 +58,42 @@ protected:
 		SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "offscreen");
 		owned_sdl_ = SDL_Init(SDL_INIT_VIDEO);
 		ASSERT_TRUE(owned_sdl_) << SDL_GetError();
+
+		gpu_ = create_gpu_renderer();
+		if (!test_is_vulkan_backend(*gpu_)) {
+			GTEST_SKIP() << "not the Vulkan backend";
+		}
+		window_ = SDL_CreateWindow("lotus-vk-window-test", 320, 240,
+		                           SDL_WINDOW_VULKAN | SDL_WINDOW_HIDDEN);
+		ASSERT_NE(window_, nullptr) << SDL_GetError();
+		try {
+			gpu_->init(window_);
+		} catch (const std::runtime_error& e) {
+			GTEST_SKIP() << "no present-capable device: " << e.what();
+		}
+		// Mesa's headless WSI always builds dma-buf (DRM) images, while its
+		// common code leaves vkGetMemoryFdKHR unloaded on software devices
+		// (wsi_common_headless.c / wsi_common.c, Mesa 26.0.3): creating a
+		// headless swapchain on lavapipe calls a null pointer inside the
+		// driver. Real surfaces (Wayland, X11) take the software path
+		// instead, so lavapipe's swapchain is covered by running the
+		// windowed application.
+		if (std::string_view{gpu_->device_driver()} == "llvmpipe") {
+			GTEST_SKIP() << "Mesa headless WSI cannot create a swapchain on "
+			                "software devices";
+		}
 	}
 
 	void TearDown() override
 	{
+		// The renderer goes first: it owns the surface made from the window.
+		if (gpu_) {
+			gpu_->shutdown();
+			gpu_.reset();
+		}
+		if (window_ != nullptr) {
+			SDL_DestroyWindow(window_);
+		}
 		if (owned_sdl_) {
 			SDL_Quit();
 		}
@@ -68,6 +102,10 @@ protected:
 		}
 	}
 
+	GpuRenderer& gpu() { return *gpu_; }
+
+	std::unique_ptr<GpuRenderer> gpu_;
+	SDL_Window* window_{nullptr};
 	bool owned_sdl_{false};
 	bool set_validation_env_{false};
 };
@@ -122,33 +160,7 @@ void render_window_frame(GpuRenderer& gpu, SDL_Window* window, Scene& scene,
 /// and validation stays silent throughout.
 TEST_F(VulkanWindowSwapchain, AcquireRenderPresentStaysValidationClean)
 {
-	const std::unique_ptr<GpuRenderer> owned = create_gpu_renderer();
-	GpuRenderer& gpu = *owned;
-	if (!test_is_vulkan_backend(gpu)) {
-		GTEST_SKIP() << "not the Vulkan backend";
-	}
-	SDL_Window* window = SDL_CreateWindow("lotus-vk-window-test", 320, 240,
-	                                      SDL_WINDOW_VULKAN |
-	                                              SDL_WINDOW_HIDDEN);
-	ASSERT_NE(window, nullptr) << SDL_GetError();
-	try {
-		gpu.init(window);
-	} catch (const std::runtime_error& e) {
-		SDL_DestroyWindow(window);
-		GTEST_SKIP() << "no present-capable device: " << e.what();
-	}
-	// Mesa's headless WSI always builds dma-buf (DRM) images, while its
-	// common code leaves vkGetMemoryFdKHR unloaded on software devices
-	// (wsi_common_headless.c / wsi_common.c, Mesa 26.0.3): creating a
-	// headless swapchain on lavapipe calls a null pointer inside the driver.
-	// Real surfaces (Wayland, X11) take the software path instead, so
-	// lavapipe's swapchain is covered by running the windowed application.
-	if (std::string_view{gpu.device_driver()} == "llvmpipe") {
-		gpu.shutdown();
-		SDL_DestroyWindow(window);
-		GTEST_SKIP() << "Mesa headless WSI cannot create a swapchain on "
-		                "software devices";
-	}
+	GpuRenderer& gpu = this->gpu();
 	// The UI backend over the (still unacquired) swapchain: created now,
 	// its pipeline follows once the first frame lands the format. Like the
 	// editor, the caller owns the ImGui context the backend attaches to.
@@ -158,12 +170,12 @@ TEST_F(VulkanWindowSwapchain, AcquireRenderPresentStaysValidationClean)
 	const uint64_t before  = gpu.frames_rendered();
 	constexpr int kFrames  = 5;
 	for (int frame = 0; frame < kFrames; ++frame) {
-		render_window_frame(gpu, window, scene, 320.0f / 240.0f);
+		render_window_frame(gpu, window_, scene, 320.0f / 240.0f);
 	}
 	// A resize rebuilds the swapchain; frames keep presenting after.
-	SDL_SetWindowSize(window, 160, 120);
+	SDL_SetWindowSize(window_, 160, 120);
 	for (int frame = 0; frame < 3; ++frame) {
-		render_window_frame(gpu, window, scene, 160.0f / 120.0f);
+		render_window_frame(gpu, window_, scene, 160.0f / 120.0f);
 	}
 	gpu.wait_idle();
 	EXPECT_GE(gpu.frames_rendered(), before + kFrames + 3);
@@ -171,6 +183,38 @@ TEST_F(VulkanWindowSwapchain, AcquireRenderPresentStaysValidationClean)
 	        << "validation layer reported errors";
 	gpu.shutdown_ui_backend();
 	ImGui::DestroyContext();
-	gpu.shutdown();
-	SDL_DestroyWindow(window);
+}
+
+/// A windowed session renders in the swapchain's format, which is B8G8R8A8 on
+/// the drivers that can present here, yet the viewport capture promises RGBA8.
+/// A clear colour with three different channels, each exact in UNORM8, must
+/// come back in R, G, B order whatever the format.
+TEST_F(VulkanWindowSwapchain, ViewportCaptureIsRgbaInTheSwapchainFormat)
+{
+	GpuRenderer& gpu = this->gpu();
+	// Nothing but the clear colour reaches the pixels: no geometry, no FXAA.
+	gpu.lighting().fxaa_enabled = false;
+	gpu.begin_frame(window_, 0.8f, 0.4f, 0.2f);
+	ASSERT_TRUE(gpu.has_frame());
+	// After the first acquire, which is when the session learns the swapchain
+	// format: the viewport is created in it.
+	ASSERT_TRUE(gpu.resize_viewport(16, 16));
+	ASSERT_TRUE(gpu.begin_viewport_pass());
+	gpu.end_viewport_pass();
+	gpu.end_frame();
+
+	uint32_t width  = 0;
+	uint32_t height = 0;
+	const std::vector<uint8_t> pixels = gpu.capture_viewport_rgba(width, height);
+	ASSERT_EQ(width, 16u);
+	ASSERT_EQ(height, 16u);
+	ASSERT_EQ(pixels.size(), 16u * 16u * 4u);
+	for (std::size_t offset = 0; offset < pixels.size(); offset += 4) {
+		ASSERT_EQ(pixels[offset + 0], 204) << "red of pixel " << offset / 4;
+		ASSERT_EQ(pixels[offset + 1], 102) << "green of pixel " << offset / 4;
+		ASSERT_EQ(pixels[offset + 2], 51) << "blue of pixel " << offset / 4;
+		ASSERT_EQ(pixels[offset + 3], 255) << "alpha of pixel " << offset / 4;
+	}
+	EXPECT_EQ(test_vulkan_validation_messages(gpu), 0u)
+	        << "validation layer reported errors";
 }

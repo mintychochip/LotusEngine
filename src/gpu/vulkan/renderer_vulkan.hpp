@@ -422,8 +422,9 @@ private:
 	/// which the next acquire observes.
 	std::vector<vk::ImageState> swapchain_states_;
 	uint32_t swapchain_index_{0};
-	/// Present returned SUBOPTIMAL, or the window changed size: rebuild the
-	/// swapchain in the next begin_frame, before acquiring.
+	/// Present or acquire returned SUBOPTIMAL or OUT_OF_DATE, or the window
+	/// changed size: rebuild the swapchain in the next begin_frame, at the
+	/// window's current size, before acquiring.
 	bool swapchain_rebuild_{false};
 	/// The last swapchain rebuild failure that was reported, so a persistent
 	/// failure is said once instead of on every skipped frame.
@@ -529,7 +530,14 @@ private:
 	/// swapchain_states_).
 	vk::Image windowed_image() const;
 	void destroy_swapchain();
-	void create_swapchain(uint32_t width, uint32_t height);
+	/// (Re)builds the swapchain at \p width x \p height, or at the size the
+	/// surface dictates. Returns false, touching nothing, while the surface
+	/// has no pixels to present to (a minimized window can report 0x0): that
+	/// is not a failure, the caller skips the frame. Vulkan failures throw.
+	bool create_swapchain(uint32_t width, uint32_t height);
+	/// Acquires the next image into swapchain_index_. False when the frame
+	/// must be skipped; an out-of-date swapchain is rebuilt by the next
+	/// begin_frame.
 	bool acquire_swapchain_image();
 	void end_frame_windowed();
 	void present_swapchain();

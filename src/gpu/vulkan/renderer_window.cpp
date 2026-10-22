@@ -186,7 +186,7 @@ void GpuRendererVulkan::on_swapchain_format(VkFormat format)
 	ui_pipeline_format_ = VK_FORMAT_UNDEFINED;
 }
 
-void GpuRendererVulkan::create_swapchain(uint32_t width, uint32_t height)
+bool GpuRendererVulkan::create_swapchain(uint32_t width, uint32_t height)
 {
 	const vk::Api& api         = context_.api;
 	const VkDevice device      = context_.device;
@@ -210,7 +210,10 @@ void GpuRendererVulkan::create_swapchain(uint32_t width, uint32_t height)
 		                           caps.maxImageExtent.height);
 	}
 	if (extent.width == 0 || extent.height == 0) {
-		throw std::runtime_error("window has no pixels to present to");
+		// A minimized window can report a 0x0 surface even when SDL's size
+		// is not: there is nothing to present to yet, which is not a
+		// failure. Nothing has been touched, so the caller just retries.
+		return false;
 	}
 	const VkSurfaceFormatKHR surface_format =
 	        choose_surface_format(api, context_.physical_device, surface);
@@ -331,34 +334,36 @@ void GpuRendererVulkan::create_swapchain(uint32_t width, uint32_t height)
 	swapchain_index_   = 0;
 	swapchain_rebuild_ = false;
 	create_ui_pipeline();
+	return true;
 }
 
 bool GpuRendererVulkan::acquire_swapchain_image()
 {
-	for (int attempt = 0; attempt < 2; ++attempt) {
-		const VkResult result = context_.api.AcquireNextImageKHR(
-		        context_.device, swapchain_, UINT64_MAX,
-		        acquire_semaphores_[slot_index_], VK_NULL_HANDLE,
-		        &swapchain_index_);
-		if (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) {
-			if (result == VK_SUBOPTIMAL_KHR) {
-				swapchain_rebuild_ = true;
-			}
-			return true;
-		}
-		if (result == VK_ERROR_OUT_OF_DATE_KHR && attempt == 0) {
-			// The window changed under us: rebuild at the stored size and
-			// try once more; anything else leaves the frame skipped.
-			create_swapchain(swapchain_width_, swapchain_height_);
-			continue;
-		}
-		if (result == VK_TIMEOUT || result == VK_NOT_READY) {
-			return false;
-		}
+	const VkResult result = context_.api.AcquireNextImageKHR(
+	        context_.device, swapchain_, UINT64_MAX,
+	        acquire_semaphores_[slot_index_], VK_NULL_HANDLE,
+	        &swapchain_index_);
+	switch (result) {
+	case VK_SUCCESS:
+		return true;
+	case VK_SUBOPTIMAL_KHR:
+		// The image is acquired and usable: rebuild before the next frame.
+		swapchain_rebuild_ = true;
+		return true;
+	case VK_ERROR_OUT_OF_DATE_KHR:
+		// The window changed under us and no image was acquired: skip the
+		// frame. begin_frame rebuilds at the window's current size next
+		// time; rebuilding here would use the stale stored size, and a
+		// second consecutive out-of-date result would have no way out.
+		swapchain_rebuild_ = true;
+		return false;
+	case VK_TIMEOUT:
+	case VK_NOT_READY:
+		return false;
+	default:
 		vk::check(result, "vkAcquireNextImageKHR");
 		return false;
 	}
-	return false;
 }
 
 void GpuRendererVulkan::begin_frame(SDL_Window* window, float clear_r,
@@ -386,7 +391,10 @@ void GpuRendererVulkan::begin_frame(SDL_Window* window, float clear_r,
 	if (swapchain_ == VK_NULL_HANDLE || swapchain_rebuild_ ||
 	    want_w != swapchain_width_ || want_h != swapchain_height_) {
 		try {
-			create_swapchain(want_w, want_h);
+			if (!create_swapchain(want_w, want_h)) {
+				// No pixels to present to yet (minimized): skip the frame.
+				return;
+			}
 		} catch (const std::exception& error) {
 			if (swapchain_format_ == VK_FORMAT_UNDEFINED) {
 				// No swapchain was ever made: this surface and driver
