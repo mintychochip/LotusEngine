@@ -84,6 +84,17 @@ state — the Hi-Z pyramid's one-frame lag, SSAO's one-frame lag, frames in flig
 and nothing else, so this is the acceptance test between SDL_GPU and Vulkan on each device. Timing keeps
 its own per-frame distribution (`frame_ms`, `frame_ms_p90`, per-round medians).
 
+### Tests on machines without a Vulkan device
+
+The GPU tests skip, with the reason, when the Vulkan loader reports no device the renderer could use
+(`test/vulkan_device.hpp`: SDL cannot load Vulkan, no instance, no physical device, none at Vulkan 1.3). The
+probe asks the loader directly instead of catching the renderer's exception, because a device that exists but
+fails to initialise must still fail the tests; the windowed tests also skip when the loader lacks
+`VK_EXT_headless_surface` (NVIDIA). `LOTUS_REQUIRE_VULKAN=1` turns a missing device into a failure, which CI
+sets: a probe that wrongly claimed no device would otherwise drop the GPU tests silently (checked by mutation).
+`ctest` runs the suite a second time with the drivers hidden (`LotusTestsWithoutVulkanDevice`), so a Vulkan
+test that forgets the check is caught on machines that have a GPU.
+
 ## What SDL_GPU does today (so the port can match it)
 
 SDL's Vulkan backend (`SDL_gpu_vulkan.c`, SDL 3.4.0) is Vulkan 1.0 core + `KHR_maintenance1`:

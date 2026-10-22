@@ -22,7 +22,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             cmake ninja-build build-essential \
-            libvulkan-dev vulkan-tools \
+            libvulkan-dev vulkan-tools mesa-vulkan-drivers \
             libsdl3-dev \
             xvfb
 
@@ -34,4 +34,9 @@ jobs:
 
       - name: Test
         working-directory: build
+        env:
+          # mesa-vulkan-drivers gives this job a software Vulkan device
+          # (lavapipe), so a missing one is a failure, not a quiet skip of
+          # every GPU test.
+          LOTUS_REQUIRE_VULKAN: "1"
         run: xvfb-run -a ctest --output-on-failure

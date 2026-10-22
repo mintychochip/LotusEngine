@@ -171,6 +171,16 @@ if (LOTUS_TEST_SOURCES)
 
     add_test(NAME LotusTests COMMAND lotus_tests)
 
+    # The same suite on a machine with no Vulkan driver: the GPU tests must
+    # skip, not fail. A Vulkan test that forgets to check for a device passes
+    # everywhere that has one, so only this run catches it. VK_ICD_FILENAMES is
+    # the spelling older loaders know for VK_DRIVER_FILES, and
+    # LOTUS_REQUIRE_VULKAN=0 undoes the CI setting that turns a missing device
+    # into a failure.
+    add_test(NAME LotusTestsWithoutVulkanDevice COMMAND lotus_tests)
+    set_tests_properties(LotusTestsWithoutVulkanDevice PROPERTIES
+        ENVIRONMENT "VK_DRIVER_FILES=/nonexistent;VK_ICD_FILENAMES=/nonexistent;LOTUS_REQUIRE_VULKAN=0")
+
     # Optional: copy assets to test working directory
     file(COPY ${CMAKE_SOURCE_DIR}/shaders DESTINATION ${CMAKE_BINARY_DIR}/test)
     file(COPY ${CMAKE_SOURCE_DIR}/assets DESTINATION ${CMAKE_BINARY_DIR}/test)

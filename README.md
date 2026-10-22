@@ -43,6 +43,12 @@ cd build && ./bin/lotus_tests
 
 GPU occlusion tests: `./bin/lotus_tests --gtest_filter=OcclusionGpuTest.*`
 
+The GPU tests need a Vulkan 1.3 device (lavapipe, from the `mesa-vulkan-drivers`
+package, is enough). On a machine without one they skip and say why, while a
+device that exists but breaks the renderer still fails them. `ctest` runs the
+suite a second time with the drivers hidden to keep that true, and
+`LOTUS_REQUIRE_VULKAN=1` turns a missing device into a failure (CI sets it).
+
 Regenerate shaders (requires `glslangValidator`):
 
 ```bash

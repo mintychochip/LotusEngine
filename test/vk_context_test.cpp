@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 
 #include "gpu/vk/vk_context.hpp"
+#include "vulkan_device.hpp"
 
 using namespace lotus;
 
@@ -15,6 +16,7 @@ protected:
 		SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "offscreen");
 		owned_sdl_ = SDL_Init(SDL_INIT_VIDEO);
 		ASSERT_TRUE(owned_sdl_) << SDL_GetError();
+		LOTUS_SKIP_WITHOUT_VULKAN_DEVICE();
 	}
 
 	void TearDown() override

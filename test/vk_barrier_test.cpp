@@ -9,6 +9,7 @@
 #include "gpu/vk/vk_barrier.hpp"
 #include "gpu/vk/vk_context.hpp"
 #include "gpu/vk/vk_memory.hpp"
+#include "vulkan_device.hpp"
 
 using namespace lotus;
 
@@ -22,6 +23,7 @@ protected:
 		SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "offscreen");
 		owned_sdl_ = SDL_Init(SDL_INIT_VIDEO);
 		ASSERT_TRUE(owned_sdl_) << SDL_GetError();
+		LOTUS_SKIP_WITHOUT_VULKAN_DEVICE();
 		context_.init({});
 		ASSERT_TRUE(context_.valid());
 		memory_.init(context_);

@@ -2,17 +2,18 @@
 // rendering in the swapchain format, present, capture and validation silence.
 //
 // The surface comes from SDL's offscreen video driver, which creates a
-// VK_EXT_headless_surface one: Intel's driver presents to it. NVIDIA does not,
-// so init throws "no suitable Vulkan device" there, and lavapipe cannot either
-// (see SetUp). Both skip cleanly; their swapchains are covered by running the
-// windowed application.
+// VK_EXT_headless_surface one. Mesa's drivers (Intel, lavapipe) offer that
+// extension and NVIDIA's does not, so the tests skip there, as they do on a
+// machine with no Vulkan device (see vulkan_device.hpp). They also skip on
+// lavapipe, for a Mesa bug (see SetUp); both swapchains are covered by running
+// the windowed application. Any other failure to start a windowed session
+// fails the tests.
 
 #include <gtest/gtest.h>
 
 #include <cstdint>
 #include <cstdlib>
 #include <memory>
-#include <stdexcept>
 #include <string_view>
 #include <vector>
 
@@ -23,6 +24,7 @@
 #include "lotus/gpu/renderer.hpp"
 #include "lotus/scene/components.hpp"
 #include "lotus/scene/scene.hpp"
+#include "vulkan_device.hpp"
 
 using namespace lotus;
 
@@ -38,7 +40,8 @@ namespace {
 
 /// A windowed Vulkan session over a hidden window on SDL's offscreen video
 /// driver, which needs no display (that is what lets this run in a
-/// container). Skips when no device can present to such a surface.
+/// container). Skips when the machine has no device, or no headless surface to
+/// present to.
 class VulkanWindowSwapchain : public ::testing::Test {
 protected:
 	void SetUp() override
@@ -55,16 +58,14 @@ protected:
 		SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "offscreen");
 		owned_sdl_ = SDL_Init(SDL_INIT_VIDEO);
 		ASSERT_TRUE(owned_sdl_) << SDL_GetError();
+		LOTUS_SKIP_WITHOUT_VULKAN_DEVICE();
+		LOTUS_SKIP_WITHOUT_HEADLESS_SURFACE();
 
 		gpu_ = create_gpu_renderer();
 		window_ = SDL_CreateWindow("lotus-vk-window-test", 320, 240,
 		                           SDL_WINDOW_VULKAN | SDL_WINDOW_HIDDEN);
 		ASSERT_NE(window_, nullptr) << SDL_GetError();
-		try {
-			gpu_->init(window_);
-		} catch (const std::runtime_error& e) {
-			GTEST_SKIP() << "no present-capable device: " << e.what();
-		}
+		gpu_->init(window_);
 		// Mesa's headless WSI always builds dma-buf (DRM) images, while its
 		// common code leaves vkGetMemoryFdKHR unloaded on software devices
 		// (wsi_common_headless.c / wsi_common.c, Mesa 26.0.3): creating a
