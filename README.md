@@ -124,7 +124,7 @@ plus a fidelity check against `bench/golden/render_bench.png`.
 |---|---|
 | `LOTUS_NO_UI=1` | Hide the editor UI |
 | `LOTUS_MAX_FRAMES=N` | Exit after N frames |
-| `LOTUS_WINDOW_PLATFORM=wayland\|x11\|null` | Window system GLFW uses (default: Wayland when `WAYLAND_DISPLAY` is set, else X11); `null` needs no display and cannot present |
+| `LOTUS_WINDOW_PLATFORM=wayland\|x11\|null` | Window system GLFW uses (default: the session's, from `XDG_SESSION_TYPE`, otherwise Wayland then X11); `null` needs no display and cannot present |
 | `LOTUS_CONSOLE="cmd; …"` | Run console commands at startup |
 | `LOTUS_PRESENT_MODE=mailbox\|immediate` | Vulkan backend: swapchain present mode (default FIFO, also used when the surface lacks the requested mode) |
 | `LOTUS_VK_VALIDATION=1\|sync` | Vulkan backend: Khronos validation layer when installed (`sync` adds synchronization validation); messages are printed and counted, and the Vulkan tests assert zero |

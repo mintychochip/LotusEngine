@@ -21,8 +21,9 @@ namespace lotus {
 /// the process already ignores or handles is left as it is.
 ///
 /// LOTUS_WINDOW_PLATFORM=wayland|x11|null picks GLFW's platform; unset, GLFW
-/// uses Wayland when WAYLAND_DISPLAY is set and X11 otherwise. `null` needs no
-/// display and cannot present, which is what lets the window code be tested.
+/// follows the session (XDG_SESSION_TYPE) and otherwise tries Wayland, then
+/// X11. `null` needs no display and cannot present, which is what lets the
+/// window code be tested.
 class Window final : public PresentTarget {
 public:
 	/// Throws std::runtime_error with GLFW's message when no window can be

@@ -68,7 +68,7 @@ Acceptance (all must hold):
   velocity.
 - **Headless** (`lotus --headless`, the bench, GPU tests) opens the Vulkan loader and never initialises a window system.
 - **`LOTUS_WINDOW_PLATFORM=wayland|x11|null`** selects GLFW's platform (it replaces `SDL_VIDEO_DRIVER`). Unset, GLFW
-  picks Wayland when `WAYLAND_DISPLAY` is set, else X11.
+  follows the session (`XDG_SESSION_TYPE`) and otherwise tries Wayland, then X11.
 
 ## Behaviour changes, stated plainly
 
@@ -101,3 +101,28 @@ session's real cursor), so those are checked by running the application and by t
   run on niri is the check.
 - Windows and macOS code paths are untested.
 - GLFW is a new submodule to keep current; it is pinned to a release tag.
+
+## Results
+
+Measured on the final tree (2026-10-21). Nothing below was run on Windows or macOS, or on GitHub Actions itself (the
+branch is not pushed).
+
+| Check | Result |
+|---|---|
+| Suite, sync validation, Intel ARL | 413 passed |
+| Suite, sync validation, RTX 3080 | 411 passed, 2 skipped (NVIDIA offers no `VK_EXT_headless_surface`, so the headless-swapchain tests skip) |
+| Suite, sync validation, lavapipe | 411 passed, 2 skipped (Mesa's headless swapchain crashes on llvmpipe; the tests skip there) |
+| Suite with no Vulkan device | 386 passed, 27 skipped; with `LOTUS_REQUIRE_VULKAN=1` those 27 fail, as intended; `ctest` 2/2 |
+| `lotus --headless` `main` and `jungle`, 120 ticks, 3 devices | screenshot and state dump byte-identical to the SDL build |
+| `lotus_render_bench` image hash | NVIDIA `83a9de542ad33701`, Intel `a3bfbe901faae371`, lavapipe `a467d4ea5cdd618d`: the recorded values |
+| `lotus` windowed, 300 frames, sync validation, exit 0 | Wayland (niri) on RTX 3080 and Intel; X11 (Xwayland) on RTX 3080 |
+| `lotus` windowed on X11 with Intel | fails at `vkCreateSwapchainKHR` (`VK_ERROR_INITIALIZATION_FAILED`), identically with the SDL build: Mesa on this Xwayland, not this change |
+| `lotus_rpg` windowed, 200 frames, sync validation, Wayland | exit 0 |
+| Editor | a capture of the Wayland window shows hierarchy, inspector, stats and the rendered viewport |
+| Close | closing the window through the compositor exits 0; SIGTERM exits 0 and prints the frame count, as the SDL build did |
+| Keyboard on X11 | injected F8 (unbound) reached the engine as `Key::F8` with no action; injected F7 (bound to `quit`) arrived as `Key::F7`, resolved to `quit` and the process exited 0 |
+| Fresh clone on Ubuntu 24.04 | the install step of `.github/workflows/ci.yml` verbatim, then configure, build and `LOTUS_REQUIRE_VULKAN=1 xvfb-run -a ctest` as CI runs them: 2/2 passed |
+| Fresh clone on Fedora 44 | the README's `dnf install` line verbatim, then configure, build and `ctest` with lavapipe: 2/2 passed |
+
+Not verified: mouse events arriving from the operating system (the callbacks are tested, the OS leg is not), keyboard
+on Wayland, and the Windows and macOS paths.
