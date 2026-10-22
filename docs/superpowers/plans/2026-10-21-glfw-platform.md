@@ -34,18 +34,18 @@ export VVL='VK_ADD_LAYER_PATH=/tmp/vvl/root/usr/share/vulkan/explicit_layer.d LD
 
 ## Tasks
 
-- [ ] **T1 Vendor GLFW and Vulkan-Headers.** `.gitmodules`; `dependencies/glfw` at tag 3.5.1,
+- [x] **T1 Vendor GLFW and Vulkan-Headers.** `.gitmodules`; `dependencies/glfw` at tag 3.5.1,
       `dependencies/vulkan-headers` at v1.3.302; root `CMakeLists.txt` adds GLFW (`GLFW_BUILD_EXAMPLES/TESTS/DOCS/
       INSTALL` off); `cmake/FindLotusVulkanHeaders.cmake` points at the vendored headers only.
       Verify: configure, full build, suite unchanged (SDL is still in use).
-- [ ] **T2 Engine input types.** `include/lotus/input/key.hpp` + `src/input/key.cpp`: `Key` (physical keys, US-layout
+- [x] **T2 Engine input types.** `include/lotus/input/key.hpp` + `src/input/key.cpp`: `Key` (physical keys, US-layout
       names), `Mod` (`None, Shift, Ctrl, Alt, Gui` with `|` `&`), `key_name(Key)`, `key_from_name(string_view)`
       (case-insensitive; SDL's names for the keys keybinds already store, `Enter`/`Esc` accepted as aliases).
       `include/lotus/input/input.hpp` + `src/input/input.cpp`: `MouseButton`, `KeyEvent`, `MouseButtonEvent`,
-      `MouseMoveEvent`, `Event` (a `std::variant`), `Input` (`apply(Event)`, `release_all()`, `key_down`, `mouse_down`,
-      `mouse_x/y`, `keys()`).
+      `MouseMoveEvent`, `Event` (a `std::variant`), `Input` (`apply(Event)`, `key_down`, `mouse_down`, `mouse_x/y`,
+      `keys()`); no `release_all()`, since GLFW itself sends the releases when focus is lost.
       Tests `test/input_test.cpp`: names round-trip for every key, parse is case-insensitive, unknown names fail, SDL's
-      names kept, `Input` follows press/release/repeat, `release_all` clears keys and buttons, mouse deltas.
+      names kept, `Input` follows press/release/repeat and mouse events, the key snapshot is a copy.
 - [ ] **T3 Own Vulkan loader.** `src/gpu/vk/vk_loader.{hpp,cpp}`: `vk::Loader` opens the system loader
       (`libvulkan.so.1`, macOS and Windows names under `#if`) and exposes `vkGetInstanceProcAddr`. `vk::Context` owns
       one instead of calling `SDL_Vulkan_LoadLibrary`; `test/vulkan_device.hpp` probes through it; `headless.cpp`, the
