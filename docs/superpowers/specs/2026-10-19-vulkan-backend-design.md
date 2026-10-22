@@ -18,7 +18,12 @@ Acceptance (all must hold):
    Khronos validation layer reports **zero** errors/warnings on all of them.
 3. Window path: runs on the user's Wayland session, and the swapchain path is
    exercised headlessly (`SDL_VIDEO_DRIVER=offscreen` gives a `VK_EXT_headless_surface`
-   that Intel and lavapipe can present to; NVIDIA cannot).
+   that Intel can present to; NVIDIA cannot, and neither can lavapipe: Mesa 26.0.3's
+   headless WSI always builds dma-buf images while its common code leaves
+   `vkGetMemoryFdKHR` unloaded on software devices, so `vkCreateSwapchainKHR` calls a
+   null pointer inside the driver). NVIDIA and lavapipe are covered by running the
+   windowed application on the Wayland surface instead (lavapipe presents there
+   through wl_shm), validation and synchronization validation on.
 4. A/B report: sync frame (`frame_ms`, `cpu_ms`, `gpu_ms`) and pipelined throughput
    (fps, Mverts/s) on the three devices, SDL_GPU vs Vulkan, interleaved.
 
@@ -182,7 +187,26 @@ queue order, so single instances of the shared images serve both frames in fligh
 present mode FIFO by default, `LOTUS_PRESENT_MODE=mailbox|immediate` for uncapped fps;
 `OUT_OF_DATE/SUBOPTIMAL` recreate; images = `max(3, minImageCount)`. ImGui: `imgui_impl_vulkan`
 with dynamic rendering, owned by the renderer behind the UI hooks. `LOTUS_VK_VALIDATION=1` enables
-the validation layer + debug messenger (errors counted and printed).
+the validation layer + debug messenger (errors counted and printed); `=sync` adds synchronization
+validation, which the windowed test runs under.
+
+Swapchain synchronisation (each point is a validation finding, not a style choice):
+
+- The acquire semaphore is per frame slot and the slot's fence is waited **before** the acquire; the
+  slot is only taken (fence reset) once the image is in hand, so a skipped acquire cannot strand the
+  fence unsignalled. A single shared acquire semaphore is pending-in-use at the next acquire
+  (VUID-vkAcquireNextImageKHR-semaphore-01779).
+- The present (render-finished) semaphore is per swapchain **image**, indexed by the acquired image:
+  a present's wait is only known complete once its image is re-acquired
+  (VUID-vkQueueSubmit2-semaphore-03868).
+- The submit waits on the acquire at `COLOR_ATTACHMENT_OUTPUT`, and the image's tracked state starts at
+  that stage after every acquire, so its first layout transition names it as its source; otherwise the
+  transition is a WRITE_AFTER_READ against the acquire.
+- A rebuild (resize, OUT_OF_DATE, SUBOPTIMAL) idles the device first: frames in flight still reference
+  the old images, views and present semaphores, and a resize keeps the format, so the pipeline rebuild
+  cannot be relied on to wait.
+- ImGui resolves its entry points through `vkGetInstanceProcAddr` (it asks for instance- and
+  device-level names alike; `vkGetDeviceProcAddr` is invalid for the former).
 
 ## Method
 

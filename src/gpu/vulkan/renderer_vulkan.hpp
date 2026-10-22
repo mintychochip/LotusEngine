@@ -1,21 +1,22 @@
 #pragma once
 
-	// Vulkan backend for `GpuRenderer`: offscreen core, geometry, textures, the
-	// shadow/lit/sky passes, FXAA, SSAO, Hi-Z occlusion and the editor viewport
-	// pass (the swapchain and ImGui belong to a later stage).
-	//
-	// Behavioural reference: src/gpu/sdlgpu/renderer_sdlgpu.cpp. Mesh-cache
-	// semantics, pass order, uniform contents, clear values and degradation
-	// messages match it; the comments there explain why.
-	//
-	// Translation units, by concern:
-	//   renderer_core.cpp      device, frame ring, targets, frame lifecycle, capture
-	//   renderer_geometry.cpp  mesh cache, per-frame streams, uploads, draw recording
-	//   renderer_passes.cpp    descriptor layouts, pipelines, shadow/lit/sky passes
-	//   renderer_post.cpp      FXAA, SSAO, viewport pass, capture, retirement
-	//   renderer_textures.cpp  samplers, white texture, albedo cache, image helper
-	//   renderer_occlusion.cpp Hi-Z reduction, readback, CPU pyramid adoption
-	//   factory.cpp            create_gpu_renderer()
+// Vulkan backend for `GpuRenderer`: offscreen core, geometry, textures, the
+// shadow/lit/sky passes, FXAA, SSAO, Hi-Z occlusion, the editor viewport
+// pass, the windowed swapchain (renderer_window.cpp) and the ImGui backend.
+//
+// Behavioural reference: src/gpu/sdlgpu/renderer_sdlgpu.cpp. Mesh-cache
+// semantics, pass order, uniform contents, clear values and degradation
+// messages match it; the comments there explain why.
+//
+// Translation units, by concern:
+//   renderer_core.cpp      device, frame ring, targets, frame lifecycle, capture
+//   renderer_geometry.cpp  mesh cache, per-frame streams, uploads, draw recording
+//   renderer_passes.cpp    descriptor layouts, pipelines, shadow/lit/sky passes
+//   renderer_post.cpp      FXAA, SSAO, viewport pass, capture, retirement
+//   renderer_textures.cpp  samplers, white texture, albedo cache, image helper
+//   renderer_occlusion.cpp Hi-Z reduction, readback, CPU pyramid adoption
+//   renderer_window.cpp    swapchain, present, ImGui backend
+//   factory.cpp            create_gpu_renderer()
 //
 // Descriptor sets keep the committed SPIR-V's numbers (sets 1/2/3 from SDL's
 // Vulkan backend), so the shader headers stay byte-identical: set 1 is the
@@ -123,6 +124,13 @@ struct DescriptorLayouts {
 	void destroy(const vk::Context& context);
 };
 
+/// Stage at which a windowed frame's submit waits for the swapchain acquire.
+/// The image's first transition of the frame names the same stage as its
+/// source: that chain is what orders the transition after the acquire (which
+/// reads the image), so the two must not drift apart.
+inline constexpr VkPipelineStageFlags2 kAcquireWaitStage =
+        VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+
 /// One frame's Vulkan objects. Everything the CPU writes during a frame lives
 /// here, so `kFramesInFlight` frames can be in flight without the CPU ever
 /// touching memory the GPU is still reading.
@@ -170,9 +178,8 @@ struct FrameSlot {
 };
 
 /// Raw Vulkan implementation of `GpuRenderer`: offscreen rendering with
-/// shadow-mapped lit geometry, the procedural sky, FXAA, SSAO, Hi-Z occlusion
-/// and the editor viewport pass. The swapchain/UI paths are inert until a
-/// later stage.
+/// shadow-mapped lit geometry, the procedural sky, FXAA, SSAO, Hi-Z occlusion,
+/// the editor viewport pass, the windowed swapchain and the ImGui backend.
 class GpuRendererVulkan final : public GpuRenderer {
 public:
 	GpuRendererVulkan() = default;
@@ -210,13 +217,10 @@ public:
 	void end_scene_pass() override;
 	void end_frame() override;
 	bool has_frame() const override { return cmd_ != nullptr; }
-	bool init_ui_backend() override { return false; }
-	void shutdown_ui_backend() override {}
-	void ui_backend_new_frame() override {}
-	void render_ui(ImDrawData* draw_data) override
-	{
-		(void)draw_data;
-	}
+	bool init_ui_backend() override;
+	void shutdown_ui_backend() override;
+	void ui_backend_new_frame() override;
+	void render_ui(ImDrawData* draw_data) override;
 	const DepthPyramid& occlusion_pyramid() const override
 	{
 		return occlusion_pyramid_;
@@ -227,7 +231,7 @@ public:
 	void suppress_occlusion_record() override { record_occlusion_ = false; }
 	uint32_t vertex_capacity() const override { return vertex_capacity_; }
 	bool viewport_ready() const override;
-	uint64_t viewport_ui_texture() const override { return 0; }
+	uint64_t viewport_ui_texture() const override;
 	uint32_t viewport_width() const override;
 	uint32_t viewport_height() const override;
 	bool begin_viewport_pass() override;
@@ -399,6 +403,55 @@ private:
 	/// intermediate when the pass was redirected.
 	VkImageView pass_color_view_{VK_NULL_HANDLE};
 
+	// --- windowed swapchain -------------------------------------------------
+	// Only a session init()ed with a window touches this: offscreen sessions
+	// never create a swapchain, so the exactness gate cannot regress. Every
+	// colour target the session renders (scene, FXAA intermediate, viewport)
+	// uses pipeline_color_format_, which is the swapchain format once one
+	// exists and R8G8B8A8_UNORM otherwise; the depth, pyramid and SSAO
+	// targets keep their own formats in both sessions.
+	bool windowed_{false};
+	VkSwapchainKHR swapchain_{VK_NULL_HANDLE};
+	VkFormat swapchain_format_{VK_FORMAT_UNDEFINED};
+	uint32_t swapchain_width_{0};
+	uint32_t swapchain_height_{0};
+	std::vector<VkImage> swapchain_images_;
+	std::vector<VkImageView> swapchain_views_;
+	/// Per-image layout state, tracked through the shared BarrierBatch like
+	/// every other image: after present the image is in PRESENT_SRC_KHR,
+	/// which the next acquire observes.
+	std::vector<vk::ImageState> swapchain_states_;
+	uint32_t swapchain_index_{0};
+	/// Present returned SUBOPTIMAL, or the window changed size: rebuild the
+	/// swapchain in the next begin_frame, before acquiring.
+	bool swapchain_rebuild_{false};
+	/// The last swapchain rebuild failure that was reported, so a persistent
+	/// failure is said once instead of on every skipped frame.
+	std::string swapchain_error_;
+	VkFormat pipeline_color_format_{VK_FORMAT_R8G8B8A8_UNORM};
+	/// Colour format the FXAA source image and resolve pipeline were built
+	/// for (always pipeline_color_format_); UNDEFINED when neither exists.
+	VkFormat fxaa_format_{VK_FORMAT_UNDEFINED};
+	/// Signalled by the acquire and awaited by the submit of the same frame.
+	/// One per frame slot: begin_frame waits the slot's fence before
+	/// acquiring, so the frame that last waited on it has finished (an
+	/// acquire needs its semaphore free of pending operations).
+	std::array<VkSemaphore, GpuRenderer::kFramesInFlight> acquire_semaphores_{};
+	/// Signalled by the submit and awaited by the present. One per swapchain
+	/// image, indexed by the acquired image: a present's wait is known to be
+	/// done only once its image is acquired again, so a semaphore shared
+	/// across images could be re-signalled while still pending
+	/// (VUID-vkQueueSubmit2-semaphore-03868).
+	std::vector<VkSemaphore> present_semaphores_;
+
+	// --- ImGui --------------------------------------------------------------
+	bool ui_ready_{false};
+	bool ui_pipeline_ready_{false};
+	VkFormat ui_pipeline_format_{VK_FORMAT_UNDEFINED};
+	/// Viewport texture as the ImGui backend's descriptor set (its
+	/// ImTextureID); null until first use, re-registered on every resize.
+	VkDescriptorSet viewport_ui_set_{VK_NULL_HANDLE};
+
 	LightingSettings lighting_;
 	glm::vec4 blob_spheres_[4]{};
 	uint32_t blob_count_{0};
@@ -461,7 +514,37 @@ private:
 	void ensure_pyramid_stand_in(uint32_t width, uint32_t height);
 	void destroy_pyramid();
 	void begin_frame_common();
-	void end_frame_submit();
+	void end_frame_submit(VkSemaphore wait_semaphore,
+	                      VkSemaphore signal_semaphore);
+	// renderer_window.cpp (swapchain, present, ImGui)
+	/// True when this frame renders into the swapchain: a windowed session
+	/// with a live swapchain and an acquired image.
+	bool windowed_target() const
+	{
+		return windowed_ && swapchain_ != VK_NULL_HANDLE &&
+		       swapchain_index_ < swapchain_views_.size();
+	}
+	/// The acquired swapchain image as a transient wrapper for the barrier
+	/// batch (ownership stays with the swapchain; layout state lives in
+	/// swapchain_states_).
+	vk::Image windowed_image() const;
+	void destroy_swapchain();
+	void create_swapchain(uint32_t width, uint32_t height);
+	bool acquire_swapchain_image();
+	void end_frame_windowed();
+	void present_swapchain();
+	/// Rebuilds the format-dependent pipelines (lit; sky and FXAA lazily)
+	/// and retires the viewport when the swapchain format changed.
+	void on_swapchain_format(VkFormat format);
+	void create_ui_pipeline();
+	void refresh_viewport_ui_texture();
+	/// Waits for the slot's previous frame to finish (its fence) without
+	/// taking the slot.
+	void wait_slot(FrameSlot& slot);
+	/// Takes a slot whose fence wait_slot saw signalled: resets the fence
+	/// and the slot's per-frame state.
+	FrameSlot& recycle_slot(FrameSlot& slot);
+	/// wait_slot + recycle_slot on the next slot of the ring.
 	FrameSlot& acquire_slot();
 	void destroy_garbage(FrameSlot& slot);
 	void destroy_slot(FrameSlot& slot);
@@ -500,6 +583,9 @@ private:
 
 	// renderer_passes.cpp
 	void create_pipelines();
+	/// (Re)builds the lit pipeline for pipeline_color_format_; layouts and
+	/// the shadow pipeline are format-independent and survive.
+	void create_lit_pipeline();
 	void bind_lit_state(const glm::mat4& view, const glm::mat4& view_projection,
 	                    const glm::vec3& camera_position);
 	void render_shadow_map();

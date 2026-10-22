@@ -174,14 +174,17 @@ bool GpuRendererVulkan::ensure_fxaa_source(uint32_t width, uint32_t height)
 	if (!device_valid_ || width == 0 || height == 0) {
 		return false;
 	}
+	// The intermediate shares the session's colour format (swapchain in
+	// windowed sessions), so every pass that redirects into it agrees with
+	// the lit pipeline and the resolve below.
 	if (fxaa_source_.handle != VK_NULL_HANDLE && fxaa_width_ == width &&
-	    fxaa_height_ == height) {
+	    fxaa_height_ == height && fxaa_format_ == pipeline_color_format_) {
 		return true;
 	}
 	vk::Image replacement;
 	try {
 		replacement = create_target_image(
-		        "fxaa", kColorFormat, width, height, 1,
+		        "fxaa", pipeline_color_format_, width, height, 1,
 		        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
 		                VK_IMAGE_USAGE_SAMPLED_BIT);
 	} catch (const std::exception& e) {
@@ -201,6 +204,7 @@ bool GpuRendererVulkan::ensure_fxaa_source(uint32_t width, uint32_t height)
 	fxaa_source_state_ = vk::ImageState{};
 	fxaa_width_        = width;
 	fxaa_height_       = height;
+	fxaa_format_       = pipeline_color_format_;
 	return true;
 }
 
@@ -213,7 +217,8 @@ bool GpuRendererVulkan::ensure_fxaa_pipeline()
 		return false;
 	}
 	if (fxaa_pipeline_ != VK_NULL_HANDLE &&
-	    fxaa_sampler_ != VK_NULL_HANDLE) {
+	    fxaa_sampler_ != VK_NULL_HANDLE &&
+	    fxaa_format_ == pipeline_color_format_) {
 		return true;
 	}
 	destroy_fxaa();
@@ -232,7 +237,7 @@ bool GpuRendererVulkan::ensure_fxaa_pipeline()
 		info.vertex             = vert;
 		info.fragment           = frag;
 		info.color_target_count = 1;
-		info.color_formats[0]   = kColorFormat;
+		info.color_formats[0]   = pipeline_color_format_;
 		info.depth_format       = VK_FORMAT_UNDEFINED;
 		info.depth_test         = false;
 		info.depth_write        = false;
@@ -255,6 +260,7 @@ bool GpuRendererVulkan::ensure_fxaa_pipeline()
 		fxaa_unavailable_ = true;
 		return false;
 	}
+	fxaa_format_ = pipeline_color_format_;
 	return true;
 }
 
@@ -334,6 +340,7 @@ void GpuRendererVulkan::destroy_fxaa()
 	fxaa_source_state_ = vk::ImageState{};
 	fxaa_width_        = 0;
 	fxaa_height_       = 0;
+	fxaa_format_       = VK_FORMAT_UNDEFINED;
 	pass_redirected_   = false;
 }
 
@@ -580,7 +587,7 @@ bool GpuRendererVulkan::resize_viewport(uint32_t width, uint32_t height)
 	vk::Image new_linear;
 	try {
 		new_color = create_target_image(
-		        "viewport", kColorFormat, width, height, 1,
+		        "viewport", pipeline_color_format_, width, height, 1,
 		        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
 		                VK_IMAGE_USAGE_SAMPLED_BIT |
 		                VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
@@ -616,6 +623,8 @@ bool GpuRendererVulkan::resize_viewport(uint32_t width, uint32_t height)
 	viewport_linear_state_ = vk::ImageState{};
 	viewport_width_        = width;
 	viewport_height_       = height;
+	// The view changed: the ImGui texture id names the old one.
+	refresh_viewport_ui_texture();
 	return true;
 }
 

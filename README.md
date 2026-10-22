@@ -16,6 +16,16 @@ cd build && ./bin/lotus
 Working directory should be `build/` so `scenes/`, `assets/`, and `prefabs/`
 resolve correctly.
 
+The renderer backend is chosen at configure time with
+`-DLOTUS_GPU_BACKEND=sdlgpu|vulkan` (default `sdlgpu`). `vulkan` is the direct
+Vulkan 1.3 backend (dynamic rendering and synchronization2; nothing links
+libvulkan, entry points load through SDL); configure it in its own build
+directory:
+
+```bash
+cmake -B build_vk -G Ninja -DLOTUS_GPU_BACKEND=vulkan
+```
+
 ### Sample hub (`scenes/main.json`)
 
 - **WASD** — move the `player` character (Shift to sprint).
@@ -88,6 +98,8 @@ command is in the script header).
 | `LOTUS_NO_UI=1` | Hide editor UI |
 | `LOTUS_MAX_FRAMES=N` | Exit after N frames (automation) |
 | `LOTUS_CONSOLE="cmd; …"` | Run console commands at startup |
+| `LOTUS_PRESENT_MODE=mailbox\|immediate` | Vulkan backend: swapchain present mode (default FIFO, also used when the surface lacks the requested mode) |
+| `LOTUS_VK_VALIDATION=1\|sync` | Vulkan backend: Khronos validation layer when installed (`sync` adds synchronization validation); messages are printed and counted, and the Vulkan tests assert zero |
 
 ## Docs
 

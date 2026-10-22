@@ -225,7 +225,7 @@ void DescriptorLayouts::destroy(const vk::Context& context)
 	}
 }
 
-void GpuRendererVulkan::create_pipelines()
+void GpuRendererVulkan::create_lit_pipeline()
 {
 	const vk::Api& api    = context_.api;
 	const VkDevice device = context_.device;
@@ -233,6 +233,33 @@ void GpuRendererVulkan::create_pipelines()
 	        api, device, lit_vert_spv, sizeof(lit_vert_spv));
 	VkShaderModule lit_frag = vk::create_shader_module(
 	        api, device, lit_frag_spv, sizeof(lit_frag_spv));
+	vk::GraphicsPipelineInfo lit{};
+	lit.layout              = lit_layout_;
+	lit.vertex              = lit_vert;
+	lit.fragment            = lit_frag;
+	lit.color_target_count  = 2;
+	// The session's colour format: the offscreen/viewport/FXAA targets in
+	// both sessions, the swapchain in windowed ones (see
+	// pipeline_color_format_). The linear-depth target is R32F either way.
+	lit.color_formats[0]    = pipeline_color_format_;
+	lit.color_formats[1]    = kPyramidFormat;
+	lit.mask_target1        = false;
+	lit.depth_format        = kDepthFormat;
+	lit.depth_test          = true;
+	lit.depth_write         = true;
+	lit.depth_compare       = VK_COMPARE_OP_LESS_OR_EQUAL;
+	lit.vertex_input        = true;
+	lit.depth_clamp         = true;
+	lit_pipeline_           = vk::create_graphics_pipeline(
+            api, device, lit, "lit");
+	api.DestroyShaderModule(device, lit_frag, nullptr);
+	api.DestroyShaderModule(device, lit_vert, nullptr);
+}
+
+void GpuRendererVulkan::create_pipelines()
+{
+	const vk::Api& api    = context_.api;
+	const VkDevice device = context_.device;
 	VkShaderModule shadow_vert = vk::create_shader_module(
 	        api, device, shadow_vert_spv, sizeof(shadow_vert_spv));
 	VkShaderModule shadow_frag = vk::create_shader_module(
@@ -249,22 +276,7 @@ void GpuRendererVulkan::create_pipelines()
 	// fragment UBO at set 3); set 2 stays bound but unread.
 	sky_layout_ = vk::create_pipeline_layout(api, device, lit_sets, 4);
 
-	vk::GraphicsPipelineInfo lit{};
-	lit.layout              = lit_layout_;
-	lit.vertex              = lit_vert;
-	lit.fragment            = lit_frag;
-	lit.color_target_count  = 2;
-	lit.color_formats[0]    = kColorFormat;
-	lit.color_formats[1]    = kPyramidFormat;
-	lit.mask_target1        = false;
-	lit.depth_format        = kDepthFormat;
-	lit.depth_test          = true;
-	lit.depth_write         = true;
-	lit.depth_compare       = VK_COMPARE_OP_LESS_OR_EQUAL;
-	lit.vertex_input        = true;
-	lit.depth_clamp         = true;
-	lit_pipeline_           = vk::create_graphics_pipeline(
-            api, device, lit, "lit");
+	create_lit_pipeline();
 
 	// The shadow vertex shader consumes only the position and the model
 	// matrix, so its pipeline declares only those attributes: every
@@ -277,8 +289,6 @@ void GpuRendererVulkan::create_pipelines()
 
 	api.DestroyShaderModule(device, shadow_frag, nullptr);
 	api.DestroyShaderModule(device, shadow_vert, nullptr);
-	api.DestroyShaderModule(device, lit_frag, nullptr);
-	api.DestroyShaderModule(device, lit_vert, nullptr);
 }
 
 void GpuRendererVulkan::ensure_descriptor_cache()
@@ -714,51 +724,70 @@ void GpuRendererVulkan::bind_lit_state(const glm::mat4& view,
 
 void GpuRendererVulkan::begin_scene_pass()
 {
-		if (cmd_ == VK_NULL_HANDLE || slot_ == nullptr ||
-		    offscreen_color_.handle == VK_NULL_HANDLE) {
-			return;
-		}
-		// Depth-only pass from the light, once per frame. Replays the draw list
-		// commit_geometry_upload() kept; a frame with no geometry skips it and
-		// the shader flag below takes the legacy unshadowed path.
-		render_shadow_map();
-		// FXAA: render into the intermediate, resolve onto the real target in
-		// end_scene_pass(). The clear-only pass behind the editor stays direct:
-		// there is nothing to antialias in a clear. A target that cannot host
-		// the intermediate renders directly, so capture_rgba/write_ppm never
-		// break.
-		vk::Image* color_image       = &offscreen_color_;
-		vk::ImageState* color_state  = &offscreen_color_state_;
-		pass_redirected_             = false;
-		sky_drawn_                   = false;
-		pass_color_view_             = offscreen_color_.view;
-		if (record_occlusion_ && lighting_.fxaa_enabled &&
-		    !fxaa_unavailable_ && offscreen_width_ != 0 &&
-		    offscreen_height_ != 0 && ensure_fxaa_pipeline() &&
-		    ensure_fxaa_source(offscreen_width_, offscreen_height_)) {
-			color_image       = &fxaa_source_;
-			color_state       = &fxaa_source_state_;
-			pass_redirected_  = true;
-			pass_color_view_  = fxaa_source_.view;
-		}
-		// The pass's viewport: that of its first colour target, which is the
-		// offscreen texture or the FXAA source made from it.
-		pass_width_  = offscreen_width_;
-		pass_height_ = offscreen_height_;
+	if (cmd_ == VK_NULL_HANDLE || slot_ == nullptr) {
+		return;
+	}
+	// The scene renders into the swapchain image in windowed frames, the
+	// offscreen target otherwise; both share the session's colour format,
+	// so the lit/sky/FXAA pipelines agree with either.
+	vk::Image windowed{};
+	vk::Image* color_image      = nullptr;
+	vk::ImageState* color_state = nullptr;
+	uint32_t target_width  = 0;
+	uint32_t target_height = 0;
+	if (windowed_target()) {
+		windowed      = windowed_image();
+		color_image   = &windowed;
+		color_state   = &swapchain_states_[swapchain_index_];
+		target_width  = swapchain_width_;
+		target_height = swapchain_height_;
+	} else if (offscreen_color_.handle != VK_NULL_HANDLE) {
+		color_image   = &offscreen_color_;
+		color_state   = &offscreen_color_state_;
+		target_width  = offscreen_width_;
+		target_height = offscreen_height_;
+	} else {
+		return;
+	}
+	// Depth-only pass from the light, once per frame. Replays the draw list
+	// commit_geometry_upload() kept; a frame with no geometry skips it and
+	// the shader flag below takes the legacy unshadowed path.
+	render_shadow_map();
+	// FXAA: render into the intermediate, resolve onto the real target in
+	// end_scene_pass(). The clear-only pass behind the editor stays direct:
+	// there is nothing to antialias in a clear. A target that cannot host
+	// the intermediate renders directly, so capture_rgba/write_ppm never
+	// break.
+	pass_redirected_ = false;
+	sky_drawn_       = false;
+	pass_color_view_ = color_image->view;
+	if (record_occlusion_ && lighting_.fxaa_enabled &&
+	    !fxaa_unavailable_ && target_width != 0 && target_height != 0 &&
+	    ensure_fxaa_pipeline() &&
+	    ensure_fxaa_source(target_width, target_height)) {
+		color_image       = &fxaa_source_;
+		color_state       = &fxaa_source_state_;
+		pass_redirected_  = true;
+		pass_color_view_  = fxaa_source_.view;
+	}
+	// The pass's viewport: that of its first colour target, which is the
+	// real target or the FXAA source made from it.
+	pass_width_  = target_width;
+	pass_height_ = target_height;
 
-		image_as_color_attachment(*barriers_, cmd_, *color_image, 0, 1,
-		                          *color_state);
-		image_as_color_attachment(*barriers_, cmd_, pyramid_, 0, 1,
-		                          pyramid_states_[0]);
-		image_as_depth_attachment(*barriers_, cmd_, depth_, depth_state_);
-		barriers_->flush(cmd_);
+	image_as_color_attachment(*barriers_, cmd_, *color_image, 0, 1,
+	                          *color_state);
+	image_as_color_attachment(*barriers_, cmd_, pyramid_, 0, 1,
+	                          pyramid_states_[0]);
+	image_as_depth_attachment(*barriers_, cmd_, depth_, depth_state_);
+	barriers_->flush(cmd_);
 	// Rendering itself begins on the first geometry draw (or with a full
 	// clear at the end of a pass that drew nothing): the first draw
 	// guarantees the sky runs, and the sky covers every pixel the geometry
 	// did not with the far sentinel, so target 1 needs no clear then.
 	pass_rendering_begun_ = false;
-		scene_pass_open_ = true;
-	}
+	scene_pass_open_      = true;
+}
 
 void GpuRendererVulkan::draw(const glm::mat4& view, const glm::mat4& view_projection,
                              const glm::vec3& camera_position,
@@ -839,30 +868,41 @@ void GpuRendererVulkan::end_scene_pass()
 				begin_rendering(cmd_, false);
 				pass_rendering_begun_ = true;
 			}
-			context_.api.CmdEndRendering(cmd_);
-			// FXAA resolve onto the real target. The pyramid reduction reads
-			// target 1, which is never redirected, so resolve order vs. the
-			// reduction below does not matter.
-			if (pass_redirected_) {
+		context_.api.CmdEndRendering(cmd_);
+		// FXAA resolve onto the real target. The pyramid reduction reads
+		// target 1, which is never redirected, so resolve order vs. the
+		// reduction below does not matter.
+		if (pass_redirected_) {
+			if (windowed_target()) {
+				vk::Image windowed = windowed_image();
+				fxaa_resolve(windowed,
+				             swapchain_states_[swapchain_index_],
+				             fxaa_width_, fxaa_height_);
+			} else {
 				fxaa_resolve(offscreen_color_, offscreen_color_state_,
 				             fxaa_width_, fxaa_height_);
 			}
-			pass_redirected_ = false;
-			if (lighting_.ssao_enabled && !ssao_unavailable_ &&
-			    pyramid_.handle != VK_NULL_HANDLE) {
-				if (offscreen_width_ != 0 && offscreen_height_ != 0) {
-					run_ssao_pass(offscreen_width_, offscreen_height_);
-				}
-			}
-			// The reduction reads the colour target this pass just wrote, so
-			// it can only be recorded after the render pass has ended. A
-			// clear-only pass behind the editor suppresses this so it does
-			// not replace the pyramid with an empty image.
-			if (record_occlusion_) {
-				record_pyramid();
+		}
+		pass_redirected_ = false;
+		if (lighting_.ssao_enabled && !ssao_unavailable_ &&
+		    pyramid_.handle != VK_NULL_HANDLE) {
+			const uint32_t target_width =
+			        windowed_target() ? swapchain_width_ : offscreen_width_;
+			const uint32_t target_height =
+			        windowed_target() ? swapchain_height_ : offscreen_height_;
+			if (target_width != 0 && target_height != 0) {
+				run_ssao_pass(target_width, target_height);
 			}
 		}
-		record_occlusion_ = true;
+		// The reduction reads the colour target this pass just wrote, so
+		// it can only be recorded after the render pass has ended. A
+		// clear-only pass behind the editor suppresses this so it does
+		// not replace the pyramid with an empty image.
+		if (record_occlusion_) {
+			record_pyramid();
+		}
+	}
+	record_occlusion_ = true;
 }
 
 bool GpuRendererVulkan::ensure_sky_pipeline()
@@ -873,7 +913,8 @@ bool GpuRendererVulkan::ensure_sky_pipeline()
 	if (sky_unavailable_) {
 		return false;
 	}
-	if (sky_pipeline_ != VK_NULL_HANDLE && sky_format_ == kColorFormat) {
+	if (sky_pipeline_ != VK_NULL_HANDLE &&
+	    sky_format_ == pipeline_color_format_) {
 		return true;
 	}
 	const vk::Api& api    = context_.api;
@@ -889,7 +930,7 @@ bool GpuRendererVulkan::ensure_sky_pipeline()
 		sky.vertex              = vert;
 		sky.fragment            = frag;
 		sky.color_target_count  = 2;
-		sky.color_formats[0]    = kColorFormat;
+		sky.color_formats[0]    = pipeline_color_format_;
 		sky.color_formats[1]    = kPyramidFormat;
 		// The sky writes the linear-depth target: sky.frag emits DEPTH_FAR
 		// (== kDepthFar) on every pixel it covers, which is exactly the
@@ -912,7 +953,7 @@ bool GpuRendererVulkan::ensure_sky_pipeline()
 		sky_unavailable_ = true;
 		return false;
 	}
-	sky_format_ = kColorFormat;
+	sky_format_ = pipeline_color_format_;
 	return true;
 }
 

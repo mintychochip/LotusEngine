@@ -37,9 +37,13 @@ void GpuRendererVulkan::init(SDL_Window* window, bool debug_device)
 	if (device_valid_) {
 		return;
 	}
-	window_ = window;
+	// A window means the context carries the surface extensions and picks a
+	// device that can present; null stays offscreen. The swapchain itself is
+	// created lazily in begin_frame, when the drawable size is known.
+	window_   = window;
+	windowed_ = window != nullptr;
 	vk::ContextOptions options;
-	options.window     = nullptr; // offscreen for now; the swapchain is stage 2
+	options.window     = window;
 	options.validation = false;   // LOTUS_VK_VALIDATION=1 still asks inside
 	context_.init(options);
 	memory_.init(context_);
@@ -67,6 +71,10 @@ void GpuRendererVulkan::shutdown()
 		return;
 	}
 	context_.api.DeviceWaitIdle(context_.device);
+	// The UI backend first (its pool may reference the viewport view),
+	// then the swapchain (its views), while the wait above still holds.
+	shutdown_ui_backend();
+	destroy_swapchain();
 	// A frame may be open; its command buffer dies with the pool.
 	cmd_          = nullptr;
 	slot_         = nullptr;
@@ -103,6 +111,7 @@ void GpuRendererVulkan::shutdown()
 	context_.shutdown();
 	device_valid_ = false;
 	offscreen_   = false;
+	windowed_    = false;
 	window_      = nullptr;
 }
 
@@ -232,9 +241,8 @@ void GpuRendererVulkan::destroy_garbage(FrameSlot& slot)
 	slot.garbage.clear();
 }
 
-FrameSlot& GpuRendererVulkan::acquire_slot()
+void GpuRendererVulkan::wait_slot(FrameSlot& slot)
 {
-	FrameSlot& slot = slots_[slot_index_];
 	// The slot's fence was signalled before its first use (created signalled)
 	// and after every submit, so waiting here throttles to kFramesInFlight.
 	vk::check(context_.api.WaitForFences(context_.device, 1, &slot.fence,
@@ -243,11 +251,15 @@ FrameSlot& GpuRendererVulkan::acquire_slot()
 	// The wait just proved this slot's frame finished, and the queue runs
 	// in order, so every frame up to its serial is done: exactly what the
 	// reference records when its throttle wait lands (reap on block). Without
-	// this, a GPU-bound loop never observes completion in the poll below and
+	// this, a GPU-bound loop never observes completion in poll_pyramid and
 	// the pyramid never rebuilds.
 	if (slot.serial > completed_serial_) {
 		completed_serial_ = slot.serial;
 	}
+}
+
+FrameSlot& GpuRendererVulkan::recycle_slot(FrameSlot& slot)
+{
 	vk::check(context_.api.ResetFences(context_.device, 1, &slot.fence),
 	          "vkResetFences");
 	destroy_garbage(slot);
@@ -269,6 +281,13 @@ FrameSlot& GpuRendererVulkan::acquire_slot()
 	slot.immediate_uv_state = vk::BufferState{};
 	slot.uniform_state = vk::BufferState{};
 	return slot;
+}
+
+FrameSlot& GpuRendererVulkan::acquire_slot()
+{
+	FrameSlot& slot = slots_[slot_index_];
+	wait_slot(slot);
+	return recycle_slot(slot);
 }
 
 void GpuRendererVulkan::begin_frame_common()
@@ -299,16 +318,6 @@ void GpuRendererVulkan::begin_frame_offscreen()
 	ensure_pyramid(offscreen_width_, offscreen_height_);
 }
 
-void GpuRendererVulkan::begin_frame(SDL_Window* window, float clear_r, float clear_g,
-                                    float clear_b)
-{
-	(void)window;
-	clear_r_ = clear_r;
-	clear_g_ = clear_g;
-	clear_b_ = clear_b;
-	// Windowed rendering (swapchain, present) belongs to the second half:
-	// record the clear colour and report no frame.
-}
 std::vector<uint8_t> GpuRendererVulkan::capture_rgba(uint32_t& width,
                                                     uint32_t& height)
 {
@@ -324,16 +333,36 @@ std::vector<uint8_t> GpuRendererVulkan::capture_rgba(uint32_t& width,
 }
 
 
-void GpuRendererVulkan::end_frame_submit()
+void GpuRendererVulkan::end_frame_submit(VkSemaphore wait_semaphore,
+                                         VkSemaphore signal_semaphore)
 {
 	vk::check(context_.api.EndCommandBuffer(cmd_), "vkEndCommandBuffer");
 	VkCommandBufferSubmitInfo cmd_info{};
 	cmd_info.sType         = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
 	cmd_info.commandBuffer = cmd_;
+	// Windowed frames chain the swapchain through the submit: wait for the
+	// acquire before touching the image, signal the present when done. The
+	// offscreen path passes null for both and submits bare.
+	VkSemaphoreSubmitInfo wait{};
+	wait.sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+	wait.semaphore = wait_semaphore;
+	wait.stageMask = kAcquireWaitStage;
+	VkSemaphoreSubmitInfo signal{};
+	signal.sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+	signal.semaphore = signal_semaphore;
+	signal.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
 	VkSubmitInfo2 submit{};
-	submit.sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
+	submit.sType                  = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
 	submit.commandBufferInfoCount = 1;
-	submit.pCommandBufferInfos  = &cmd_info;
+	submit.pCommandBufferInfos    = &cmd_info;
+	if (wait_semaphore != VK_NULL_HANDLE) {
+		submit.waitSemaphoreInfoCount = 1;
+		submit.pWaitSemaphoreInfos    = &wait;
+	}
+	if (signal_semaphore != VK_NULL_HANDLE) {
+		submit.signalSemaphoreInfoCount = 1;
+		submit.pSignalSemaphoreInfos    = &signal;
+	}
 	vk::check(context_.api.QueueSubmit2(context_.queue, 1, &submit,
 	                                    slot_->fence),
 	          "vkQueueSubmit2");
@@ -357,9 +386,14 @@ void GpuRendererVulkan::end_frame()
 		end_scene_pass();
 	}
 	if (cmd_ == VK_NULL_HANDLE || slot_ == nullptr) {
+		// Skipped frame (no swapchain image): safe, nothing was recorded.
 		return;
 	}
-	end_frame_submit();
+	if (windowed_) {
+		end_frame_windowed();
+		return;
+	}
+	end_frame_submit(VK_NULL_HANDLE, VK_NULL_HANDLE);
 }
 
 void GpuRendererVulkan::wait_idle()

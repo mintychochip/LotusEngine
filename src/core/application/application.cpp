@@ -970,6 +970,14 @@ void Application::run(int width, int height, const std::string& title)
 		GpuRenderer& gpu = *owned;
 		gpu.init(window.handle(), settings_.debug_device);
 		editor_.init(window.handle(), gpu);
+		// The editor holds the renderer for its UI backend, so it has to shut
+		// down before `gpu` leaves scope. An exception out of the loop skips
+		// the explicit shutdown after it, which would otherwise leave
+		// ~Editor calling into a destroyed renderer. shutdown() is idempotent.
+		struct EditorShutdown {
+			Editor& editor;
+			~EditorShutdown() { editor.shutdown(); }
+		} const editor_shutdown{editor_};
 		if (const char* no_ui = std::getenv("LOTUS_NO_UI")) {
 			if (std::atoi(no_ui) != 0) {
 				editor_.set_visible(false);
