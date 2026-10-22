@@ -11,6 +11,7 @@
 #include "lotus/script/script.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -480,6 +481,41 @@ void Application::register_commands()
 		        }
 		        return std::string{"scripts reloaded"};
 	        });
+	console_.add_command(
+	        "camera.look", "camera.look <yaw_deg> <pitch_deg> - set the "
+	                       "follow-camera look direction",
+	        [this](const std::vector<std::string>& args) {
+		        if (args.size() < 2) {
+			        return std::string{
+			                "usage: camera.look <yaw_deg> <pitch_deg>"};
+		        }
+		        char* end_yaw   = nullptr;
+		        char* end_pitch = nullptr;
+		        const float yaw_deg =
+		                std::strtof(args[0].c_str(), &end_yaw);
+		        const float pitch_deg =
+		                std::strtof(args[1].c_str(), &end_pitch);
+		        if (end_yaw == args[0].c_str() || *end_yaw != '\0' ||
+		            end_pitch == args[1].c_str() || *end_pitch != '\0') {
+			        return std::string{
+			                "error: camera.look needs two numbers"};
+		        }
+		        Scene* scene = scenes_.active();
+		        if (scene == nullptr) {
+			        return std::string{"error: no active scene"};
+		        }
+		        constexpr float kDegreesToRadians = 3.141592653589793f /
+		                                           180.0f;
+		        set_camera_look(*scene, yaw_deg * kDegreesToRadians,
+		                        pitch_deg * kDegreesToRadians);
+		        const CameraLookState look = camera_look(*scene);
+		        char report[96]{};
+		        std::snprintf(report, sizeof(report),
+		                      "look yaw=%.1f pitch=%.1f",
+		                      look.yaw_radians / kDegreesToRadians,
+		                      look.pitch_radians / kDegreesToRadians);
+		        return std::string{report};
+	        });
 	console_.add_command("keybinds.list", "list key bindings",
 	                     [this](const std::vector<std::string>&) {
 		                     std::string out;
@@ -707,6 +743,10 @@ void Application::handle_action(const std::string& action)
 		editor_.toggle();
 	} else if (action == "console.toggle") {
 		editor_.toggle_console();
+	} else if (action == "camera.toggle_third_person") {
+		if (Scene* scene = scenes_.active()) {
+			toggle_camera_third_person(*scene);
+		}
 	} else if (action == "scene.save") {
 		std::string error;
 		if (!save_scene_now(&error)) {
@@ -720,7 +760,7 @@ void Application::handle_action(const std::string& action)
 	} else if (action == "quit") {
 		quit_requested_ = true;
 	}
-}
+	}
 
 void Application::watch_scene(const std::string& path)
 {
@@ -1018,8 +1058,20 @@ void Application::run(int width, int height, const std::string& title)
 		if (!keybinds_.load(keybinds_path_, &keybind_error)) {
 			keybinds_.save(keybinds_path_, nullptr);
 			console_.info("wrote default keybinds to " + keybinds_path_);
-		} else if (!keybind_error.empty()) {
-			console_.warn(keybind_error);
+		} else {
+			if (!keybind_error.empty()) {
+				console_.warn(keybind_error);
+			}
+			// Files written before a new default existed lack its key but
+			// still load; append the missing keys (keeping the user's
+			// rebinds) so the file stays complete and remappable.
+			std::string backfill_error;
+			if (keybinds_.backfill(keybinds_path_, &backfill_error)) {
+				console_.info(
+				        "added new default keybinds to " + keybinds_path_);
+			} else if (!backfill_error.empty()) {
+				console_.warn(backfill_error);
+			}
 		}
 
 		editor_.set_console(&console_);
@@ -1100,6 +1152,22 @@ void Application::run(int width, int height, const std::string& title)
 					if (!action.empty()) {
 						handle_action(action);
 					}
+					// Right-drag to look: motion events with the right
+					// button held feed the controller-owned look state;
+					// update_follow_camera applies it next tick, so the
+					// drag is never overwritten. Gated on the editor
+					// exactly like its own mouse handling: hidden
+					// (LOTUS_NO_UI=1) it never captures, so the game
+					// gets every drag; visible, a drag over ImGui
+					// orbits the editor viewport instead.
+					if (event.type == SDL_EVENT_MOUSE_MOTION &&
+					    (event.motion.state & SDL_BUTTON_RMASK) != 0 &&
+					    !editor_.captures_mouse()) {
+						if (Scene* scene = scenes_.active()) {
+							apply_look_delta(*scene, event.motion.xrel,
+							                 event.motion.yrel);
+						}
+					}
 				}
 			});
 
@@ -1142,6 +1210,8 @@ void Application::run(int width, int height, const std::string& title)
 				gpu.lighting().bounce_color     = s.bounce_color;
 				gpu.lighting().bounce_intensity = s.bounce_intensity;
 				gpu.lighting().ssao_enabled     = s.ssao_enabled;
+				gpu.lighting().environment_intensity =
+				        s.environment_intensity;
 			}
 			gpu.begin_frame(window.handle(), 0.05f, 0.05f, 0.08f);
 			if (gpu.has_frame()) {

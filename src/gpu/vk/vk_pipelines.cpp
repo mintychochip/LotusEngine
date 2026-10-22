@@ -33,7 +33,7 @@ VkShaderModule create_shader_module(const Api& api, VkDevice device,
 }
 
 void lit_vertex_input(VkVertexInputBindingDescription (&bindings)[3],
-                      VkVertexInputAttributeDescription (&attributes)[10])
+                      VkVertexInputAttributeDescription (&attributes)[11])
 {
 	bindings[0].binding   = 0;
 	bindings[0].stride    = 48; // sizeof(GpuVertex)
@@ -42,7 +42,7 @@ void lit_vertex_input(VkVertexInputBindingDescription (&bindings)[3],
 	bindings[1].stride    = 8; // glm::vec2
 	bindings[1].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 	bindings[2].binding   = 2;
-	bindings[2].stride    = 80; // sizeof(GpuInstance)
+	bindings[2].stride    = 96; // sizeof(GpuInstance)
 	bindings[2].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
 
 	const auto attribute = [](uint32_t location, uint32_t binding,
@@ -64,7 +64,8 @@ void lit_vertex_input(VkVertexInputBindingDescription (&bindings)[3],
 		        attribute(8 + column, 2, VK_FORMAT_R32G32B32A32_SFLOAT,
 		                  column * 16);
 	}
-	attributes[9] = attribute(12, 2, VK_FORMAT_R32G32B32A32_SFLOAT, 64); // shade
+	attributes[9]  = attribute(12, 2, VK_FORMAT_R32G32B32A32_SFLOAT, 64); // shade
+	attributes[10] = attribute(13, 2, VK_FORMAT_R32G32B32A32_SFLOAT, 80); // material
 }
 
 VkPipeline create_graphics_pipeline(const Api& api, VkDevice device,
@@ -76,14 +77,14 @@ VkPipeline create_graphics_pipeline(const Api& api, VkDevice device,
 	        stage(VK_SHADER_STAGE_FRAGMENT_BIT, info.fragment)};
 
 	VkVertexInputBindingDescription bindings[3]{};
-	VkVertexInputAttributeDescription attributes[10]{};
+	VkVertexInputAttributeDescription attributes[11]{};
 	VkPipelineVertexInputStateCreateInfo vertex_input{};
 	vertex_input.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
 	if (info.vertex_input) {
 		lit_vertex_input(bindings, attributes);
 		vertex_input.vertexBindingDescriptionCount   = 3;
 		vertex_input.pVertexBindingDescriptions      = bindings;
-		vertex_input.vertexAttributeDescriptionCount = 10;
+		vertex_input.vertexAttributeDescriptionCount = 11;
 		vertex_input.pVertexAttributeDescriptions    = attributes;
 	}
 

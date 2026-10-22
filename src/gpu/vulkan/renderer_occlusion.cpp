@@ -207,6 +207,7 @@ VkDescriptorSet GpuRendererVulkan::alloc_storage_set(VkImageView src,
 	vk::check(context_.api.AllocateDescriptorSets(context_.device, &alloc,
 	                                              &set),
 	          "vkAllocateDescriptorSets");
+	++keyed_sets_live_;
 	const VkDescriptorImageInfo images[2] = {
 	        {VK_NULL_HANDLE, src, VK_IMAGE_LAYOUT_GENERAL},
 	        {VK_NULL_HANDLE, dst, VK_IMAGE_LAYOUT_GENERAL},

@@ -25,7 +25,7 @@
 //
 // Directional shadows: shadow UVs compute in-frag from the uniform light-VP
 // matrix (v_world_position was already available, so no vertex stream change).
-// A 3x3 PCF with constant bias + normal-offset scales the direct lobe only;
+// A 5x5 PCF with constant bias + normal-offset scales the direct lobe only;
 // ambient is never shadowed. shadow_params.x == 0 restores the exact legacy
 // unshadowed path. UV flip: the renderer uses a flipped viewport (a negative
 // height), so NDC +Y lands on framebuffer row 0, which samples as v = 0.
@@ -63,10 +63,13 @@ layout(location = 2) in vec3 v_color;
 layout(location = 3) in vec3 v_view_position;
 layout(location = 5) in vec2 v_uv;
 layout(location = 6) in float v_roughness;
+layout(location = 7) in vec3 v_emissive;
+layout(location = 8) in float v_metallic;
 
 layout(set = 2, binding = 0) uniform sampler2D albedo;
 layout(set = 2, binding = 1) uniform sampler2D shadow_map;
 layout(set = 2, binding = 2) uniform sampler2D ssao_map;
+layout(set = 2, binding = 3) uniform sampler2D normal_map;
 
 layout(set = 3, binding = 0) uniform FragmentUniforms {
     vec4 light_direction;
@@ -87,6 +90,10 @@ layout(set = 3, binding = 0) uniform FragmentUniforms {
     vec4 blob_params;    // x: count; y: sun angular radius; zw reserved
     vec4 ssao_params;    // x: enabled (1/0); yzw reserved
     vec4 ssao_texel;     // xy: 1/width, 1/height; zw reserved
+    vec4 environment_params; // x: analytic environment specular intensity
+    vec4 point_positions[8]; // xyz: world position; w: range
+    vec4 point_colors[8];    // rgb colour; a: intensity
+    vec4 point_params;       // x: active count
 } u;
 
 layout(location = 0) out vec4 out_color;
@@ -148,7 +155,7 @@ vec3 aces_tone_map(vec3 x)
                  0.0, 1.0);
 }
 
-// 3x3 PCF over the shadow map: 1 fully lit, 0 fully shadowed. Fragments
+// 5x5 PCF over the shadow map: 1 fully lit, 0 fully shadowed. Fragments
 // outside the light frustum read as lit so a too-tight ortho box fails open,
 // never into darkness.
 float shadow_factor(vec3 world_position, vec3 n)
@@ -170,15 +177,15 @@ float shadow_factor(vec3 world_position, vec3 n)
     float texel = u.shadow_params.w;
     float bias  = u.shadow_params.y;
     float lit   = 0.0;
-    for (int dy = -1; dy <= 1; ++dy) {
-        for (int dx = -1; dx <= 1; ++dx) {
+    for (int dy = -2; dy <= 2; ++dy) {
+        for (int dx = -2; dx <= 2; ++dx) {
             float occluder =
                     texture(shadow_map, suv.xy + vec2(dx, dy) * texel).r;
             // Mirrors lotus::pbr::shadow_tap.
             lit += step(suv.z - bias, occluder);
         }
     }
-    return lit / 9.0;
+    return lit / 25.0;
 }
 
 // Analytic blob tap for one sphere: 1 far away, ~0.3 under the center, soft
@@ -232,7 +239,32 @@ float ssao_factor()
 
 void main()
 {
-    vec3 n = normalize(v_normal);
+    vec3 geometric_n = normalize(v_normal);
+    vec3 n = geometric_n;
+
+    // Tangent-space normal mapping with an analytic TBN from screen-space
+    // derivatives. The flat-normal sentinel carries alpha 0, so materials
+    // without a normal map take the exact legacy path.
+    vec4 normal_texel = texture(normal_map, v_uv);
+    if (normal_texel.a > 0.5) {
+        vec3 dp1 = dFdx(v_world_position);
+        vec3 dp2 = dFdy(v_world_position);
+        vec2 duv1 = dFdx(v_uv);
+        vec2 duv2 = dFdy(v_uv);
+        vec3 dp2perp = cross(dp2, geometric_n);
+        vec3 dp1perp = cross(geometric_n, dp1);
+        vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
+        vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+        float invmax = inversesqrt(max(dot(T, T), dot(B, B)) + 1e-12);
+        T *= invmax;
+        B *= invmax;
+        vec3 tangent_n = normal_texel.xyz * 2.0 - 1.0;
+        vec3 mapped_n = mat3(T, B, geometric_n) * tangent_n;
+        if (dot(mapped_n, mapped_n) > 1e-8) {
+            n = normalize(mapped_n);
+        }
+    }
+
     vec3 l = normalize(u.light_direction.xyz);
     vec3 v = normalize(u.camera_position.xyz - v_world_position);
     vec3 h = normalize(l + v);
@@ -240,65 +272,112 @@ void main()
     float n_dot_l = max(dot(n, l), 0.0);
     float n_dot_v = max(dot(n, v), 0.0);
     float rough   = clamp(v_roughness, 0.0, 1.0);
+    float metallic = clamp(v_metallic, 0.0, 1.0);
 
     // Decode-then-multiply: each sRGB input decodes first, then multiplies.
-    // Mirrors lotus::pbr::decode_albedo.
-    vec3 albedo   = srgb_to_linear(v_color) * srgb_to_linear(texture(albedo, v_uv).rgb);
+    vec3 albedo = srgb_to_linear(v_color) *
+                  srgb_to_linear(texture(albedo, v_uv).rgb);
     vec3 radiance = u.light_color.rgb * u.light_color.a;
 
+    // Metallic workflow: metals have no diffuse lobe and tint F0 with their
+    // base colour. Dielectrics keep the legacy 0.04 F0.
+    vec3 f0 = mix(DIELECTRIC_F0, albedo, metallic);
+    vec3 diffuse_albedo = albedo * (1.0 - metallic);
     float occ = ssao_factor();
 
-    // Hemisphere ambient floor: blend by world normal Y, then scale by the
-    // legacy ambient. Defaults make the blend exactly 1.0 (see above), so
-    // unlit faces match the old flat floor; the direct lobe is unaffected.
-    // Scaled by AO (fill only, never the sun).
-    // Mirrors lotus::pbr::hemisphere_ambient.
+    // Hemisphere ambient floor (unchanged for dielectrics).
     float hemi_t = clamp(n.y * 0.5 + 0.5, 0.0, 1.0);
-    vec3 hemi    = mix(u.hemi_ground.rgb, u.hemi_sky.rgb, hemi_t) /
+    vec3 hemi = mix(u.hemi_ground.rgb, u.hemi_sky.rgb, hemi_t) /
                 HEMI_REFERENCE;
-    vec3 outgoing = u.ambient_color.rgb * hemi * albedo * occ;
+    vec3 outgoing = u.ambient_color.rgb * hemi * diffuse_albedo * occ;
 
-    // Bounce fill: third directional from the mirrored sun, warm color,
-    // dot+clamp modulated by AO like the hemisphere, unshadowed.
+    // Bounce fill from the mirrored sun, unshadowed.
     if (u.bounce_params.x > 0.5) {
         vec3 bounce_dir = normalize(l * vec3(-1.0, 0.0, -1.0));
-        float n_dot_b   = max(dot(n, bounce_dir), 0.0);
+        float n_dot_b = max(dot(n, bounce_dir), 0.0);
         if (n_dot_b > 0.0) {
-            vec3 bounce_radiance =
-                    u.bounce_color.rgb * u.bounce_color.a;
-            outgoing += albedo * bounce_radiance * n_dot_b * occ / PI;
+            vec3 bounce_radiance = u.bounce_color.rgb * u.bounce_color.a;
+            outgoing += diffuse_albedo * bounce_radiance * n_dot_b * occ / PI;
         }
     }
 
+    // Analytic sky/ground environment specular. Cheap enough for every
+    // material and enough to give water, leather and metal a reflected
+    // environment instead of a flat fill light.
+    if (u.environment_params.x > 0.0) {
+        vec3 r = reflect(-v, n);
+        float up = clamp(r.y * 0.5 + 0.5, 0.0, 1.0);
+        vec3 env = mix(srgb_to_linear(u.hemi_ground.rgb),
+                       srgb_to_linear(u.hemi_sky.rgb), up);
+        vec3 f_env = fresnel_schlick(n_dot_v, f0);
+        float gloss = (1.0 - rough) * (1.0 - rough);
+        outgoing += env * f_env * gloss * u.environment_params.x * occ;
+    }
+
+    // Direct sun.
     if (n_dot_l > 0.0 && n_dot_v > 0.0) {
         float n_dot_h = max(dot(n, h), 0.0);
         float h_dot_v = max(dot(h, v), 0.0);
-
         float d = ndf_ggx(n_dot_h, rough);
         float g = geometry_schlick_ggx(n_dot_l, rough) *
                   geometry_schlick_ggx(n_dot_v, rough);
-        vec3 f = fresnel_schlick(h_dot_v, DIELECTRIC_F0);
-
-        // Energy-conserving split: what Fresnel reflects cannot also diffuse.
+        vec3 f = fresnel_schlick(h_dot_v, f0);
         vec3 specular = (d * g / max(4.0 * n_dot_l * n_dot_v, 0.001)) * f;
-        vec3 diffuse  = (vec3(1.0) - f) * albedo / PI;
+        vec3 diffuse = (vec3(1.0) - f) * diffuse_albedo / PI;
         outgoing += (diffuse + specular) * radiance * n_dot_l *
                     shadow_factor(v_world_position, n) *
                     blob_shadow(v_world_position);
     }
 
-    // Linear-space exponential fog between lighting and ACES. The dome
-    // writes DEPTH_FAR and never reaches here fogged (sky pipeline).
+    // Point lights. Attenuation is a smooth windowed inverse square; no
+    // shadows (they are fill lights, and the sun owns the shadow map).
+    int point_count = int(clamp(u.point_params.x, 0.0, 8.0));
+    for (int i = 0; i < 8; ++i) {
+        if (i >= point_count) {
+            break;
+        }
+        vec3 to_light = u.point_positions[i].xyz - v_world_position;
+        float dist = length(to_light);
+        float range = max(u.point_positions[i].w, 0.001);
+        if (dist >= range) {
+            continue;
+        }
+        vec3 pl = to_light / max(dist, 1e-5);
+        vec3 ph = normalize(pl + v);
+        float pl_n_dot_l = max(dot(n, pl), 0.0);
+        float pl_n_dot_v = max(dot(n, v), 0.0);
+        if (pl_n_dot_l <= 0.0 || pl_n_dot_v <= 0.0) {
+            continue;
+        }
+        float window = clamp(1.0 - pow(dist / range, 4.0), 0.0, 1.0);
+        float atten = (window * window) / (dist * dist + 1.0);
+        float pl_n_dot_h = max(dot(n, ph), 0.0);
+        float pl_h_dot_v = max(dot(ph, v), 0.0);
+        float pd = ndf_ggx(pl_n_dot_h, rough);
+        float pg = geometry_schlick_ggx(pl_n_dot_l, rough) *
+                   geometry_schlick_ggx(pl_n_dot_v, rough);
+        vec3 pf = fresnel_schlick(pl_h_dot_v, f0);
+        vec3 pspec = (pd * pg / max(4.0 * pl_n_dot_l * pl_n_dot_v, 0.001)) * pf;
+        vec3 pdiff = (vec3(1.0) - pf) * diffuse_albedo / PI;
+        vec3 point_color = srgb_to_linear(u.point_colors[i].rgb) *
+                           u.point_colors[i].a;
+        outgoing += (pdiff + pspec) * point_color * pl_n_dot_l * atten;
+    }
+
+    // Emissive surfaces (flames, fireflies, lantern glass).
+    outgoing += srgb_to_linear(v_emissive);
+
+    // Linear-space exponential fog between lighting and ACES.
     if (u.fog_params.x > 0.5) {
         float view_depth = max(-v_view_position.z, 0.0);
         float fog_amount =
                 1.0 - exp(-max(u.fog_params.y, 0.0) * view_depth);
         fog_amount = clamp(fog_amount, 0.0, 1.0);
-        outgoing   = mix(outgoing, u.fog_color.rgb, fog_amount);
+        outgoing = mix(outgoing, u.fog_color.rgb, fog_amount);
     }
 
     vec3 mapped = aces_tone_map(outgoing * max(u.tone_params.x, 0.0));
-    out_color   = vec4(linear_to_srgb(mapped), 1.0);
+    out_color = vec4(linear_to_srgb(mapped), 1.0);
 
     out_linear_depth = vec4(-v_view_position.z, 0.0, 0.0, 1.0);
 }

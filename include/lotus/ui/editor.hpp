@@ -72,6 +72,10 @@ public:
 	/// True when ImGui has keyboard focus (so keybinds must not fire).
 	bool captures_keyboard() const;
 
+	/// True when ImGui wants the mouse (so a right-drag orbits the editor
+	/// viewport instead of the game camera). False when hidden.
+	bool captures_mouse() const;
+
 	/// Starts an ImGui frame. No-op when hidden.
 	void begin_frame();
 	/// Builds the panels. No-op when hidden. Never mutates the scene.

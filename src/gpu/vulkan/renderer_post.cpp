@@ -314,6 +314,7 @@ void GpuRendererVulkan::fxaa_resolve(vk::Image& destination,
 	VkDescriptorSet sampler_set =
 	        alloc_sampler_set(fxaa_source_.view, fxaa_sampler_,
 	                          white_texture_.view, default_sampler_,
+	                          white_texture_.view, default_sampler_,
 	                          white_texture_.view, default_sampler_);
 	context_.api.CmdBindPipeline(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS,
 	                             fxaa_pipeline_);
@@ -489,6 +490,7 @@ void GpuRendererVulkan::run_ssao_pass(uint32_t width, uint32_t height)
 	VkDescriptorSet sampler_set =
 	        alloc_sampler_set(pyramid_views_[0], ssao_depth_sampler_,
 	                          white_texture_.view, default_sampler_,
+	                          white_texture_.view, default_sampler_,
 	                          white_texture_.view, default_sampler_);
 	context_.api.CmdBindPipeline(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS,
 	                             ssao_pipeline_);
@@ -543,7 +545,8 @@ bool GpuRendererVulkan::ssao_on() const
 	       ssao_target_height_ != 0;
 }
 
-VkDescriptorSet GpuRendererVulkan::alloc_lit_sampler_set(VkImageView albedo)
+VkDescriptorSet GpuRendererVulkan::alloc_lit_sampler_set(VkImageView albedo,
+                                                         VkImageView normal)
 {
 	const bool shadow_on = lighting_.shadows_enabled && shadows_supported_ &&
 	                       shadow_rendered_ &&
@@ -559,7 +562,8 @@ VkDescriptorSet GpuRendererVulkan::alloc_lit_sampler_set(VkImageView albedo)
 	VkImageView ao_view    = on ? ssao_texture_.view : white_texture_.view;
 	VkSampler ao_sampler   = on ? ssao_sampler_ : default_sampler_;
 	return alloc_sampler_set(albedo, default_sampler_, shadow_view,
-	                         shadow_sampler, ao_view, ao_sampler);
+	                         shadow_sampler, ao_view, ao_sampler, normal,
+	                         default_sampler_);
 }
 
 bool GpuRendererVulkan::viewport_ready() const

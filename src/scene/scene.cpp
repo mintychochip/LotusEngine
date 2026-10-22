@@ -715,13 +715,17 @@ void Scene::build_frame(float aspect, const DepthPyramid* occlusion)
 
 	// Albedo key of sprites and of entities without a Material.
 	static const std::string no_albedo;
+	static const std::string no_normal;
 	const auto push_mesh = [&](Entity entity, const Transform& transform,
 	                           const Mesh& mesh) {
 		const Material* material = registry_.try_get<Material>(entity);
 		DrawItem item;
 		item.albedo    = material ? &material->albedo_id : &no_albedo;
+		item.normal    = material ? &material->normal_id : &no_normal;
 		item.color     = material ? material->base_color : glm::vec3{1.0f};
 		item.roughness = material ? material->roughness : 0.5f;
+		item.emissive  = material ? material->emissive : glm::vec3{0.0f};
+		item.metallic  = material ? material->metallic : 0.0f;
 		item.transform = &transform;
 		item.mesh      = &mesh;
 		item.slot      = instance_slot(mesh);
@@ -738,6 +742,7 @@ void Scene::build_frame(float aspect, const DepthPyramid* occlusion)
 		}
 		DrawItem item;
 		item.albedo    = &no_albedo;
+		item.normal    = &no_normal;
 		item.transform = &transform;
 		item.sprite    = &sprite;
 		item.order     = static_cast<uint32_t>(draw_items_.size());
@@ -793,6 +798,10 @@ void Scene::build_frame(float aspect, const DepthPyramid* occlusion)
 		          if (const int by_albedo = a.albedo->compare(*b.albedo);
 		              by_albedo != 0) {
 			          return by_albedo < 0;
+		          }
+		          if (const int by_normal = a.normal->compare(*b.normal);
+		              by_normal != 0) {
+			          return by_normal < 0;
 		          }
 		          if (a.slot != b.slot) {
 			          return a.slot < b.slot;
@@ -873,7 +882,8 @@ void Scene::upload(GpuRenderer& gpu, float aspect)
 		const DrawItem& head = draw_items_[begin];
 		std::size_t end      = begin + 1;
 		while (end < count && draw_items_[end].slot == head.slot &&
-		       *draw_items_[end].albedo == *head.albedo) {
+		       *draw_items_[end].albedo == *head.albedo &&
+		       *draw_items_[end].normal == *head.normal) {
 			++end;
 		}
 		if (head.slot == 0) {
@@ -887,8 +897,10 @@ void Scene::upload(GpuRenderer& gpu, float aspect)
 				immediate_vertices += item.vertex_count;
 			}
 			if (immediate_vertices != first) {
-				draw_batches_.push_back(GpuDrawBatch{
-				        *head.albedo, first, immediate_vertices - first});
+				GpuDrawBatch batch{
+				        *head.albedo, first, immediate_vertices - first};
+				batch.normal_id = *head.normal;
+				draw_batches_.push_back(std::move(batch));
 				submitted += immediate_vertices - first;
 			}
 		} else {
@@ -906,8 +918,10 @@ void Scene::upload(GpuRenderer& gpu, float aspect)
 					        instances + static_cast<uint32_t>(i - begin);
 				}
 				const uint32_t vertices = gpu.mesh_index_count(id) * run;
-				draw_batches_.push_back(GpuDrawBatch{
-				        *head.albedo, 0, vertices, id, instances, run});
+				GpuDrawBatch batch{
+				        *head.albedo, 0, vertices, id, instances, run};
+				batch.normal_id = *head.normal;
+				draw_batches_.push_back(std::move(batch));
 				instances += run;
 				submitted += vertices;
 			}
@@ -930,9 +944,9 @@ void Scene::upload(GpuRenderer& gpu, float aspect)
 	for (const DrawItem& item : draw_items_) {
 		if (item.slot != 0) {
 			if (item.instance != kNoInstance) {
-				staging.instances[item.instance] =
-				        GpuInstance{item.transform->world, item.color,
-				                    item.roughness};
+				staging.instances[item.instance] = GpuInstance{
+				        item.transform->world, item.color, item.roughness,
+				        glm::vec4{item.emissive, item.metallic}};
 			}
 		} else if (item.vertex_count != 0) {
 			emit_item(item, staging.vertices, staging.uvs);
@@ -947,6 +961,21 @@ void Scene::draw(GpuRenderer& gpu)
 	if (vertex_count_ == 0) {
 		return;
 	}
+	std::vector<glm::vec4> light_positions;
+	std::vector<glm::vec4> light_colors;
+	const auto lights = registry_.view<Transform, PointLight>();
+	for (const Entity entity : lights) {
+		if (light_positions.size() >= 8) {
+			break;
+		}
+		const Transform& transform = lights.get<Transform>(entity);
+		const PointLight& light = lights.get<PointLight>(entity);
+		const glm::vec3 position = glm::vec3{transform.world[3]};
+		light_positions.emplace_back(position, light.range);
+		light_colors.emplace_back(light.color, light.intensity);
+	}
+	gpu.set_point_lights(light_positions.data(), light_colors.data(),
+	                     static_cast<uint32_t>(light_positions.size()));
 	gpu.draw(view_, view_projection_, camera_position_, draw_batches_.data(),
 	         static_cast<std::uint32_t>(draw_batches_.size()), assets_);
 }

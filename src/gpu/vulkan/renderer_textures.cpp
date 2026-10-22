@@ -1,4 +1,4 @@
-// Samplers, targets, the white fallback and the albedo cache.
+// Samplers, targets, the 1x1 fallback textures and the albedo/normal caches.
 
 #include "gpu/vulkan/renderer_vulkan.hpp"
 
@@ -52,7 +52,7 @@ void GpuRendererVulkan::create_samplers()
 		                        VK_SAMPLER_ADDRESS_MODE_REPEAT, 0.0f);
 	}
 	if (shadow_sampler_ == VK_NULL_HANDLE) {
-		// NEAREST/CLAMP: lit.frag does its own 3x3 PCF, so no depth
+		// NEAREST/CLAMP: lit.frag does its own 5x5 PCF, so no depth
 		// filtering is required beyond plain depth sampling.
 		shadow_sampler_ = make(VK_FILTER_NEAREST, VK_FILTER_NEAREST,
 		                       VK_SAMPLER_MIPMAP_MODE_NEAREST,
@@ -82,28 +82,26 @@ vk::Image GpuRendererVulkan::create_target_image(const char* name, VkFormat form
 	                            width, height, mips, name);
 }
 
-void GpuRendererVulkan::create_white_texture()
+void GpuRendererVulkan::create_solid_texture(const char* name,
+                                             const uint8_t (&texel)[4],
+                                             vk::Image& image,
+                                             vk::ImageState& state)
 {
-	if (white_texture_.handle != VK_NULL_HANDLE || !device_valid_) {
-		return;
-	}
-	white_texture_ = memory_.create_image(vk::MemoryClass::DeviceLocal,
-	                                      VK_IMAGE_USAGE_SAMPLED_BIT |
-	                                              VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-	                                      VK_FORMAT_R8G8B8A8_UNORM, 1, 1, 1,
-	                                      "white");
-	white_state_   = vk::ImageState{};
+	image = memory_.create_image(vk::MemoryClass::DeviceLocal,
+	                             VK_IMAGE_USAGE_SAMPLED_BIT |
+	                                     VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+	                             VK_FORMAT_R8G8B8A8_UNORM, 1, 1, 1, name);
+	state = vk::ImageState{};
 	vk::Buffer staging = memory_.create_buffer(vk::MemoryClass::Staging,
 	                                           VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-	                                           4, "white.upload");
-	const uint8_t pixel[4] = {255, 255, 255, 255};
-	std::memcpy(staging.mapped, pixel, sizeof(pixel));
-	memory_.flush(staging.allocation, 0, sizeof(pixel));
+	                                           sizeof(texel), "texel.upload");
+	std::memcpy(staging.mapped, texel, sizeof(texel));
+	memory_.flush(staging.allocation, 0, sizeof(texel));
 	context_.submit_and_wait([&](VkCommandBuffer cmd) {
 		vk::BarrierBatch batch(context_.api);
 		vk::BufferState staging_state{};
 		buffer_transfer_src(batch, cmd, staging, staging_state);
-		image_transfer_dst(batch, cmd, white_texture_, 0, 1, white_state_);
+		image_transfer_dst(batch, cmd, image, 0, 1, state);
 		batch.flush(cmd);
 		VkBufferImageCopy region{};
 		region.bufferOffset      = 0;
@@ -115,26 +113,52 @@ void GpuRendererVulkan::create_white_texture()
 		region.imageSubresource.layerCount     = 1;
 		region.imageOffset = VkOffset3D{0, 0, 0};
 		region.imageExtent = VkExtent3D{1, 1, 1};
-		context_.api.CmdCopyBufferToImage(cmd, staging.handle,
-		                                  white_texture_.handle,
+		context_.api.CmdCopyBufferToImage(cmd, staging.handle, image.handle,
 		                                  VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 		                                  1, &region);
-		image_shader_read(batch, cmd, white_texture_, 0, 1, white_state_);
+		image_shader_read(batch, cmd, image, 0, 1, state);
 		batch.flush(cmd);
 	});
 	memory_.destroy_buffer(staging);
 }
 
+void GpuRendererVulkan::create_white_texture()
+{
+	if (white_texture_.handle != VK_NULL_HANDLE || !device_valid_) {
+		return;
+	}
+	const uint8_t white[4] = {255, 255, 255, 255};
+	create_solid_texture("white", white, white_texture_, white_state_);
+}
+
+void GpuRendererVulkan::create_flat_normal_texture()
+{
+	if (flat_normal_texture_.handle != VK_NULL_HANDLE || !device_valid_) {
+		return;
+	}
+	// (0.5, 0.5, 1) is the tangent-space "straight up" normal. The zero alpha
+	// is the sentinel lit.frag tests: no normal map, exact legacy path.
+	const uint8_t flat[4] = {128, 128, 255, 0};
+	create_solid_texture("flat_normal", flat, flat_normal_texture_,
+	                     flat_normal_state_);
+}
+
 void GpuRendererVulkan::destroy_textures()
 {
-	for (auto& [key, entry] : albedo_textures_) {
-		if (entry.image.handle != VK_NULL_HANDLE) {
-			memory_.destroy_image(entry.image);
-			entry.image = vk::Image{};
+	for (TextureCache* cache : {&albedo_textures_, &normal_textures_}) {
+		for (auto& entry : *cache) {
+			if (entry.second.image.handle != VK_NULL_HANDLE) {
+				memory_.destroy_image(entry.second.image);
+				entry.second.image = vk::Image{};
+			}
 		}
-		(void)key;
+		cache->clear();
 	}
-	albedo_textures_.clear();
+	if (flat_normal_texture_.handle != VK_NULL_HANDLE) {
+		memory_.destroy_image(flat_normal_texture_);
+		flat_normal_texture_ = vk::Image{};
+	}
+	flat_normal_state_ = vk::ImageState{};
 	if (white_texture_.handle != VK_NULL_HANDLE) {
 		memory_.destroy_image(white_texture_);
 		white_texture_ = vk::Image{};
@@ -143,13 +167,14 @@ void GpuRendererVulkan::destroy_textures()
 }
 
 bool GpuRendererVulkan::load_texture_from_file(const std::string& path,
-                                               const std::string& cache_key)
+                                               TextureCache& cache,
+                                               const std::string& id)
 {
 	if (!device_valid_ || path.empty()) {
 		return false;
 	}
-	const auto existing = albedo_textures_.find(cache_key);
-	if (existing != albedo_textures_.end() &&
+	const auto existing = cache.find(id);
+	if (existing != cache.end() &&
 	    existing->second.image.handle != VK_NULL_HANDLE) {
 		return true;
 	}
@@ -176,14 +201,14 @@ bool GpuRendererVulkan::load_texture_from_file(const std::string& path,
 	        VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
 	                VK_IMAGE_USAGE_TRANSFER_DST_BIT,
 	        VK_FORMAT_R8G8B8A8_UNORM, static_cast<uint32_t>(width),
-	        static_cast<uint32_t>(height), levels, "albedo");
+	        static_cast<uint32_t>(height), levels, "texture");
 	vk::ImageState state;
 
 	const std::size_t row_bytes = static_cast<std::size_t>(width) * 4u;
 	const std::size_t total     = row_bytes * static_cast<std::size_t>(height);
 	vk::Buffer staging = memory_.create_buffer(vk::MemoryClass::Staging,
 	                                           VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-	                                           total, "albedo.upload");
+	                                           total, "texture.upload");
 	std::memcpy(staging.mapped, pixels, total);
 	stbi_image_free(pixels);
 	memory_.flush(staging.allocation, 0, total);
@@ -256,8 +281,30 @@ bool GpuRendererVulkan::load_texture_from_file(const std::string& path,
 		batch.flush(cmd);
 	});
 	memory_.destroy_buffer(staging);
-	albedo_textures_[cache_key] = CachedAlbedo{image, state};
+	cache[id] = CachedTexture{image, state};
 	return true;
+}
+
+VkImageView GpuRendererVulkan::cached_texture(TextureCache& cache,
+                                              const std::string& id,
+                                              VkImageView fallback,
+                                              const AssetRegistry* assets)
+{
+	const auto it = cache.find(id);
+	if (it != cache.end() && it->second.image.handle != VK_NULL_HANDLE) {
+		return it->second.image.view;
+	}
+	std::string path;
+	if (assets != nullptr) {
+		const std::string* registered = assets->find(id);
+		if (registered != nullptr && !registered->empty()) {
+			path = *registered;
+		}
+	}
+	if (path.empty() || !load_texture_from_file(path, cache, id)) {
+		return fallback;
+	}
+	return cache[id].image.view;
 }
 
 VkImageView GpuRendererVulkan::texture_for_albedo(const std::string& albedo_id,
@@ -269,25 +316,21 @@ VkImageView GpuRendererVulkan::texture_for_albedo(const std::string& albedo_id,
 	if (albedo_id.empty()) {
 		return white_texture_.view;
 	}
-	const auto it = albedo_textures_.find(albedo_id);
-	if (it != albedo_textures_.end() &&
-	    it->second.image.handle != VK_NULL_HANDLE) {
-		return it->second.image.view;
+	return cached_texture(albedo_textures_, albedo_id, white_texture_.view,
+	                      assets);
+}
+
+VkImageView GpuRendererVulkan::texture_for_normal(const std::string& normal_id,
+                                                 const AssetRegistry* assets)
+{
+	if (flat_normal_texture_.handle == VK_NULL_HANDLE) {
+		create_flat_normal_texture();
 	}
-	std::string path;
-	if (assets != nullptr) {
-		const std::string* registered = assets->find(albedo_id);
-		if (registered != nullptr && !registered->empty()) {
-			path = *registered;
-		}
+	if (normal_id.empty()) {
+		return flat_normal_texture_.view;
 	}
-	if (path.empty()) {
-		return white_texture_.view;
-	}
-	if (!load_texture_from_file(path, albedo_id)) {
-		return white_texture_.view;
-	}
-	return albedo_textures_[albedo_id].image.view;
+	return cached_texture(normal_textures_, normal_id,
+	                      flat_normal_texture_.view, assets);
 }
 
 } // namespace lotus

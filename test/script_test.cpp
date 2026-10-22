@@ -53,6 +53,29 @@ TEST(ScriptEngineTest, UpdateMutatesComponents)
 	EXPECT_FLOAT_EQ(scene.registry().get<Transform>(e).rotation.z, 2.0f);
 }
 
+TEST(ScriptEngineTest, ScriptCanSetFullRotation)
+{
+	Scene scene{"s"};
+	const Entity e = scene.create("e");
+	scene.registry().emplace<Script>(e, Script{"set_rotation.lua", ""});
+	write_script("set_rotation.lua", R"(
+		local s = {}
+		function s.on_update(entity, dt)
+			lotus.set_rotation(entity, 0.25, 0.5, -0.75)
+		end
+		return s
+	)");
+
+	ScriptEngine engine;
+	engine.set_root(fs::temp_directory_path().string());
+	ASSERT_TRUE(engine.sync(scene));
+	engine.update(scene, 0.1f);
+	const auto& rotation = scene.registry().get<Transform>(e).rotation;
+	EXPECT_FLOAT_EQ(rotation.x, 0.25f);
+	EXPECT_FLOAT_EQ(rotation.y, 0.5f);
+	EXPECT_FLOAT_EQ(rotation.z, -0.75f);
+}
+
 TEST(ScriptEngineTest, OnStartRunsOnSync)
 {
 	Scene scene{"s"};

@@ -32,9 +32,11 @@ struct GpuInstance {
 	glm::mat4 model{1.0f};
 	glm::vec3 color{1.0f};
 	float roughness{1.0f};
+	/// rgb: emissive radiance (sRGB-authored), a: metallic.
+	glm::vec4 material{0.0f};
 };
 
-static_assert(sizeof(GpuInstance) == 80);
+static_assert(sizeof(GpuInstance) == 96);
 
 /// Read-only view of a mesh's geometry, handed to GpuRenderer::acquire_mesh.
 /// Plain pointers, so the renderer needs nothing from the scene module.

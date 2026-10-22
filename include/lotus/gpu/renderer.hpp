@@ -156,6 +156,10 @@ inline glm::vec3 bounce_direction(const glm::vec3& sun_direction)
 inline constexpr float kBlobSunRadius = 0.05f;
 inline constexpr uint32_t kMaxBlobCasters = 4;
 
+/// Point lights lit.frag loops over (its uniform arrays hold exactly this
+/// many); set_point_lights ignores the rest.
+inline constexpr uint32_t kMaxPointLights = 8;
+
 /// Analytic blob term for one caster: 1 lit far away, ~0.3 directly under the
 /// center, with a soft edge scaled by the sun angular radius. Matches
 /// lit.frag's `blob_tap`.
@@ -272,6 +276,8 @@ struct LightingSettings {
 	glm::vec3 bounce_color{0.40f, 0.28f, 0.20f};
 	float bounce_intensity{0.5f};
 	bool ssao_enabled{true};
+	/// Analytic environment specular strength (sky/ground reflection).
+	float environment_intensity{0.0f};
 };
 
 /// Rendering backend interface. The Vulkan backend (src/gpu/vulkan/)
@@ -514,6 +520,12 @@ public:
 	virtual uint32_t blob_count() const = 0;
 
 	virtual const glm::vec4* blob_spheres() const = 0;
+
+	/// Point lights for the next lit draws. \p positions are xyz + range,
+	/// \p colors are rgb + intensity. Copies up to 8; extra entries are
+	/// ignored. Scenes that never call this render exactly as before.
+	virtual void set_point_lights(const glm::vec4* positions,
+	                              const glm::vec4* colors, uint32_t count) = 0;
 
 };
 

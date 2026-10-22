@@ -17,6 +17,10 @@ struct StreamRegion {
 	std::string path;
 	glm::vec3 center{0.0f};
 	float radius{1.0f};
+	/// Active scene names this region belongs to. Empty means every scene;
+	/// otherwise the region only streams while one of these scenes is active,
+	/// so standalone scenes are not polluted by another world's regions.
+	std::vector<std::string> scenes;
 
 	bool contains(const glm::vec3& point) const
 	{

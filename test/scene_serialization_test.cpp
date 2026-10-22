@@ -701,6 +701,27 @@ TEST(SceneSerialization, OldV3SettingsWithoutBundleKeysKeepDefaults)
 	          std::string::npos);
 }
 
+TEST(SceneSerialization, HeightFieldColliderRoundTrips)
+{
+	Scene with{"with"};
+	const Entity e = with.create("ground");
+	with.registry().emplace<HeightFieldCollider>(
+	        e, HeightFieldCollider{-1.5f, 6.25f});
+
+	const std::string text = to_json_string(with);
+	EXPECT_NE(text.find("\"HeightFieldCollider\""), std::string::npos) << text;
+
+	Scene loaded{"loaded"};
+	std::string error;
+	ASSERT_TRUE(scene_from_json(loaded, text, &error)) << error;
+	const Entity found = find_by_name(loaded, "ground");
+	ASSERT_NE(found, NullEntity);
+	const auto& heightfield =
+	        loaded.registry().get<HeightFieldCollider>(found);
+	EXPECT_FLOAT_EQ(heightfield.min_height, -1.5f);
+	EXPECT_FLOAT_EQ(heightfield.max_height, 6.25f);
+}
+
 TEST(SceneSerialization, BlobCasterRoundTrips)
 {
 	Scene with{"s"};
@@ -721,4 +742,87 @@ TEST(SceneSerialization, BlobCasterRoundTrips)
 	const std::vector<glm::vec4> spheres = loaded.blob_spheres();
 	ASSERT_EQ(spheres.size(), 1u);
 	EXPECT_FLOAT_EQ(spheres[0].w, 0.75f);
+}
+
+TEST(SceneSerialization, MaterialPbrExtensionRoundTrips)
+{
+	Scene with{"s"};
+	const Entity e = with.create("surface");
+	Material material{};
+	material.base_color = {0.6f, 0.4f, 0.2f};
+	material.roughness  = 0.35f;
+	material.albedo_id  = "bark";
+	material.normal_id  = "bark_normal";
+	material.metallic   = 0.85f;
+	material.emissive   = {0.9f, 0.35f, 0.05f};
+	with.registry().emplace<Material>(e, material);
+
+	const std::string text = to_json_string(with);
+	EXPECT_NE(text.find("\"normal_id\""), std::string::npos) << text;
+	EXPECT_NE(text.find("\"metallic\""), std::string::npos) << text;
+	EXPECT_NE(text.find("\"emissive\""), std::string::npos) << text;
+
+	Scene loaded{"s"};
+	ASSERT_TRUE(scene_from_json(loaded, text, nullptr));
+	const Entity le = find_by_name(loaded, "surface");
+	ASSERT_NE(le, NullEntity);
+	const auto& loaded_material = loaded.registry().get<Material>(le);
+	EXPECT_EQ(loaded_material.normal_id, "bark_normal");
+	EXPECT_FLOAT_EQ(loaded_material.metallic, 0.85f);
+	EXPECT_FLOAT_EQ(loaded_material.emissive.x, 0.9f);
+	EXPECT_FLOAT_EQ(loaded_material.emissive.y, 0.35f);
+	EXPECT_FLOAT_EQ(loaded_material.emissive.z, 0.05f);
+}
+
+TEST(SceneSerialization, NeutralMaterialExtensionIsOmitted)
+{
+	Scene scene{"s"};
+	const Entity e = scene.create("plain");
+	scene.registry().emplace<Material>(e, Material{});
+	const std::string text = to_json_string(scene);
+
+	EXPECT_EQ(text.find("\"normal_id\""), std::string::npos) << text;
+	EXPECT_EQ(text.find("\"metallic\""), std::string::npos) << text;
+	EXPECT_EQ(text.find("\"emissive\""), std::string::npos) << text;
+}
+
+TEST(SceneSerialization, PointLightRoundTrips)
+{
+	Scene with{"s"};
+	const Entity e = with.create("torch");
+	with.registry().emplace<PointLight>(
+	        e, PointLight{{1.0f, 0.55f, 0.2f}, 4.5f, 9.0f});
+
+	const std::string text = to_json_string(with);
+	EXPECT_NE(text.find("\"PointLight\""), std::string::npos) << text;
+
+	Scene loaded{"s"};
+	ASSERT_TRUE(scene_from_json(loaded, text, nullptr));
+	const Entity le = find_by_name(loaded, "torch");
+	ASSERT_NE(le, NullEntity);
+	const auto& light = loaded.registry().get<PointLight>(le);
+	EXPECT_FLOAT_EQ(light.color.x, 1.0f);
+	EXPECT_FLOAT_EQ(light.color.y, 0.55f);
+	EXPECT_FLOAT_EQ(light.intensity, 4.5f);
+	EXPECT_FLOAT_EQ(light.range, 9.0f);
+}
+
+TEST(SceneSerialization, EnvironmentIntensityRoundTripsAndDefaultsOff)
+{
+	Scene with{"s"};
+	SceneSettings settings;
+	settings.environment_intensity = 0.6f;
+	with.set_settings(settings);
+
+	Scene loaded{"s"};
+	ASSERT_TRUE(scene_from_json(loaded, to_json_string(with), nullptr));
+	ASSERT_TRUE(loaded.has_settings());
+	EXPECT_FLOAT_EQ(loaded.settings().environment_intensity, 0.6f);
+
+	// Legacy documents keep the exact old lighting path.
+	Scene legacy{"s"};
+	ASSERT_TRUE(scene_from_json(
+	        legacy, R"({"version":3,"name":"p","entities":[]})", nullptr));
+	EXPECT_FALSE(legacy.has_settings());
+	EXPECT_FLOAT_EQ(SceneSettings{}.environment_intensity, 0.0f);
 }

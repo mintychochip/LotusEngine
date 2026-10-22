@@ -31,6 +31,8 @@ struct GpuDrawBatch {
 	GpuMeshId mesh{kNoGpuMesh};
 	uint32_t first_instance{0};
 	uint32_t instance_count{0};
+	/// Optional tangent-space normal map key; empty binds the flat normal.
+	std::string normal_id;
 };
 
 } // namespace lotus

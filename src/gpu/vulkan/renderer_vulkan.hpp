@@ -16,7 +16,7 @@
 //   renderer_geometry.cpp  mesh cache, per-frame streams, uploads, draw recording
 //   renderer_passes.cpp    descriptor layouts, pipelines, shadow/lit/sky passes
 //   renderer_post.cpp      FXAA, SSAO, viewport pass, capture, retirement
-//   renderer_textures.cpp  samplers, white texture, albedo cache, image helper
+//   renderer_textures.cpp  samplers, fallback textures, caches, image helper
 //   renderer_occlusion.cpp Hi-Z reduction, readback, CPU pyramid adoption
 //   renderer_window.cpp    swapchain, present, ImGui backend
 //   factory.cpp            create_gpu_renderer()
@@ -25,8 +25,9 @@
 // empty. That numbering is part of the committed SPIR-V, and re-laying it out
 // is a deliberate change to be measured on its own (see the Vulkan backend
 // spec). Set 1 is the vertex UBO (dynamic), set 2 the fragment samplers
-// (albedo, shadow, SSAO), set 3 the fragment UBO (dynamic). The pipeline
-// layouts carry an empty set 0 so the indices line up. No push constants.
+// (albedo, shadow, SSAO, normal map), set 3 the fragment UBO (dynamic). The
+// pipeline layouts carry an empty set 0 so the indices line up. No push
+// constants.
 
 #include <array>
 #include <cstdint>
@@ -76,8 +77,12 @@ struct FragmentUniforms {
 	glm::vec4 blob_params;
 	glm::vec4 ssao_params;
 	glm::vec4 ssao_texel;
+	glm::vec4 environment_params; // x: analytic environment specular intensity
+	glm::vec4 point_positions[8]; // xyz: world position; w: range
+	glm::vec4 point_colors[8];    // rgb: colour; a: intensity
+	glm::vec4 point_params;       // x: active count
 };
-static_assert(sizeof(FragmentUniforms) == 368,
+static_assert(sizeof(FragmentUniforms) == 656,
               "must match lit.frag's std140 block");
 
 /// Must match shaders/ssao.frag (set 3, binding 0).
@@ -248,12 +253,18 @@ public:
 	void clear_blob_casters() override { blob_count_ = 0; }
 	uint32_t blob_count() const override { return blob_count_; }
 	const glm::vec4* blob_spheres() const override { return blob_spheres_; }
+	void set_point_lights(const glm::vec4* positions, const glm::vec4* colors,
+	                      uint32_t count) override;
 
 	/// Validation-layer messages reported so far (tests assert zero).
 	uint32_t validation_messages() const
 	{
 		return context_.valid() ? context_.validation_messages() : 0u;
 	}
+	/// Content-keyed descriptor sets (sampler, storage) allocated from the
+	/// cache pool and not yet returned to it (tests assert it stays bounded
+	/// across resizes).
+	uint32_t keyed_descriptor_sets() const { return keyed_sets_live_; }
 
 private:
 	// --- device, frame ring -------------------------------------------------
@@ -272,13 +283,17 @@ private:
 	std::unique_ptr<vk::BarrierBatch> barriers_;
 
 	// --- pipelines ----------------------------------------------------------
-	/// Never-reset pool for cached descriptor sets (rewritten only when
-	/// their contents change). Steady-state frames allocate and update
-	/// nothing; sets for retired images/samplers are dropped from the maps
-	/// below and their pool space is left alone (recreates are rare).
+	/// Pool for cached descriptor sets (rewritten only when their contents
+	/// change). Steady-state frames allocate and update nothing; sets for
+	/// retired images/samplers are dropped from the maps below and returned
+	/// to the pool once the frames in flight are done with them (see
+	/// clear_descriptor_caches()).
 	VkDescriptorPool cached_descriptors_{VK_NULL_HANDLE};
-	/// Sampler sets by (albedo, shadow, ao) view + sampler handles.
-	std::map<std::array<uint64_t, 6>, VkDescriptorSet> sampler_cache_;
+	/// Content-keyed sets (sampler, storage) allocated from it and not yet
+	/// returned.
+	uint32_t keyed_sets_live_{0};
+	/// Sampler sets by (albedo, shadow, ao, normal) view + sampler handles.
+	std::map<std::array<uint64_t, 8>, VkDescriptorSet> sampler_cache_;
 	/// Hi-Z storage sets by (src, dst) view pair; at most K pairs exist.
 	struct StorageCacheEntry {
 		VkImageView src{VK_NULL_HANDLE};
@@ -296,11 +311,15 @@ private:
 	bool sky_unavailable_{false};
 	VkFormat sky_format_{VK_FORMAT_UNDEFINED};
 
-	// --- samplers and 1x1 white fallback ------------------------------------
+	// --- samplers and 1x1 fallback textures ---------------------------------
 	VkSampler default_sampler_{VK_NULL_HANDLE};
 	VkSampler shadow_sampler_{VK_NULL_HANDLE};
 	vk::Image white_texture_;
 	vk::ImageState white_state_;
+	/// Flat tangent-space normal with alpha 0: lit.frag reads the zero alpha
+	/// as "no normal map" and takes the legacy path.
+	vk::Image flat_normal_texture_;
+	vk::ImageState flat_normal_state_;
 
 	// --- targets ------------------------------------------------------------
 	vk::Image offscreen_color_;
@@ -377,12 +396,13 @@ private:
 	uint32_t viewport_height_{0};
 	bool viewport_pass_open_{false};
 	// --- deferred destruction ---------------------------------------------------
-	// Images replaced by a resize (or a lazy FXAA/SSAO recreate) while frames
-	// are in flight: moved here, swept into the next acquired slot's garbage
-	// list, destroyed when that slot is reused (a full ring turn later, so no
-	// submitted command buffer can still reference them).
+	// Images, buffers and descriptor sets replaced by a resize (or a lazy
+	// FXAA/SSAO recreate) while frames are in flight: moved here, swept into
+	// the next acquired slot's garbage list, destroyed when that slot is
+	// reused (a full ring turn later, so no submitted command buffer can
+	// still reference them).
 	std::vector<std::function<void()>> retired_targets_;
-	/// 1024^2 D16 depth rendered from the light.
+	/// 2048^2 D16 depth rendered from the light.
 	vk::Image shadow_map_;
 	vk::ImageState shadow_map_state_;
 	bool shadows_supported_{false};
@@ -460,6 +480,9 @@ private:
 	LightingSettings lighting_;
 	glm::vec4 blob_spheres_[4]{};
 	uint32_t blob_count_{0};
+	glm::vec4 point_light_positions_[8]{};
+	glm::vec4 point_light_colors_[8]{};
+	uint32_t point_light_count_{0};
 
 	DepthPyramid occlusion_pyramid_;
 
@@ -501,12 +524,16 @@ private:
 	bool geometry_mapped_{false};
 	uint32_t vertex_capacity_{0};
 
-	// --- albedo textures ----------------------------------------------------
-	struct CachedAlbedo {
+	// --- decoded textures ---------------------------------------------------
+	struct CachedTexture {
 		vk::Image image;
 		vk::ImageState state;
 	};
-	std::unordered_map<std::string, CachedAlbedo> albedo_textures_;
+	/// Decoded files by asset id. Albedo and normal maps keep separate caches
+	/// so a lookup never builds a prefixed key on the draw path.
+	using TextureCache = std::unordered_map<std::string, CachedTexture>;
+	TextureCache albedo_textures_;
+	TextureCache normal_textures_;
 
 	std::string device_name_;
 	std::string device_driver_;
@@ -612,7 +639,8 @@ private:
 	VkDescriptorSet alloc_fragment_set(uint64_t offset);
 	VkDescriptorSet alloc_sampler_set(VkImageView albedo, VkSampler albedo_sampler,
 	                                  VkImageView shadow, VkSampler shadow_sampler,
-	                                  VkImageView ao, VkSampler ao_sampler);
+	                                  VkImageView ao, VkSampler ao_sampler,
+	                                  VkImageView normal, VkSampler normal_sampler);
 	/// Creates cached_descriptors_ on first use (init() also calls it
 	/// directly, so mid-frame callers never branch on init order).
 	void ensure_descriptor_cache();
@@ -620,8 +648,9 @@ private:
 	void destroy_descriptor_cache();
 	/// Drops the content-keyed sampler/storage entries: call after any
 	/// image view or sampler they may name is destroyed. The sets themselves
-	/// stay alive in the cache pool (frames in flight may still read them);
-	/// only their pool space is left behind.
+	/// stay alive for frames in flight that may still bind them; they go
+	/// back to the cache pool with the retired targets, once those frames
+	/// are done.
 	void clear_descriptor_caches();
 	// renderer_occlusion.cpp
 	bool create_occlusion_pipeline();
@@ -639,9 +668,9 @@ private:
 	bool ensure_ssao_resources(uint32_t width, uint32_t height);
 	bool ensure_ssao_pipeline();
 	void run_ssao_pass(uint32_t width, uint32_t height);
-	/// Lit sampler set for \p albedo with the current shadow/SSAO bindings
-	/// (SSAO = previous frame's texture, or white when off/unavailable).
-	VkDescriptorSet alloc_lit_sampler_set(VkImageView albedo);
+	/// Lit sampler set for \p albedo and \p normal with the current shadow/SSAO
+	/// bindings (SSAO = previous frame's texture, or white when off/unavailable).
+	VkDescriptorSet alloc_lit_sampler_set(VkImageView albedo, VkImageView normal);
 	bool ssao_on() const;
 
 	// renderer_textures.cpp
@@ -650,10 +679,21 @@ private:
 	vk::Image create_target_image(const char* name, VkFormat format, uint32_t width,
 	                              uint32_t height, uint32_t mips,
 	                              VkImageUsageFlags usage);
-	bool load_texture_from_file(const std::string& path, const std::string& key);
+	bool load_texture_from_file(const std::string& path, TextureCache& cache,
+	                            const std::string& id);
+	/// The view of \p id in \p cache, decoding it from the asset registry on
+	/// first use; \p fallback when the id is unknown or the file will not decode.
+	VkImageView cached_texture(TextureCache& cache, const std::string& id,
+	                           VkImageView fallback, const AssetRegistry* assets);
 	VkImageView texture_for_albedo(const std::string& albedo_id,
 	                               const AssetRegistry* assets);
+	VkImageView texture_for_normal(const std::string& normal_id,
+	                               const AssetRegistry* assets);
+	/// A 1x1 RGBA8 texture of one texel, uploaded and left shader-readable.
+	void create_solid_texture(const char* name, const uint8_t (&texel)[4],
+	                          vk::Image& image, vk::ImageState& state);
 	void create_white_texture();
+	void create_flat_normal_texture();
 	void destroy_textures();
 };
 

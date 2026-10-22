@@ -74,6 +74,7 @@ namespace lotus::vk {
 	X(DestroyDescriptorPool)                                                   \
 	X(ResetDescriptorPool)                                                     \
 	X(AllocateDescriptorSets)                                                  \
+	X(FreeDescriptorSets)                                                      \
 	X(UpdateDescriptorSets)                                                    \
 	X(CreateCommandPool)                                                       \
 	X(DestroyCommandPool)                                                      \

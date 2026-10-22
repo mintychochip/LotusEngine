@@ -48,6 +48,42 @@ TEST(ResidencySystemTest, LoadsAndUnloadsByOriginName)
 	fs::remove_all(dir);
 }
 
+TEST(ResidencySystemTest, SceneFilterKeepsRegionsOutOfOtherScenes)
+{
+	const fs::path dir = fs::temp_directory_path() / "lotus_residency_scene_filter";
+	fs::create_directories(dir);
+
+	const fs::path region_scene = dir / "tile.json";
+	{
+		std::ofstream out(region_scene);
+		out << R"({"version":3,"entities":[{"name":"prop","components":{"SceneGuid":"a1"}}]})";
+	}
+
+	const fs::path catalog = dir / "regions.json";
+	{
+		std::ofstream out(catalog);
+		out << R"({"regions":[{"name":"demo","path":"tile.json",)"
+		    << R"("center":[0,0,0],"radius":50,"scenes":["main"]}]})";
+	}
+
+	ResidencySystem system;
+	system.set_scene_directory(dir.string());
+	std::string error;
+	ASSERT_TRUE(system.load_catalog(catalog.string(), &error)) << error;
+
+	Scene standalone{"jungle"};
+	system.update(standalone, glm::vec3{0.0f, 0.0f, 0.0f});
+	EXPECT_TRUE(system.resident().empty());
+	EXPECT_EQ(standalone.registry().view<Name>().size(), 0u);
+
+	Scene main{"main"};
+	system.update(main, glm::vec3{0.0f, 0.0f, 0.0f});
+	EXPECT_EQ(system.resident().size(), 1u);
+	EXPECT_EQ(main.registry().view<Name>().size(), 1u);
+
+	fs::remove_all(dir);
+}
+
 TEST(ResidencySystemTest, LimitsLoadsPerFrame)
 {
 	const fs::path dir = fs::temp_directory_path() / "lotus_residency_budget";

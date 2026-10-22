@@ -39,14 +39,14 @@ namespace {
 /// The picture is the one the full range gives, pixel for pixel.
 constexpr float kGeometryDepthMax = 0.5f;
 
-/// 1024px D16 depth rendered from the light each frame, sampled by lit.frag
-/// with a 3x3 PCF. D16 (not D32) because it is the one depth format
+/// 2048px D16 depth rendered from the light each frame, sampled by lit.frag
+/// with a 5x5 PCF. D16 (not D32) because it is the one depth format
 /// universally sampler-supported.
-constexpr uint32_t kShadowMapSize        = 1024;
+constexpr uint32_t kShadowMapSize        = 2048;
 constexpr VkFormat kShadowFormat         = VK_FORMAT_D16_UNORM;
 constexpr float kShadowBias              = 0.0015f;
 constexpr float kShadowNormalOffset      = 0.05f;
-constexpr float kShadowOrthoHalf         = 15.0f;
+constexpr float kShadowOrthoHalf         = 20.0f;
 constexpr float kShadowLightDistance     = 30.0f;
 constexpr float kShadowNear              = 1.0f;
 constexpr float kShadowFar               = 60.0f;
@@ -92,7 +92,7 @@ VkPipeline create_shadow_pipeline(const vk::Api& api, VkDevice device,
 	bindings[0].stride    = 48; // sizeof(GpuVertex)
 	bindings[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 	bindings[1].binding   = 2;
-	bindings[1].stride    = 80; // sizeof(GpuInstance)
+	bindings[1].stride    = 96; // sizeof(GpuInstance)
 	bindings[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
 	VkVertexInputAttributeDescription attributes[5]{};
 	attributes[0].location = 0;
@@ -201,15 +201,17 @@ void DescriptorLayouts::create(const vk::Context& context)
 	const auto ubo_vertex = binding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
 	                                VK_SHADER_STAGE_VERTEX_BIT);
 	vertex = make(&ubo_vertex, 1);
-	const VkDescriptorSetLayoutBinding sampler_bindings[3] = {
+	const VkDescriptorSetLayoutBinding sampler_bindings[4] = {
 	        binding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 	                VK_SHADER_STAGE_FRAGMENT_BIT),
 	        binding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 	                VK_SHADER_STAGE_FRAGMENT_BIT),
 	        binding(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 	                VK_SHADER_STAGE_FRAGMENT_BIT),
+	        binding(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+	                VK_SHADER_STAGE_FRAGMENT_BIT),
 	};
-	samplers = make(sampler_bindings, 3);
+	samplers = make(sampler_bindings, 4);
 	const VkDescriptorSetLayoutBinding storage_bindings[2] = {
 	        binding(0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
 	                VK_SHADER_STAGE_COMPUTE_BIT),
@@ -314,16 +316,20 @@ void GpuRendererVulkan::create_descriptor_cache()
 	if (!device_valid_ || cached_descriptors_ != VK_NULL_HANDLE) {
 		return;
 	}
-	// Never reset: entries are rewritten only when their contents change,
-	// so steady-state frames allocate and update nothing. Sized for the
-	// live combinations (a handful) plus headroom for retired epochs.
+	// Content-keyed sets (sampler, storage) come and go as images and
+	// samplers are replaced: clear_descriptor_caches() hands them back with
+	// the retired targets, once the frames that may still bind them are done.
+	// The pool is sized for the live combinations plus a generation of them
+	// per frame in flight: 2048 sets of up to four samplers each. The
+	// per-slot uniform sets are allocated once and live as long as the pool.
 	const VkDescriptorPoolSize sizes[3] = {
 	        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 16},
-	        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 6144},
+	        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 8192},
 	        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 64},
 	};
 	VkDescriptorPoolCreateInfo pool_create{};
 	pool_create.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+	pool_create.flags         = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
 	pool_create.maxSets       = 2048;
 	pool_create.poolSizeCount = 3;
 	pool_create.pPoolSizes    = sizes;
@@ -337,6 +343,7 @@ void GpuRendererVulkan::destroy_descriptor_cache()
 {
 	sampler_cache_.clear();
 	storage_cache_.clear();
+	keyed_sets_live_ = 0;
 	for (FrameSlot& slot : slots_) {
 		slot.cached_vertex_set     = VK_NULL_HANDLE;
 		slot.cached_vertex_buffer  = VK_NULL_HANDLE;
@@ -353,10 +360,29 @@ void GpuRendererVulkan::destroy_descriptor_cache()
 void GpuRendererVulkan::clear_descriptor_caches()
 {
 	// Views/samplers the entries name are being destroyed (possibly
-	// recreated under recycled handles). The sets stay alive in the pool
-	// for frames still in flight; only the lookups are dropped.
+	// recreated under recycled handles), so the lookups go now. The sets may
+	// still be bound by frames in flight: they return to the pool with the
+	// retired targets, once those frames are done.
+	std::vector<VkDescriptorSet> retired;
+	retired.reserve(sampler_cache_.size() + storage_cache_.size());
+	for (const auto& entry : sampler_cache_) {
+		retired.push_back(entry.second);
+	}
+	for (const StorageCacheEntry& entry : storage_cache_) {
+		retired.push_back(entry.set);
+	}
 	sampler_cache_.clear();
 	storage_cache_.clear();
+	if (retired.empty() || cached_descriptors_ == VK_NULL_HANDLE) {
+		return;
+	}
+	retired_targets_.push_back(
+	        [this, pool = cached_descriptors_, sets = std::move(retired)]() {
+		        context_.api.FreeDescriptorSets(
+		                context_.device, pool,
+		                static_cast<uint32_t>(sets.size()), sets.data());
+		        keyed_sets_live_ -= static_cast<uint32_t>(sets.size());
+	        });
 }
 
 VkDescriptorSet GpuRendererVulkan::alloc_vertex_set(uint64_t offset)
@@ -446,13 +472,15 @@ uint64_t cache_handle_key(const void* handle)
 
 VkDescriptorSet GpuRendererVulkan::alloc_sampler_set(
         VkImageView albedo, VkSampler albedo_sampler, VkImageView shadow,
-        VkSampler shadow_sampler, VkImageView ao, VkSampler ao_sampler)
+        VkSampler shadow_sampler, VkImageView ao, VkSampler ao_sampler,
+        VkImageView normal, VkSampler normal_sampler)
 {
 	ensure_descriptor_cache();
-	const std::array<uint64_t, 6> key{
+	const std::array<uint64_t, 8> key{
 	        cache_handle_key(albedo),         cache_handle_key(albedo_sampler),
 	        cache_handle_key(shadow),         cache_handle_key(shadow_sampler),
 	        cache_handle_key(ao),             cache_handle_key(ao_sampler),
+	        cache_handle_key(normal),         cache_handle_key(normal_sampler),
 	};
 	const auto found = sampler_cache_.find(key);
 	if (found != sampler_cache_.end()) {
@@ -467,13 +495,15 @@ VkDescriptorSet GpuRendererVulkan::alloc_sampler_set(
 	vk::check(context_.api.AllocateDescriptorSets(context_.device, &alloc,
 	                                              &set),
 	          "vkAllocateDescriptorSets");
-	const VkDescriptorImageInfo images[3] = {
+	++keyed_sets_live_;
+	const VkDescriptorImageInfo images[4] = {
 	        {albedo_sampler, albedo, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
 	        {shadow_sampler, shadow, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
 	        {ao_sampler, ao, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+	        {normal_sampler, normal, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
 	};
-	VkWriteDescriptorSet writes[3]{};
-	for (uint32_t i = 0; i < 3; ++i) {
+	VkWriteDescriptorSet writes[4]{};
+	for (uint32_t i = 0; i < 4; ++i) {
 		writes[i].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 		writes[i].dstSet          = set;
 		writes[i].dstBinding      = i;
@@ -481,7 +511,7 @@ VkDescriptorSet GpuRendererVulkan::alloc_sampler_set(
 		writes[i].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 		writes[i].pImageInfo      = &images[i];
 	}
-	context_.api.UpdateDescriptorSets(context_.device, 3, writes, 0, nullptr);
+	context_.api.UpdateDescriptorSets(context_.device, 4, writes, 0, nullptr);
 	sampler_cache_[key] = set;
 	return set;
 }
@@ -705,6 +735,19 @@ void GpuRendererVulkan::bind_lit_state(const glm::mat4& view,
 	                            1.0f / static_cast<float>(ssao_target_height_),
 	                            0.0f, 0.0f}
 	                : glm::vec4{0.0f};
+	fragment_uniforms.environment_params =
+	        glm::vec4{lighting_.environment_intensity, 0.0f, 0.0f, 0.0f};
+	for (uint32_t i = 0; i < pbr::kMaxPointLights; ++i) {
+		fragment_uniforms.point_positions[i] =
+		        i < point_light_count_ ? point_light_positions_[i]
+		                               : glm::vec4{0.0f};
+		fragment_uniforms.point_colors[i] =
+		        i < point_light_count_ ? point_light_colors_[i]
+		                               : glm::vec4{0.0f};
+	}
+	fragment_uniforms.point_params =
+	        glm::vec4{static_cast<float>(point_light_count_), 0.0f, 0.0f,
+	                  0.0f};
 
 	const uint64_t vertex_offset =
 	        push_uniforms(&vertex_uniforms, sizeof(vertex_uniforms));
@@ -716,8 +759,9 @@ void GpuRendererVulkan::bind_lit_state(const glm::mat4& view,
 	// samples a valid descriptor: the map when lit, else the white texel
 	// (depth 1.0 reads as lit, failing open). Binding 2 (SSAO) samples the
 	// previous frame's AO texture, or white (AO=1) when off/unavailable.
-	VkDescriptorSet sampler_set =
-	        alloc_lit_sampler_set(white_texture_.view);
+	// Binding 3 (normal map) starts flat: alpha 0, so no normal mapping.
+	VkDescriptorSet sampler_set = alloc_lit_sampler_set(
+	        white_texture_.view, flat_normal_texture_.view);
 	context_.api.CmdBindPipeline(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS,
 	                             lit_pipeline_);
 	const uint32_t vertex_dynamic   = static_cast<uint32_t>(vertex_offset);
@@ -814,6 +858,7 @@ void GpuRendererVulkan::draw(const glm::mat4& view, const glm::mat4& view_projec
 
 	bool state_bound            = false;
 	VkImageView bound_albedo    = VK_NULL_HANDLE;
+	VkImageView bound_normal    = VK_NULL_HANDLE;
 	VkDescriptorSet sampler_set = VK_NULL_HANDLE;
 	for (uint32_t i = 0; i < batch_count; ++i) {
 		const GpuDrawBatch& batch = batches[i];
@@ -843,12 +888,15 @@ void GpuRendererVulkan::draw(const glm::mat4& view, const glm::mat4& view_projec
 			state_bound = true;
 		}
 		VkImageView albedo = texture_for_albedo(batch.albedo_id, assets);
-		if (albedo != bound_albedo || sampler_set == VK_NULL_HANDLE) {
-			sampler_set = alloc_lit_sampler_set(albedo);
+		VkImageView normal = texture_for_normal(batch.normal_id, assets);
+		if (albedo != bound_albedo || normal != bound_normal ||
+		    sampler_set == VK_NULL_HANDLE) {
+			sampler_set = alloc_lit_sampler_set(albedo, normal);
 			context_.api.CmdBindDescriptorSets(
 			        cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, lit_layout_,
 			        2, 1, &sampler_set, 0, nullptr);
 			bound_albedo = albedo;
+			bound_normal = normal;
 		}
 		record_geometry_draw(cmd_, GeometryDraw{batch.mesh, batch.first_vertex,
 		                                        batch.vertex_count,
@@ -1010,7 +1058,8 @@ void GpuRendererVulkan::draw_sky(const glm::mat4& view_projection,
 	VkDescriptorSet fragment_set = alloc_fragment_set(fragment_offset);
 	VkDescriptorSet sampler_set  = alloc_sampler_set(
             white_texture_.view, default_sampler_, white_texture_.view,
-            default_sampler_, white_texture_.view, default_sampler_);
+            default_sampler_, white_texture_.view, default_sampler_,
+            white_texture_.view, default_sampler_);
 
 	// The geometry just drawn used the lower half of the depth range; the sky
 	// sits at the far end of the full one, above all of it.

@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -22,6 +23,10 @@ namespace lotus {
 /// Validation-layer messages the renderer's context has counted so far; defined
 /// by the Vulkan backend as a test hook.
 uint32_t test_vulkan_validation_messages(const GpuRenderer& gpu);
+
+/// Content-keyed descriptor sets (sampler, storage) the renderer has allocated
+/// from its cache pool and not yet returned to it; also a test hook.
+uint32_t test_vulkan_keyed_descriptor_sets(const GpuRenderer& gpu);
 
 } // namespace lotus
 
@@ -185,5 +190,41 @@ TEST_F(VulkanRendererSmoke, ResizeOffscreenKeepsRendering)
 	EXPECT_EQ(width, kWidth / 2);
 	EXPECT_EQ(height, kHeight / 2);
 	EXPECT_EQ(pixels.size(), static_cast<std::size_t>(width) * height * 4);
+	EXPECT_EQ(test_vulkan_validation_messages(gpu), 0u);
+}
+
+/// The editor resizes its viewport on every pixel of a drag, and each resize
+/// replaces the images the cached descriptor sets name. Those sets have to go
+/// back to the pool: a few of them leaked per resize used to exhaust it after
+/// about 700 resizes (2048 sets) and abort the next frame on NVIDIA and Intel.
+/// Lavapipe never refuses, so the count is checked as well.
+TEST_F(VulkanRendererSmoke, ViewportResizesReturnDescriptorSetsToThePool)
+{
+	const std::unique_ptr<GpuRenderer> owned = create_gpu_renderer();
+	GpuRenderer& gpu = *owned;
+	ASSERT_NO_THROW(gpu.init_offscreen(kWidth, kHeight));
+	configure(gpu, true);
+	Scene scene = make_scene();
+
+	constexpr uint32_t kResizes     = 1200;
+	constexpr uint32_t kViewportMin = 96;
+	constexpr uint32_t kViewportHeight = 64;
+	// A few sets per generation, and the frames in flight keep the last few
+	// generations alive: far below the pool, far above a leak's growth.
+	constexpr uint32_t kBound = 64;
+	uint32_t peak = 0;
+	for (uint32_t i = 0; i < kResizes; ++i) {
+		const uint32_t width = kViewportMin + i % 61;
+		ASSERT_TRUE(gpu.resize_viewport(width, kViewportHeight));
+		gpu.begin_frame_offscreen();
+		scene.upload(gpu, static_cast<float>(width) / kViewportHeight);
+		ASSERT_TRUE(gpu.begin_viewport_pass());
+		scene.draw(gpu);
+		gpu.end_viewport_pass();
+		gpu.end_frame();
+		peak = std::max(peak, test_vulkan_keyed_descriptor_sets(gpu));
+	}
+	gpu.wait_idle();
+	EXPECT_LE(peak, kBound);
 	EXPECT_EQ(test_vulkan_validation_messages(gpu), 0u);
 }

@@ -5,7 +5,9 @@
 
 #include <algorithm>
 #include <iostream>
+#include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -16,11 +18,17 @@ constexpr const char* kHeadlessUsage =
         "                       [--dump-state PATH] [--scene-dir DIR]\n"
         "                       [--assets-dir DIR] [--exec \"cmd; cmd\"]";
 
+constexpr const char* kWindowUsage =
+        "usage: lotus [--scene NAME] [--width W] [--height H]\n"
+        "             [--scene-dir DIR] [--assets-dir DIR]";
+
 } // namespace
 
 class DemoApplication : public lotus::Application {
 public:
 	using lotus::Application::Application;
+
+	void set_initial_scene(std::string name) { initial_scene_ = std::move(name); }
 
 protected:
 	void on_ready(lotus::Window& /*window*/, lotus::GpuRenderer& gpu) override
@@ -30,10 +38,15 @@ protected:
 		gpu.lighting().ambient    = {0.12f, 0.13f, 0.17f};
 
 		std::string error;
-		if (!load_scene_by_name("main", &error)) {
-			std::cerr << "lotus: could not load scenes/main.json: " << error
-			          << "\n";
-			scenes().activate("main");
+		if (!load_scene_by_name(initial_scene_, &error)) {
+			std::cerr << "lotus: could not load scene '" << initial_scene_
+			          << "': " << error << "\n";
+			if (initial_scene_ != "main" &&
+			    load_scene_by_name("main", &error)) {
+				scenes().activate("main");
+				return;
+			}
+			scenes().activate(initial_scene_);
 		}
 	}
 
@@ -51,6 +64,9 @@ protected:
 	}
 
 	void on_shutdown() override {}
+
+private:
+	std::string initial_scene_{"main"};
 };
 
 int main(int argc, char** argv)
@@ -72,7 +88,43 @@ int main(int argc, char** argv)
 			return app.run_headless(options);
 		}
 		DemoApplication app;
-		app.run(1100, 700, "lotus");
+		std::string scene = "main";
+		std::string scene_dir = "scenes";
+		std::string assets_dir = "assets";
+		int width = 1280;
+		int height = 720;
+		for (std::size_t i = 0; i < args.size(); ++i) {
+			const std::string& arg = args[i];
+			auto value = [&](const char* flag) -> std::string {
+				if (i + 1 >= args.size()) {
+					throw std::runtime_error(std::string{"flag '"} + flag +
+					                         "' needs a value");
+				}
+				return args[++i];
+			};
+			if (arg == "--scene") {
+				scene = value("--scene");
+			} else if (arg == "--scene-dir") {
+				scene_dir = value("--scene-dir");
+			} else if (arg == "--assets-dir") {
+				assets_dir = value("--assets-dir");
+			} else if (arg == "--width") {
+				width = std::stoi(value("--width"));
+			} else if (arg == "--height") {
+				height = std::stoi(value("--height"));
+			} else if (arg == "--help" || arg == "-h") {
+				std::cout << kWindowUsage << "\n";
+				return 0;
+			} else {
+				std::cerr << "lotus: unknown argument '" << arg << "'\n"
+				          << kWindowUsage << "\n";
+				return 2;
+			}
+		}
+		app.set_initial_scene(scene);
+		app.set_scene_dir(scene_dir);
+		app.set_assets_dir(assets_dir);
+		app.run(width, height, "lotus - " + scene);
 	} catch (const std::exception& ex) {
 		std::cerr << "lotus: " << ex.what() << '\n';
 		return 1;

@@ -57,6 +57,7 @@ void GpuRendererVulkan::init(SDL_Window* window, bool debug_device)
 	barriers_ = std::make_unique<vk::BarrierBatch>(context_.api);
 	create_samplers();
 	create_white_texture();
+	create_flat_normal_texture();
 	layouts_.create(context_);
 	create_descriptor_cache();
 	create_pipelines();
@@ -98,6 +99,12 @@ void GpuRendererVulkan::shutdown()
 		drop();
 	}
 	retired_targets_.clear();
+	// Deferred frees still queued on the slots (replaced buffers, sets
+	// returned to the cache pool) run now, while the pool and everything
+	// else they touch is alive.
+	for (FrameSlot& slot : slots_) {
+		destroy_garbage(slot);
+	}
 	destroy_pipelines();
 	layouts_.destroy(context_);
 	destroy_descriptor_cache();
@@ -619,6 +626,21 @@ void GpuRendererVulkan::set_blob_casters(const glm::vec4* spheres, uint32_t coun
 	}
 }
 
+void GpuRendererVulkan::set_point_lights(const glm::vec4* positions,
+                                         const glm::vec4* colors,
+                                         uint32_t count)
+{
+	point_light_count_ = 0;
+	if (positions == nullptr || colors == nullptr || count == 0) {
+		return;
+	}
+	point_light_count_ = std::min(count, pbr::kMaxPointLights);
+	for (uint32_t i = 0; i < point_light_count_; ++i) {
+		point_light_positions_[i] = positions[i];
+		point_light_colors_[i]    = colors[i];
+	}
+}
+
 void GpuRendererVulkan::destroy_pipelines()
 {
 	const vk::Api& api    = context_.api;
@@ -658,6 +680,15 @@ uint32_t test_vulkan_validation_messages(const GpuRenderer& gpu)
 {
 	const auto* vulkan = dynamic_cast<const GpuRendererVulkan*>(&gpu);
 	return vulkan != nullptr ? vulkan->validation_messages() : 0u;
+}
+
+/// Test hook, declared by the tests that use it: content-keyed descriptor
+/// sets (sampler, storage) allocated from the cache pool and not yet
+/// returned to it.
+uint32_t test_vulkan_keyed_descriptor_sets(const GpuRenderer& gpu)
+{
+	const auto* vulkan = dynamic_cast<const GpuRendererVulkan*>(&gpu);
+	return vulkan != nullptr ? vulkan->keyed_descriptor_sets() : 0u;
 }
 
 } // namespace lotus

@@ -10,48 +10,371 @@
           "far_plane": 200.0,
           "fov_degrees": 50.0,
           "near_plane": 0.1,
-          "position": [7.5, 4.5, 10.5],
-          "target": [0.0, 1.0, 0.0]
+          "position": [0.0, 2.2, 15.0],
+          "target": [0.0, 1.4, 10.0]
         },
-        "SceneGuid": "6",
+        "SceneGuid": "101",
         "Transform": {"position": [0.0, 0.0, 0.0], "rotation": [0.0, 0.0, 0.0], "scale": [1.0, 1.0, 1.0]}
       }
     },
     {
       "name": "floor",
       "components": {
-        "BoxCollider": {"half_extents": [30.0, 0.05, 30.0]},
-        "Material": {"base_color": [0.55, 0.55, 0.57], "roughness": 0.9},
+        "BoxCollider": {"half_extents": [80.0, 0.05, 80.0]},
+        "Material": {"base_color": [0.45, 0.5, 0.35], "roughness": 0.95},
         "MeshSource": {"path": "builtin:plane"},
         "RigidBody": {"motion_type": "static", "friction": 0.9},
-        "SceneGuid": "10",
-        "Transform": {"position": [0.0, 0.0, 0.0], "rotation": [0.0, 0.0, 0.0], "scale": [60.0, 1.0, 60.0]}
+        "SceneGuid": "102",
+        "Transform": {"position": [0.0, 0.0, 0.0], "rotation": [0.0, 0.0, 0.0], "scale": [160.0, 1.0, 160.0]}
       }
     },
     {
       "name": "player",
       "components": {
         "CharacterController": {"radius": 0.35, "half_height": 0.85},
-        "SceneGuid": "7",
-        "Transform": {"position": [0.0, 0.0, 6.5], "rotation": [0.0, 180.0, 0.0], "scale": [1.0, 1.0, 1.0]}
+        "SceneGuid": "103",
+        "Transform": {"position": [0.0, 0.0, 10.0], "rotation": [0.0, 3.14159, 0.0], "scale": [1.0, 1.0, 1.0]}
       }
     },
     {
-      "name": "cube",
+      "name": "wall_north",
       "components": {
-        "Material": {"base_color": [0.78, 0.32, 0.22], "roughness": 0.55},
+        "BoxCollider": {"half_extents": [30.5, 2.0, 0.5]},
+        "Material": {"base_color": [0.78, 0.66, 0.5], "roughness": 0.85},
         "MeshSource": {"path": "builtin:cube"},
-        "SceneGuid": "5",
-        "Transform": {"position": [-1.3, 0.3, -0.6], "rotation": [0.0, 0.0, 0.0], "scale": [1.2, 0.6, 1.2]}
+        "RigidBody": {"motion_type": "static", "friction": 0.6},
+        "SceneGuid": "104",
+        "Transform": {"position": [0.0, 2.0, -30.0], "rotation": [0.0, 0.0, 0.0], "scale": [61.0, 4.0, 1.0]}
       }
     },
     {
-      "name": "cube_top",
+      "name": "wall_south",
       "components": {
-        "Material": {"base_color": [0.86, 0.71, 0.5], "roughness": 0.5},
+        "BoxCollider": {"half_extents": [30.5, 2.0, 0.5]},
+        "Material": {"base_color": [0.78, 0.66, 0.5], "roughness": 0.85},
         "MeshSource": {"path": "builtin:cube"},
-        "SceneGuid": "12",
-        "Transform": {"position": [-1.3, 0.9, -0.6], "rotation": [0.0, 20.0, 0.0], "scale": [0.6, 0.6, 0.6]}
+        "RigidBody": {"motion_type": "static", "friction": 0.6},
+        "SceneGuid": "105",
+        "Transform": {"position": [0.0, 2.0, 30.0], "rotation": [0.0, 0.0, 0.0], "scale": [61.0, 4.0, 1.0]}
+      }
+    },
+    {
+      "name": "wall_east",
+      "components": {
+        "BoxCollider": {"half_extents": [0.5, 2.0, 30.5]},
+        "Material": {"base_color": [0.78, 0.66, 0.5], "roughness": 0.85},
+        "MeshSource": {"path": "builtin:cube"},
+        "RigidBody": {"motion_type": "static", "friction": 0.6},
+        "SceneGuid": "106",
+        "Transform": {"position": [30.0, 2.0, 0.0], "rotation": [0.0, 0.0, 0.0], "scale": [1.0, 4.0, 61.0]}
+      }
+    },
+    {
+      "name": "wall_west",
+      "components": {
+        "BoxCollider": {"half_extents": [0.5, 2.0, 30.5]},
+        "Material": {"base_color": [0.78, 0.66, 0.5], "roughness": 0.85},
+        "MeshSource": {"path": "builtin:cube"},
+        "RigidBody": {"motion_type": "static", "friction": 0.6},
+        "SceneGuid": "107",
+        "Transform": {"position": [-30.0, 2.0, 0.0], "rotation": [0.0, 0.0, 0.0], "scale": [1.0, 4.0, 61.0]}
+      }
+    },
+    {
+      "name": "tower_ne",
+      "components": {
+        "BoxCollider": {"half_extents": [2.0, 3.5, 2.0]},
+        "Material": {"base_color": [0.72, 0.6, 0.46], "roughness": 0.85},
+        "MeshSource": {"path": "builtin:cylinder"},
+        "RigidBody": {"motion_type": "static", "friction": 0.6},
+        "SceneGuid": "108",
+        "Transform": {"position": [30.0, 3.5, -30.0], "rotation": [0.0, 0.0, 0.0], "scale": [4.0, 7.0, 4.0]}
+      }
+    },
+    {
+      "name": "tower_nw",
+      "components": {
+        "BoxCollider": {"half_extents": [2.0, 3.5, 2.0]},
+        "Material": {"base_color": [0.72, 0.6, 0.46], "roughness": 0.85},
+        "MeshSource": {"path": "builtin:cylinder"},
+        "RigidBody": {"motion_type": "static", "friction": 0.6},
+        "SceneGuid": "109",
+        "Transform": {"position": [-30.0, 3.5, -30.0], "rotation": [0.0, 0.0, 0.0], "scale": [4.0, 7.0, 4.0]}
+      }
+    },
+    {
+      "name": "tower_se",
+      "components": {
+        "BoxCollider": {"half_extents": [2.0, 3.5, 2.0]},
+        "Material": {"base_color": [0.72, 0.6, 0.46], "roughness": 0.85},
+        "MeshSource": {"path": "builtin:cylinder"},
+        "RigidBody": {"motion_type": "static", "friction": 0.6},
+        "SceneGuid": "110",
+        "Transform": {"position": [30.0, 3.5, 30.0], "rotation": [0.0, 0.0, 0.0], "scale": [4.0, 7.0, 4.0]}
+      }
+    },
+    {
+      "name": "tower_sw",
+      "components": {
+        "BoxCollider": {"half_extents": [2.0, 3.5, 2.0]},
+        "Material": {"base_color": [0.72, 0.6, 0.46], "roughness": 0.85},
+        "MeshSource": {"path": "builtin:cylinder"},
+        "RigidBody": {"motion_type": "static", "friction": 0.6},
+        "SceneGuid": "111",
+        "Transform": {"position": [-30.0, 3.5, 30.0], "rotation": [0.0, 0.0, 0.0], "scale": [4.0, 7.0, 4.0]}
+      }
+    },
+    {
+      "name": "tower_ne_cap",
+      "components": {
+        "BoxCollider": {"half_extents": [2.2, 1.0, 2.2]},
+        "Material": {"base_color": [0.65, 0.3, 0.2], "roughness": 0.7},
+        "MeshSource": {"path": "builtin:cone"},
+        "RigidBody": {"motion_type": "static", "friction": 0.6},
+        "SceneGuid": "112",
+        "Transform": {"position": [30.0, 8.0, -30.0], "rotation": [0.0, 0.0, 0.0], "scale": [4.4, 2.0, 4.4]}
+      }
+    },
+    {
+      "name": "tower_nw_cap",
+      "components": {
+        "BoxCollider": {"half_extents": [2.2, 1.0, 2.2]},
+        "Material": {"base_color": [0.65, 0.3, 0.2], "roughness": 0.7},
+        "MeshSource": {"path": "builtin:cone"},
+        "RigidBody": {"motion_type": "static", "friction": 0.6},
+        "SceneGuid": "113",
+        "Transform": {"position": [-30.0, 8.0, -30.0], "rotation": [0.0, 0.0, 0.0], "scale": [4.4, 2.0, 4.4]}
+      }
+    },
+    {
+      "name": "tower_se_cap",
+      "components": {
+        "BoxCollider": {"half_extents": [2.2, 1.0, 2.2]},
+        "Material": {"base_color": [0.65, 0.3, 0.2], "roughness": 0.7},
+        "MeshSource": {"path": "builtin:cone"},
+        "RigidBody": {"motion_type": "static", "friction": 0.6},
+        "SceneGuid": "114",
+        "Transform": {"position": [30.0, 8.0, 30.0], "rotation": [0.0, 0.0, 0.0], "scale": [4.4, 2.0, 4.4]}
+      }
+    },
+    {
+      "name": "tower_sw_cap",
+      "components": {
+        "BoxCollider": {"half_extents": [2.2, 1.0, 2.2]},
+        "Material": {"base_color": [0.65, 0.3, 0.2], "roughness": 0.7},
+        "MeshSource": {"path": "builtin:cone"},
+        "RigidBody": {"motion_type": "static", "friction": 0.6},
+        "SceneGuid": "115",
+        "Transform": {"position": [-30.0, 8.0, 30.0], "rotation": [0.0, 0.0, 0.0], "scale": [4.4, 2.0, 4.4]}
+      }
+    },
+    {
+      "name": "house_west",
+      "components": {
+        "BoxCollider": {"half_extents": [4.0, 1.5, 3.0]},
+        "Material": {"base_color": [0.85, 0.8, 0.7], "roughness": 0.8},
+        "MeshSource": {"path": "builtin:cube"},
+        "RigidBody": {"motion_type": "static", "friction": 0.6},
+        "SceneGuid": "116",
+        "Transform": {"position": [-14.0, 1.5, -6.0], "rotation": [0.0, 0.0, 0.0], "scale": [8.0, 3.0, 6.0]}
+      }
+    },
+    {
+      "name": "house_west_roof",
+      "components": {
+        "BoxCollider": {"half_extents": [4.5, 1.25, 3.5]},
+        "Material": {"base_color": [0.65, 0.3, 0.2], "roughness": 0.7},
+        "MeshSource": {"path": "builtin:pyramid"},
+        "RigidBody": {"motion_type": "static", "friction": 0.6},
+        "SceneGuid": "117",
+        "Transform": {"position": [-14.0, 4.25, -6.0], "rotation": [0.0, 0.0, 0.0], "scale": [9.0, 2.5, 7.0]}
+      }
+    },
+    {
+      "name": "house_east",
+      "components": {
+        "BoxCollider": {"half_extents": [3.5, 1.5, 4.0]},
+        "Material": {"base_color": [0.8, 0.72, 0.6], "roughness": 0.8},
+        "MeshSource": {"path": "builtin:cube"},
+        "RigidBody": {"motion_type": "static", "friction": 0.6},
+        "SceneGuid": "118",
+        "Transform": {"position": [14.0, 1.5, -8.0], "rotation": [0.0, 0.0, 0.0], "scale": [7.0, 3.0, 8.0]}
+      }
+    },
+    {
+      "name": "house_east_roof",
+      "components": {
+        "BoxCollider": {"half_extents": [4.0, 1.25, 4.5]},
+        "Material": {"base_color": [0.6, 0.28, 0.18], "roughness": 0.7},
+        "MeshSource": {"path": "builtin:pyramid"},
+        "RigidBody": {"motion_type": "static", "friction": 0.6},
+        "SceneGuid": "119",
+        "Transform": {"position": [14.0, 4.25, -8.0], "rotation": [0.0, 0.0, 0.0], "scale": [8.0, 2.5, 9.0]}
+      }
+    },
+    {
+      "name": "hall_north",
+      "components": {
+        "BoxCollider": {"half_extents": [7.0, 2.0, 2.5]},
+        "Material": {"base_color": [0.82, 0.76, 0.64], "roughness": 0.8},
+        "MeshSource": {"path": "builtin:cube"},
+        "RigidBody": {"motion_type": "static", "friction": 0.6},
+        "SceneGuid": "120",
+        "Transform": {"position": [9.0, 2.0, -20.0], "rotation": [0.0, 0.0, 0.0], "scale": [14.0, 4.0, 5.0]}
+      }
+    },
+    {
+      "name": "hall_north_roof",
+      "components": {
+        "BoxCollider": {"half_extents": [7.5, 1.0, 3.0]},
+        "Material": {"base_color": [0.62, 0.3, 0.2], "roughness": 0.7},
+        "MeshSource": {"path": "builtin:pyramid"},
+        "RigidBody": {"motion_type": "static", "friction": 0.6},
+        "SceneGuid": "121",
+        "Transform": {"position": [9.0, 5.0, -20.0], "rotation": [0.0, 0.0, 0.0], "scale": [15.0, 2.0, 6.0]}
+      }
+    },
+    {
+      "name": "plinth",
+      "components": {
+        "BoxCollider": {"half_extents": [1.2, 0.4, 1.2]},
+        "Material": {"base_color": [0.6, 0.6, 0.62], "roughness": 0.8},
+        "MeshSource": {"path": "builtin:cube"},
+        "RigidBody": {"motion_type": "static", "friction": 0.6},
+        "SceneGuid": "122",
+        "Transform": {"position": [0.0, 0.4, -2.0], "rotation": [0.0, 0.0, 0.0], "scale": [2.4, 0.8, 2.4]}
+      }
+    },
+    {
+      "name": "monument",
+      "components": {
+        "BoxCollider": {"half_extents": [1.2, 1.3, 1.2]},
+        "Material": {"base_color": [0.85, 0.7, 0.4], "roughness": 0.5},
+        "MeshSource": {"path": "builtin:cone"},
+        "RigidBody": {"motion_type": "static", "friction": 0.6},
+        "SceneGuid": "123",
+        "Transform": {"position": [0.0, 2.1, -2.0], "rotation": [0.0, 0.0, 0.0], "scale": [2.4, 2.6, 2.4]}
+      }
+    },
+    {
+      "name": "gate_pillar_west",
+      "components": {
+        "BoxCollider": {"half_extents": [0.4, 1.3, 0.4]},
+        "Material": {"base_color": [0.82, 0.8, 0.75], "roughness": 0.75},
+        "MeshSource": {"path": "builtin:cube"},
+        "RigidBody": {"motion_type": "static", "friction": 0.6},
+        "SceneGuid": "124",
+        "Transform": {"position": [-1.5, 1.3, 6.0], "rotation": [0.0, 0.0, 0.0], "scale": [0.8, 2.6, 0.8]}
+      }
+    },
+    {
+      "name": "gate_pillar_east",
+      "components": {
+        "BoxCollider": {"half_extents": [0.4, 1.3, 0.4]},
+        "Material": {"base_color": [0.82, 0.8, 0.75], "roughness": 0.75},
+        "MeshSource": {"path": "builtin:cube"},
+        "RigidBody": {"motion_type": "static", "friction": 0.6},
+        "SceneGuid": "125",
+        "Transform": {"position": [1.5, 1.3, 6.0], "rotation": [0.0, 0.0, 0.0], "scale": [0.8, 2.6, 0.8]}
+      }
+    },
+    {
+      "name": "gate_lintel",
+      "components": {
+        "BoxCollider": {"half_extents": [1.9, 0.3, 0.5]},
+        "Material": {"base_color": [0.82, 0.8, 0.75], "roughness": 0.75},
+        "MeshSource": {"path": "builtin:cube"},
+        "RigidBody": {"motion_type": "static", "friction": 0.6},
+        "SceneGuid": "126",
+        "Transform": {"position": [0.0, 2.9, 6.0], "rotation": [0.0, 0.0, 0.0], "scale": [3.8, 0.6, 1.0]}
+      }
+    },
+    {
+      "name": "gate_ring",
+      "components": {
+        "BoxCollider": {"half_extents": [1.4, 0.2, 1.4]},
+        "Material": {"base_color": [0.6, 0.45, 0.25], "roughness": 0.4},
+        "MeshSource": {"path": "builtin:torus"},
+        "RigidBody": {"motion_type": "static", "friction": 0.6},
+        "SceneGuid": "127",
+        "Transform": {"position": [0.0, 3.4, 6.0], "rotation": [0.0, 0.0, 0.0], "scale": [2.0, 1.0, 2.0]}
+      }
+    },
+    {
+      "name": "crate1",
+      "components": {
+        "BoxCollider": {"half_extents": [0.35, 0.35, 0.35]},
+        "Material": {"base_color": [0.55, 0.38, 0.22], "roughness": 0.8},
+        "MeshSource": {"path": "builtin:cube"},
+        "RigidBody": {"motion_type": "static", "friction": 0.6},
+        "SceneGuid": "128",
+        "Transform": {"position": [5.0, 0.35, 7.0], "rotation": [0.0, 0.0, 0.0], "scale": [0.7, 0.7, 0.7]}
+      }
+    },
+    {
+      "name": "crate_top",
+      "components": {
+        "BoxCollider": {"half_extents": [0.35, 0.35, 0.35]},
+        "Material": {"base_color": [0.6, 0.42, 0.25], "roughness": 0.8},
+        "MeshSource": {"path": "builtin:cube"},
+        "RigidBody": {"motion_type": "static", "friction": 0.6},
+        "SceneGuid": "129",
+        "Transform": {"position": [5.0, 1.05, 7.0], "rotation": [0.0, 0.3, 0.0], "scale": [0.7, 0.7, 0.7]}
+      }
+    },
+    {
+      "name": "crate2",
+      "components": {
+        "BoxCollider": {"half_extents": [0.35, 0.35, 0.35]},
+        "Material": {"base_color": [0.55, 0.38, 0.22], "roughness": 0.8},
+        "MeshSource": {"path": "builtin:cube"},
+        "RigidBody": {"motion_type": "static", "friction": 0.6},
+        "SceneGuid": "130",
+        "Transform": {"position": [5.9, 0.35, 7.4], "rotation": [0.0, 0.3, 0.0], "scale": [0.7, 0.7, 0.7]}
+      }
+    },
+    {
+      "name": "crate3",
+      "components": {
+        "BoxCollider": {"half_extents": [0.35, 0.35, 0.35]},
+        "Material": {"base_color": [0.52, 0.36, 0.2], "roughness": 0.8},
+        "MeshSource": {"path": "builtin:cube"},
+        "RigidBody": {"motion_type": "static", "friction": 0.6},
+        "SceneGuid": "131",
+        "Transform": {"position": [-6.0, 0.35, 1.0], "rotation": [0.0, 0.0, 0.0], "scale": [0.7, 0.7, 0.7]}
+      }
+    },
+    {
+      "name": "crate4",
+      "components": {
+        "BoxCollider": {"half_extents": [0.3, 0.3, 0.3]},
+        "Material": {"base_color": [0.58, 0.4, 0.24], "roughness": 0.8},
+        "MeshSource": {"path": "builtin:cube"},
+        "RigidBody": {"motion_type": "static", "friction": 0.6},
+        "SceneGuid": "132",
+        "Transform": {"position": [-5.1, 0.3, 1.3], "rotation": [0.0, 0.5, 0.0], "scale": [0.6, 0.6, 0.6]}
+      }
+    },
+    {
+      "name": "barrel1",
+      "components": {
+        "BoxCollider": {"half_extents": [0.45, 0.5, 0.45]},
+        "Material": {"base_color": [0.5, 0.32, 0.18], "roughness": 0.8},
+        "MeshSource": {"path": "builtin:cylinder"},
+        "RigidBody": {"motion_type": "static", "friction": 0.6},
+        "SceneGuid": "133",
+        "Transform": {"position": [-4.0, 0.5, 6.0], "rotation": [0.0, 0.0, 0.0], "scale": [0.9, 1.0, 0.9]}
+      }
+    },
+    {
+      "name": "barrel2",
+      "components": {
+        "BoxCollider": {"half_extents": [0.45, 0.5, 0.45]},
+        "Material": {"base_color": [0.48, 0.3, 0.16], "roughness": 0.8},
+        "MeshSource": {"path": "builtin:cylinder"},
+        "RigidBody": {"motion_type": "static", "friction": 0.6},
+        "SceneGuid": "134",
+        "Transform": {"position": [-4.9, 0.5, 6.4], "rotation": [0.0, 0.0, 0.0], "scale": [0.9, 1.0, 0.9]}
       }
     },
     {
@@ -60,54 +383,102 @@
         "Material": {"base_color": [0.22, 0.47, 0.55], "roughness": 0.25},
         "MeshSource": {"path": "builtin:sphere"},
         "RigidBody": {"motion_type": "dynamic", "mass": 2.0, "friction": 0.4},
-        "SceneGuid": "2",
+        "SceneGuid": "135",
         "SphereCollider": {"radius": 0.75},
-        "Transform": {"position": [1.6, 0.75, 0.4], "rotation": [0.0, 0.0, 0.0], "scale": [1.0, 1.0, 1.0]}
+        "Transform": {"position": [3.0, 0.75, -6.0], "rotation": [0.0, 0.0, 0.0], "scale": [1.0, 1.0, 1.0]}
       }
     },
     {
-      "name": "pillar",
+      "name": "column_west",
       "components": {
-        "Material": {"base_color": [0.86, 0.71, 0.5], "roughness": 0.75},
+        "BoxCollider": {"half_extents": [0.6, 1.5, 0.6]},
+        "Material": {"base_color": [0.82, 0.8, 0.75], "roughness": 0.7},
         "MeshSource": {"path": "builtin:cylinder"},
-        "SceneGuid": "13",
-        "Transform": {"position": [0.1, 1.1, -1.5], "rotation": [0.0, 0.0, 0.0], "scale": [1.1, 2.2, 1.1]}
+        "RigidBody": {"motion_type": "static", "friction": 0.6},
+        "SceneGuid": "136",
+        "Transform": {"position": [-2.5, 1.5, -12.0], "rotation": [0.0, 0.0, 0.0], "scale": [1.2, 3.0, 1.2]}
       }
     },
     {
-      "name": "cone",
+      "name": "column_east",
       "components": {
-        "Material": {"base_color": [0.78, 0.32, 0.22], "roughness": 0.45},
-        "MeshSource": {"path": "builtin:cone"},
-        "SceneGuid": "14",
-        "Transform": {"position": [1.9, 0.8, -1.6], "rotation": [0.0, 0.0, 0.0], "scale": [1.4, 1.6, 1.4]}
+        "BoxCollider": {"half_extents": [0.6, 1.5, 0.6]},
+        "Material": {"base_color": [0.82, 0.8, 0.75], "roughness": 0.7},
+        "MeshSource": {"path": "builtin:cylinder"},
+        "RigidBody": {"motion_type": "static", "friction": 0.6},
+        "SceneGuid": "137",
+        "Transform": {"position": [2.5, 1.5, -12.0], "rotation": [0.0, 0.0, 0.0], "scale": [1.2, 3.0, 1.2]}
       }
     },
     {
-      "name": "torus",
+      "name": "path_ns",
       "components": {
-        "Material": {"base_color": [0.22, 0.47, 0.55], "roughness": 0.35},
-        "MeshSource": {"path": "builtin:torus"},
-        "SceneGuid": "15",
-        "Transform": {"position": [0.2, 0.2, 1.7], "rotation": [0.0, 0.0, 0.0], "scale": [1.0, 1.0, 1.0]}
+        "Material": {"base_color": [0.72, 0.62, 0.45], "roughness": 0.9},
+        "MeshSource": {"path": "builtin:plane"},
+        "SceneGuid": "138",
+        "Transform": {"position": [0.0, 0.02, -2.0], "rotation": [0.0, 0.0, 0.0], "scale": [3.0, 1.0, 44.0]}
       }
     },
     {
-      "name": "pyramid",
+      "name": "path_ew_west",
       "components": {
-        "Material": {"base_color": [0.86, 0.71, 0.5], "roughness": 0.6},
+        "Material": {"base_color": [0.72, 0.62, 0.45], "roughness": 0.9},
+        "MeshSource": {"path": "builtin:plane"},
+        "SceneGuid": "139",
+        "Transform": {"position": [-11.0, 0.02, 3.0], "rotation": [0.0, 0.0, 0.0], "scale": [19.0, 1.0, 3.0]}
+      }
+    },
+    {
+      "name": "path_ew_east",
+      "components": {
+        "Material": {"base_color": [0.72, 0.62, 0.45], "roughness": 0.9},
+        "MeshSource": {"path": "builtin:plane"},
+        "SceneGuid": "140",
+        "Transform": {"position": [11.0, 0.02, 3.0], "rotation": [0.0, 0.0, 0.0], "scale": [19.0, 1.0, 3.0]}
+      }
+    },
+    {
+      "name": "hill_north",
+      "components": {
+        "BoxCollider": {"half_extents": [13.0, 7.0, 13.0]},
+        "Material": {"base_color": [0.4, 0.46, 0.3], "roughness": 0.95},
         "MeshSource": {"path": "builtin:pyramid"},
-        "SceneGuid": "16",
-        "Transform": {"position": [-2.2, 0.5, 1.2], "rotation": [0.0, 15.0, 0.0], "scale": [1.2, 1.0, 1.2]}
+        "RigidBody": {"motion_type": "static", "friction": 0.6},
+        "SceneGuid": "141",
+        "Transform": {"position": [-40.0, 7.0, -45.0], "rotation": [0.0, 0.0, 0.0], "scale": [26.0, 14.0, 26.0]}
       }
     },
     {
-      "name": "wall",
+      "name": "hill_east",
       "components": {
-        "Material": {"base_color": [0.86, 0.71, 0.5], "roughness": 0.85},
-        "MeshSource": {"path": "builtin:cube"},
-        "SceneGuid": "4",
-        "Transform": {"position": [-0.5, 0.9, -3.2], "rotation": [0.0, 0.0, 0.0], "scale": [3.0, 1.8, 0.25]}
+        "BoxCollider": {"half_extents": [11.0, 6.0, 11.0]},
+        "Material": {"base_color": [0.38, 0.44, 0.3], "roughness": 0.95},
+        "MeshSource": {"path": "builtin:pyramid"},
+        "RigidBody": {"motion_type": "static", "friction": 0.6},
+        "SceneGuid": "142",
+        "Transform": {"position": [48.0, 6.0, -8.0], "rotation": [0.0, 0.0, 0.0], "scale": [22.0, 12.0, 22.0]}
+      }
+    },
+    {
+      "name": "hill_south",
+      "components": {
+        "BoxCollider": {"half_extents": [12.0, 5.0, 12.0]},
+        "Material": {"base_color": [0.42, 0.47, 0.31], "roughness": 0.95},
+        "MeshSource": {"path": "builtin:pyramid"},
+        "RigidBody": {"motion_type": "static", "friction": 0.6},
+        "SceneGuid": "143",
+        "Transform": {"position": [5.0, 5.0, 52.0], "rotation": [0.0, 0.0, 0.0], "scale": [24.0, 10.0, 24.0]}
+      }
+    },
+    {
+      "name": "hill_west",
+      "components": {
+        "BoxCollider": {"half_extents": [10.0, 6.0, 10.0]},
+        "Material": {"base_color": [0.38, 0.44, 0.3], "roughness": 0.95},
+        "MeshSource": {"path": "builtin:pyramid"},
+        "RigidBody": {"motion_type": "static", "friction": 0.6},
+        "SceneGuid": "144",
+        "Transform": {"position": [-50.0, 6.0, 10.0], "rotation": [0.0, 0.0, 0.0], "scale": [20.0, 12.0, 20.0]}
       }
     },
     {
@@ -116,8 +487,10 @@
         "Animator": {"clip_id": "sample_bob", "loop": true, "playing": true, "speed": 1.0},
         "Material": {"base_color": [0.78, 0.32, 0.22], "roughness": 0.2},
         "MeshSource": {"path": "builtin:sphere"},
-        "SceneGuid": "1",
-        "Transform": {"position": [3.2, 0.4, 1.4], "rotation": [0.0, 0.0, 0.0], "scale": [0.5, 0.5, 0.5]}
+        "RigidBody": {"motion_type": "static", "friction": 0.6},
+        "SceneGuid": "145",
+        "SphereCollider": {"radius": 0.375},
+        "Transform": {"position": [2.5, 0.5, 9.0], "rotation": [0.0, 0.0, 0.0], "scale": [0.5, 0.5, 0.5]}
       }
     }
   ]

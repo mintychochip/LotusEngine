@@ -14,6 +14,7 @@ layout(location = 6) in float in_roughness;
 // locations 8..11) and the material multipliers, rgb colour then roughness.
 layout(location = 8) in mat4 in_model;
 layout(location = 12) in vec4 in_shade;
+layout(location = 13) in vec4 in_material; // rgb emissive, a metallic
 
 layout(set = 1, binding = 0) uniform VertexUniforms {
     mat4 view_projection;
@@ -26,6 +27,8 @@ layout(location = 2) out vec3 v_color;
 layout(location = 3) out vec3 v_view_position;
 layout(location = 5) out vec2 v_uv;
 layout(location = 6) out float v_roughness;
+layout(location = 7) out vec3 v_emissive;
+layout(location = 8) out float v_metallic;
 
 void main()
 {
@@ -44,6 +47,8 @@ void main()
     v_color          = in_color * in_shade.rgb;
     v_uv             = in_uv;
     v_roughness      = in_roughness * in_shade.a;
+    v_emissive       = in_material.rgb;
+    v_metallic       = in_material.a;
     v_view_position  = (u.view * vec4(world_position, 1.0)).xyz;
     gl_Position      = u.view_projection * vec4(world_position, 1.0);
 }

@@ -219,12 +219,46 @@ Keybinds default_keybinds()
 	Keybinds keybinds;
 	keybinds.define("editor.toggle", KeyChord{SDLK_F1, SDL_KMOD_NONE});
 	keybinds.define("console.toggle", KeyChord{SDLK_F2, SDL_KMOD_NONE});
+	// F5 sits with the F1/F2 view keys, clear of gameplay (WASD, Shift,
+	// Space, mouse) and of the Ctrl+ editor chords.
+	keybinds.define("camera.toggle_third_person",
+	                KeyChord{SDLK_F5, SDL_KMOD_NONE});
 	keybinds.define("undo", KeyChord{SDLK_Z, SDL_KMOD_CTRL});
 	keybinds.define("redo", KeyChord{SDLK_Y, SDL_KMOD_CTRL});
 	keybinds.define("scene.save", KeyChord{SDLK_S, SDL_KMOD_CTRL});
 	keybinds.define("scene.reload", KeyChord{SDLK_R, SDL_KMOD_CTRL});
 	keybinds.define("quit", KeyChord{SDLK_Q, SDL_KMOD_CTRL});
 	return keybinds;
+}
+
+bool Keybinds::backfill(const std::string& path, std::string* error) const
+{
+	std::ifstream in(path, std::ios::binary);
+	if (!in) {
+		return save(path, error);
+	}
+	std::ostringstream buffer;
+	buffer << in.rdbuf();
+	nlohmann::json root;
+	try {
+		root = nlohmann::json::parse(buffer.str());
+	} catch (const std::exception& ex) {
+		if (error) {
+			*error = std::string{"keybinds parse error: "} + ex.what();
+		}
+		return false;
+	}
+	if (!root.is_object() || !root.contains("bindings") ||
+	    !root.at("bindings").is_object()) {
+		return save(path, error);
+	}
+	const nlohmann::json& bindings = root.at("bindings");
+	for (const auto& entry : defaults_) {
+		if (!bindings.contains(entry.first)) {
+			return save(path, error);
+		}
+	}
+	return false;
 }
 
 } // namespace lotus

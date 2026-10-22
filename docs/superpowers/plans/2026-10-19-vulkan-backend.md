@@ -9,8 +9,9 @@
 
 ## Global constraints
 
-- Pixel identity: NVIDIA `a593920ea4013023`, Intel `ce325cdd979df2a7`, lavapipe `b380d9a84f4bde8f`
-  (bench frame); `vertices=189132`, `drawn_entities=392`, `draw_calls=72`.
+- Pixel identity with the SDL_GPU build of the same source (`master` `84a9497`): NVIDIA `83a9de542ad33701`,
+  Intel `a3bfbe901faae371`, lavapipe `a467d4ea5cdd618d` (bench frame; before the merge `a593920ea4013023`,
+  `ce325cdd979df2a7`, `b380d9a84f4bde8f`); `vertices=189132`, `drawn_entities=392`, `draw_calls=72`.
 - Vulkan floor 1.3 (dynamicRendering, synchronization2); features: depthClamp, independentBlend.
 - Repo style: tabs, `///` docs, no dead code, clean cutover (no SDL_GPU left at the end).
 - Tests run synchronously; mutation-check new tests; GPU tests also on lavapipe + Intel.
