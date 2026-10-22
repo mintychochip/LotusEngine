@@ -1,8 +1,8 @@
 # Rendering pipeline
 
 Rendering is split into a CPU visibility/build stage and a GPU pass sequence.
-The CPU stage is independent of SDL and can run headless; the GPU stage consumes
-the resulting draw batches.
+The CPU stage needs no window or GPU and can run headless; the GPU stage
+consumes the resulting draw batches.
 
 ## CPU stage
 

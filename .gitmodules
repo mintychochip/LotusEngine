@@ -4,9 +4,6 @@
 [submodule "dependencies/entt"]
 	path = dependencies/entt
 	url = https://github.com/skypjack/entt.git
-[submodule "dependencies/SDL"]
-	path = dependencies/SDL
-	url = https://github.com/libsdl-org/SDL.git
 [submodule "dependencies/imgui"]
 	path = dependencies/imgui
 	url = https://github.com/ocornut/imgui.git

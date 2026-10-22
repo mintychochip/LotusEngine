@@ -21,9 +21,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cmake ninja-build build-essential \
-            libvulkan-dev vulkan-tools mesa-vulkan-drivers \
-            libsdl3-dev \
+            cmake ninja-build build-essential pkg-config \
+            libvulkan1 mesa-vulkan-drivers \
+            libwayland-dev libwayland-bin libxkbcommon-dev \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev \
+            libxi-dev libxext-dev \
             xvfb
 
       - name: Configure

@@ -9,7 +9,11 @@ tested without a window or GPU.
 
 - **Application shell** — owns the window, frame loop, input dispatch, editor,
   console, and the active `Scene`. `Application::run` is the windowed path;
-  `Application::run_headless` is the test and automation path.
+  `Application::run_headless` is the test and automation path. The window is a
+  GLFW window (`Window`): it turns the system's callbacks into engine events
+  (`KeyEvent`, `MouseMoveEvent`), keeps an `Input` snapshot of what is held,
+  and implements `PresentTarget`, which is all the renderer asks of a window
+  (size, Vulkan instance extensions, a surface).
 - **Scene data** — an EnTT registry plus hierarchy, persistent GUIDs, component
   codecs, meshes, materials, and scene settings. `Scene` performs CPU-only
   visibility and upload preparation before the renderer records anything.
@@ -19,7 +23,7 @@ tested without a window or GPU.
   sequencing. It consumes draw batches; it does not know about gameplay or
   serialization.
 - **Runtime services** — physics, scripting, animation, input/camera, region
-  residency, save games, networking, audio, and tooling. They operate on a
+  residency, save games, networking, and tooling. They operate on a
   `Scene` and are driven in a defined order by the application.
 
 ## Subsystem map
@@ -41,7 +45,7 @@ flowchart TB
     Services --> Input["Keybinds + camera controller"]
     Services --> Residency["ResidencySystem<br/>region streaming"]
     Services --> Tooling["Editor + console<br/>hot reload + async load"]
-    Services --> Optional["Optional modules<br/>networking + audio"]
+    Services --> Optional["Optional modules<br/>networking"]
 ```
 
 ## Frame lifecycle
@@ -90,7 +94,7 @@ so the renderer sees one consistent transform state for the frame.
 ## Headless path
 
 `Application::run_headless` uses the same scene and renderer code but skips the
-window, editor, audio, and hot reload. It can:
+window, editor, and hot reload. It can:
 
 - load a scene,
 - run a fixed number of simulation ticks,
