@@ -16,13 +16,12 @@
 #include <imgui.h>
 #include <imgui_impl_vulkan.h>
 
-#include <SDL3/SDL.h>
-#include <SDL3/SDL_vulkan.h>
-
 #include <algorithm>
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
+
+#include "lotus/gpu/present_target.hpp"
 
 namespace lotus {
 namespace {
@@ -209,8 +208,8 @@ bool GpuRendererVulkan::create_swapchain(uint32_t width, uint32_t height)
 		                           caps.maxImageExtent.height);
 	}
 	if (extent.width == 0 || extent.height == 0) {
-		// A minimized window can report a 0x0 surface even when SDL's size
-		// is not: there is nothing to present to yet, which is not a
+		// A minimized window can report a 0x0 surface even when the window's
+		// size is not: there is nothing to present to yet, which is not a
 		// failure. Nothing has been touched, so the caller just retries.
 		return false;
 	}
@@ -365,7 +364,7 @@ bool GpuRendererVulkan::acquire_swapchain_image()
 	}
 }
 
-void GpuRendererVulkan::begin_frame(SDL_Window* window, float clear_r,
+void GpuRendererVulkan::begin_frame(PresentTarget* target, float clear_r,
                                     float clear_g, float clear_b)
 {
 	clear_r_ = clear_r;
@@ -373,13 +372,13 @@ void GpuRendererVulkan::begin_frame(SDL_Window* window, float clear_r,
 	clear_b_ = clear_b;
 	// Offscreen sessions never come here (they use begin_frame_offscreen):
 	// record the clear colour and report no frame.
-	if (!windowed_ || !device_valid_ || window == nullptr) {
+	if (!windowed_ || !device_valid_ || target == nullptr) {
 		return;
 	}
 	poll_pyramid();
 	int pixels_w = 0;
 	int pixels_h = 0;
-	SDL_GetWindowSizeInPixels(window, &pixels_w, &pixels_h);
+	target->pixel_size(pixels_w, pixels_h);
 	if (pixels_w <= 0 || pixels_h <= 0) {
 		// Minimized: no swapchain image exists, the frame is skipped and
 		// has_frame() stays false.

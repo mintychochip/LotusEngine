@@ -11,10 +11,11 @@
 #include "lotus/gpu/vertex.hpp"
 #include "lotus/scene/depth_pyramid.hpp"
 
-struct SDL_Window;
 struct ImDrawData;
 
 namespace lotus {
+
+class PresentTarget;
 
 class AssetRegistry;
 
@@ -302,7 +303,9 @@ public:
 
 	GpuRenderer& operator=(const GpuRenderer&) = delete;
 
-	virtual void init(SDL_Window* window, bool debug_device = true) = 0;
+	/// Creates the device. \p target is where frames are presented (a window);
+	/// null makes a device with no surface (see init_offscreen).
+	virtual void init(PresentTarget* target, bool debug_device = true) = 0;
 
 	virtual void shutdown() = 0;
 
@@ -347,8 +350,8 @@ public:
 
 	// --- frame ---
 
-	virtual void begin_frame(SDL_Window* window, float clear_r, float clear_g,
-	                 float clear_b) = 0;
+	virtual void begin_frame(PresentTarget* target, float clear_r,
+	                         float clear_g, float clear_b) = 0;
 
 	/// Frames an offscreen renderer lets queue up before begin_frame_offscreen()
 	/// waits for the oldest to finish: enough to keep the GPU fed while the CPU
@@ -440,7 +443,7 @@ public:
 	// --- UI layer (Dear ImGui) ---
 	//
 	// The renderer owns the ImGui renderer backend, so the editor never
-	// touches a GPU handle; the platform backend (ImGui_ImplSDL3_*) stays
+	// touches a GPU handle; the platform backend (ImGui_ImplGlfw_*) stays
 	// with the editor.
 
 	/// Creates the ImGui renderer backend that draws onto the swapchain.

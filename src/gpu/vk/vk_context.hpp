@@ -9,15 +9,17 @@
 #include "gpu/vk/vk_api.hpp"
 #include "gpu/vk/vk_loader.hpp"
 
-struct SDL_Window;
+namespace lotus {
+class PresentTarget;
+} // namespace lotus
 
 namespace lotus::vk {
 
 struct ContextOptions {
-	/// The window to present to, or null for offscreen use. A window means the
-	/// instance carries SDL's surface extensions, the device is one that can
+	/// Where to present, or null for offscreen use. A target means the
+	/// instance carries its surface extensions, the device is one that can
 	/// present to it, and the context owns the surface.
-	SDL_Window* window{nullptr};
+	PresentTarget* target{nullptr};
 	/// Ask for the Khronos validation layer. Honoured only where the layer is
 	/// installed. LOTUS_VK_VALIDATION=1 asks too, and =sync adds
 	/// synchronization validation.

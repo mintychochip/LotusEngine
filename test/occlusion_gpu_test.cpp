@@ -87,7 +87,7 @@ TEST_F(OcclusionGpuTest, PyramidReachesTheCpuWithoutBlocking)
 
 	// Readiness alone is NOT sufficient evidence. `occlusion_ready()` goes
 	// true on an all-sky pyramid, and a descriptor-set mismatch produced a
-	// valid pipeline with an empty SDL_GetError() and an all-zero pyramid --
+	// valid pipeline with no error reported and an all-zero pyramid --
 	// which reads as "geometry zero units away" and culls nothing. Assert that
 	// real depth actually arrived, at a level the query reads.
 	ASSERT_GE(gpu.occlusion_pyramid().level_count(), 3u);

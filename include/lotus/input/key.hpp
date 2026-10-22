@@ -6,8 +6,8 @@
 namespace lotus {
 
 /// Every key the engine names, with the text a keybinds file spells it with.
-/// The spellings are SDL's (the SDL build wrote them), so existing
-/// keybinds.json files keep parsing. Enum order is this order.
+/// The spellings are the ones keybinds.json files already use, so existing
+/// files keep parsing. Enum order is this order.
 #define LOTUS_KEY_LIST(KEY)                                                    \
 	KEY(Space, "Space")                                                        \
 	KEY(Apostrophe, "'")                                                       \

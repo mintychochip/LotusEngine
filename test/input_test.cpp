@@ -47,8 +47,8 @@ TEST(KeyNamesTest, EveryKeyHasAUniqueNameThatParsesBack)
 	}
 }
 
-// The keys a keybinds.json written by the SDL build can hold must keep their
-// names, or an existing file would stop parsing.
+// The keys an existing keybinds.json can hold must keep their names, or the
+// file would stop parsing.
 TEST(KeyNamesTest, KeepsTheNamesExistingKeybindFilesUse)
 {
 	EXPECT_EQ(key_name(Key::F1), "F1");

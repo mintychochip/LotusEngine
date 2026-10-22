@@ -52,7 +52,7 @@ export VVL='VK_ADD_LAYER_PATH=/tmp/vvl/root/usr/share/vulkan/explicit_layer.d LD
       bench and every GPU test that only needed SDL for the loader drop `SDL_Init`/`SDL_SetHint`. The windowed path
       keeps SDL for window, extensions and surface until T4.
       Verify: suite on three devices, `lotus --headless` screenshots identical to before.
-- [ ] **T4 Cutover to GLFW.**
+- [x] **T4 Cutover to GLFW.**
       - `include/lotus/gpu/present_target.hpp`: abstract `PresentTarget` (`pixel_size`, `vulkan_instance_extensions`,
         `create_vulkan_surface(void* instance, void* get_instance_proc) -> uint64_t`).
       - `include/lotus/application/window.hpp` + `src/core/application/window.cpp`: `Window` on GLFW implementing
@@ -66,11 +66,12 @@ export VVL='VK_ADD_LAYER_PATH=/tmp/vvl/root/usr/share/vulkan/explicit_layer.d LD
       - `Keybinds`/`KeyChord` on `Key`/`Mod`/`KeyEvent`; `apply_character_movement_input` takes `const Input&`;
         `RPGGame` reads `input()`.
       - Tests: swapchain test on a `HeadlessPresentTarget` (`VK_EXT_headless_surface`); keybinds and player movement
-        tests on engine events; GLFW translation totality test.
+        tests on engine events; GLFW translation totality test; `Window` tests on GLFW's null platform (callbacks in,
+        engine events and `Input` out).
       Verify: suite on three devices with validation; windowed run on Wayland and X11.
-- [ ] **T5 Delete SDL.** Remove the `dependencies/SDL` submodule, `cmake/FindLotusSDL3.cmake`, SDL3 from
-      `CMakeLists.txt`/`imgui` target; CI installs the X11/Wayland -dev packages instead of `libsdl3-dev`; README
-      (dependencies, env table), architecture docs, this spec's results.
+- [ ] **T5 Delete SDL.** Remove the `dependencies/SDL` submodule (`cmake/FindLotusSDL3.cmake` and the CMake links
+      went with T4, nothing could build against them); CI installs the X11/Wayland -dev packages instead of
+      `libsdl3-dev`; README (dependencies, env table), architecture docs, this spec's results.
       Verify: `grep -ri sdl` over the tracked tree finds only history in docs/specs; fresh-clone build.
 - [ ] **T6 Verification.** Whole suite on RTX 3080, Intel, lavapipe with sync validation; `lotus` and `lotus_rpg` on
       Wayland and X11 with validation (frames, close via compositor, editor visible); fresh clone configure+build+ctest

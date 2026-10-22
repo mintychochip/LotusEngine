@@ -1,15 +1,15 @@
 #include "gpu/vk/vk_context.hpp"
 
-#include <SDL3/SDL.h>
-#include <SDL3/SDL_vulkan.h>
-
 #include <algorithm>
+#include <bit>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+#include "lotus/gpu/present_target.hpp"
 
 namespace lotus::vk {
 namespace {
@@ -120,14 +120,12 @@ void Context::create(const ContextOptions& options)
 			}
 		}
 	}
-	if (options.window != nullptr) {
-		Uint32 count            = 0;
-		const char* const* sdl = SDL_Vulkan_GetInstanceExtensions(&count);
-		if (sdl == nullptr) {
-			throw std::runtime_error(std::string{"no Vulkan surface support: "} +
-			                         SDL_GetError());
+	std::vector<std::string> surface_extensions;
+	if (options.target != nullptr) {
+		surface_extensions = options.target->vulkan_instance_extensions();
+		for (const std::string& name : surface_extensions) {
+			extensions.push_back(name.c_str());
 		}
-		extensions.insert(extensions.end(), sdl, sdl + count);
 	}
 
 	VkApplicationInfo app{};
@@ -171,13 +169,14 @@ void Context::create(const ContextOptions& options)
 		      "vkCreateDebugUtilsMessengerEXT");
 	}
 
-	if (options.window != nullptr &&
-	    !SDL_Vulkan_CreateSurface(options.window, instance, nullptr, &surface)) {
-		throw std::runtime_error(std::string{"cannot create a Vulkan surface: "} +
-		                         SDL_GetError());
+	if (options.target != nullptr) {
+		surface = std::bit_cast<VkSurfaceKHR>(
+		        options.target->create_vulkan_surface(
+		                instance,
+		                reinterpret_cast<void*>(api.GetInstanceProcAddr)));
 	}
 
-	pick_physical_device(options.window != nullptr);
+	pick_physical_device(options.target != nullptr);
 
 	// Everything below was verified by pick_physical_device.
 	VkPhysicalDeviceVulkan13Features features13{};
@@ -198,7 +197,7 @@ void Context::create(const ContextOptions& options)
 	queue_info.pQueuePriorities = &priority;
 
 	std::vector<const char*> device_extensions;
-	if (options.window != nullptr) {
+	if (options.target != nullptr) {
 		device_extensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
 	}
 	VkDeviceCreateInfo device_info{};
@@ -349,7 +348,7 @@ void Context::shutdown()
 	queue           = VK_NULL_HANDLE;
 	physical_device = VK_NULL_HANDLE;
 	if (surface != VK_NULL_HANDLE) {
-		SDL_Vulkan_DestroySurface(instance, surface, nullptr);
+		api.DestroySurfaceKHR(instance, surface, nullptr);
 		surface = VK_NULL_HANDLE;
 	}
 	if (messenger_ != VK_NULL_HANDLE) {

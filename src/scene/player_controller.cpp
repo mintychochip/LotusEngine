@@ -1,7 +1,5 @@
 #include "lotus/scene/player_controller.hpp"
 
-#include <SDL3/SDL.h>
-
 #include <algorithm>
 #include <cmath>
 
@@ -203,9 +201,9 @@ CameraLookState apply_look_delta(Scene& scene, float dx_pixels,
 	if (look == nullptr) {
 		return CameraLookState{};
 	}
-	// Rightward drag turns the view right; upward drag looks up (SDL
-	// motion y grows downward, hence the negation). Yaw wraps so the
-	// player can turn forever; pitch clamps so the view never flips.
+	// Rightward drag turns the view right; upward drag looks up (window y
+	// grows downward, hence the negation). Yaw wraps so the player can turn
+	// forever; pitch clamps so the view never flips.
 	look->yaw_radians = wrap_look_yaw(look->yaw_radians +
 	                                  dx_pixels * kLookSensitivity);
 	look->pitch_radians =
@@ -215,8 +213,8 @@ CameraLookState apply_look_delta(Scene& scene, float dx_pixels,
 }
 
 void apply_character_movement_input(Scene& scene, PhysicsWorld& physics,
-                                    bool enable_input, float move_speed,
-                                    float sprint_multiplier)
+                                    const Input& input, bool enable_input,
+                                    float move_speed, float sprint_multiplier)
 {
 	const Entity player = find_named(scene, "player");
 	if (player == NullEntity) {
@@ -232,19 +230,18 @@ void apply_character_movement_input(Scene& scene, PhysicsWorld& physics,
 		return;
 	}
 
-	const bool* keys = SDL_GetKeyboardState(nullptr);
-	float forward    = 0.0f;
-	float right      = 0.0f;
-	if (keys[SDL_SCANCODE_W] || keys[SDL_SCANCODE_UP]) {
+	float forward = 0.0f;
+	float right   = 0.0f;
+	if (input.key_down(Key::W) || input.key_down(Key::Up)) {
 		++forward;
 	}
-	if (keys[SDL_SCANCODE_S] || keys[SDL_SCANCODE_DOWN]) {
+	if (input.key_down(Key::S) || input.key_down(Key::Down)) {
 		--forward;
 	}
-	if (keys[SDL_SCANCODE_D] || keys[SDL_SCANCODE_RIGHT]) {
+	if (input.key_down(Key::D) || input.key_down(Key::Right)) {
 		++right;
 	}
-	if (keys[SDL_SCANCODE_A] || keys[SDL_SCANCODE_LEFT]) {
+	if (input.key_down(Key::A) || input.key_down(Key::Left)) {
 		--right;
 	}
 
@@ -256,7 +253,7 @@ void apply_character_movement_input(Scene& scene, PhysicsWorld& physics,
 	}
 
 	float speed = move_speed;
-	if (keys[SDL_SCANCODE_LSHIFT] || keys[SDL_SCANCODE_RSHIFT]) {
+	if (input.key_down(Key::LeftShift) || input.key_down(Key::RightShift)) {
 		speed *= sprint_multiplier;
 	}
 
@@ -264,7 +261,7 @@ void apply_character_movement_input(Scene& scene, PhysicsWorld& physics,
 	// Jump on Space: an upward request, made only while the character stands on
 	// something, so it cannot be stacked in mid-air. The physics world keeps the
 	// climb once the character has left the ground.
-	if (keys[SDL_SCANCODE_SPACE] && controller->grounded) {
+	if (input.key_down(Key::Space) && controller->grounded) {
 		velocity.y = kJumpSpeed;
 	}
 	physics.set_character_velocity(scene, player, velocity);

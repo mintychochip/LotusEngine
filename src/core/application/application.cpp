@@ -1,5 +1,4 @@
 #include "lotus/application.hpp"
-#include "lotus/global.hpp"
 #include "lotus/gpu/renderer.hpp"
 #include "lotus/scene/scene.hpp"
 #include "lotus/scene/components.hpp"
@@ -11,12 +10,14 @@
 #include "lotus/script/script.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
+#include <thread>
 #include <vector>
 
 using namespace lotus;
@@ -156,14 +157,6 @@ bool remove_entity_component(Registry& registry, Entity entity,
 }
 
 } // namespace
-
-void Application::on_start()
-{
-	if (!SDL_Init(SDL_INIT_VIDEO)) {
-		throw std::runtime_error(SDL_GetError());
-	}
-	Global::flag(LOTUS_SDL_INITIALIZED, true);
-}
 
 void Application::register_commands()
 {
@@ -973,13 +966,19 @@ void Application::bind_active_scene()
 	on_scene_committed(*scene);
 }
 
+const Input& Application::input() const
+{
+	static const Input none;
+	return input_ != nullptr ? *input_ : none;
+}
+
 void Application::tick_simulation(float dt, bool game_input_enabled)
 {
 	Scene* scene = scenes_.active();
 	if (scene == nullptr) {
 		return;
 	}
-	apply_character_movement_input(*scene, physics_, game_input_enabled);
+	apply_character_movement_input(*scene, physics_, input(), game_input_enabled);
 	animation_system_update(*scene, animations_, &assets_, dt);
 	scene->update(dt);
 	physics_.step(*scene, dt);
@@ -999,16 +998,19 @@ void Application::tick_simulation(float dt, bool game_input_enabled)
 
 void Application::run(int width, int height, const std::string& title)
 {
-		on_start();
+	// Everything that touches the window lives in this scope: the renderer
+	// and the editor are gone before the window is, and the last window to
+	// close takes GLFW down with it.
 	{
-		std::string audio_error;
-		if (!audio_.init(&audio_error)) {
-			console_.warn("audio: " + audio_error);
-		}
 		Window window{width, height, title};
+		struct InputBinding {
+			const Input*& slot;
+			~InputBinding() { slot = nullptr; }
+		} const input_binding{input_};
+		input_ = &window.input();
 		const std::unique_ptr<GpuRenderer> owned = create_gpu_renderer();
 		GpuRenderer& gpu = *owned;
-		gpu.init(window.handle(), settings_.debug_device);
+		gpu.init(&window, settings_.debug_device);
 		editor_.init(window.handle(), gpu);
 		// The editor holds the renderer for its UI backend, so it has to shut
 		// down before `gpu` leaves scope. An exception out of the loop skips
@@ -1139,19 +1141,26 @@ void Application::run(int width, int height, const std::string& title)
 		int frame = 0;
 		bool game_input_enabled = true;
 
-		Uint64 last_counter = SDL_GetPerformanceCounter();
-		const double freq   = static_cast<double>(SDL_GetPerformanceFrequency());
+		using Clock = std::chrono::steady_clock;
+		Clock::time_point last_frame = Clock::now();
 
 		while (!window.should_close() && !quit_requested_) {
-			window.poll_events([this, &game_input_enabled](const SDL_Event& event) {
+			window.poll_events([this, &game_input_enabled](const Event& event) {
+				// ImGui sees the same events through the callbacks its
+				// backend installed; what it wants is what it wanted when
+				// the last frame was built.
 				const bool captured = editor_.captures_keyboard();
-				editor_.process_event(event);
-				game_input_enabled = !editor_.captures_keyboard();
-				if (!captured) {
-					const std::string action = keybinds_.action_for(event);
+				game_input_enabled  = !captured;
+				if (captured) {
+					return;
+				}
+				if (const auto* key = std::get_if<KeyEvent>(&event)) {
+					const std::string action = keybinds_.action_for(*key);
 					if (!action.empty()) {
 						handle_action(action);
 					}
+				} else if (const auto* move =
+				                   std::get_if<MouseMoveEvent>(&event)) {
 					// Right-drag to look: motion events with the right
 					// button held feed the controller-owned look state;
 					// update_follow_camera applies it next tick, so the
@@ -1160,22 +1169,19 @@ void Application::run(int width, int height, const std::string& title)
 					// (LOTUS_NO_UI=1) it never captures, so the game
 					// gets every drag; visible, a drag over ImGui
 					// orbits the editor viewport instead.
-					if (event.type == SDL_EVENT_MOUSE_MOTION &&
-					    (event.motion.state & SDL_BUTTON_RMASK) != 0 &&
+					if (move->down(MouseButton::Right) &&
 					    !editor_.captures_mouse()) {
 						if (Scene* scene = scenes_.active()) {
-							apply_look_delta(*scene, event.motion.xrel,
-							                 event.motion.yrel);
+							apply_look_delta(*scene, move->dx, move->dy);
 						}
 					}
 				}
 			});
 
-			const Uint64 now = SDL_GetPerformanceCounter();
+			const Clock::time_point now = Clock::now();
 			const float dt =
-			        static_cast<float>(static_cast<double>(now - last_counter) /
-			                           freq);
-			last_counter = now;
+			        std::chrono::duration<float>(now - last_frame).count();
+			last_frame = now;
 
 			on_update(dt);
 			poll_hot_reload();
@@ -1213,7 +1219,7 @@ void Application::run(int width, int height, const std::string& title)
 				gpu.lighting().environment_intensity =
 				        s.environment_intensity;
 			}
-			gpu.begin_frame(window.handle(), 0.05f, 0.05f, 0.08f);
+			gpu.begin_frame(&window, 0.05f, 0.05f, 0.08f);
 			if (gpu.has_frame()) {
 				if (Scene* scene = scenes_.active()) {
 					const auto vs = editor_.viewport_size();
@@ -1263,7 +1269,7 @@ void Application::run(int width, int height, const std::string& title)
 				gpu.end_frame();
 			} else {
 				// Swapchain not ready: back off instead of spinning.
-				SDL_Delay(1);
+				std::this_thread::sleep_for(std::chrono::milliseconds(1));
 			}
 
 			if (max_frames > 0 && ++frame >= max_frames) {
@@ -1273,10 +1279,6 @@ void Application::run(int width, int height, const std::string& title)
 
 		editor_.shutdown();
 		on_shutdown();
-		audio_.shutdown();
 		std::cout << "frames rendered: " << gpu.frames_rendered() << '\n';
-	} // GPU + window must be destroyed before SDL_Quit()
-
-	SDL_Quit();
-	Global::flag(LOTUS_SDL_INITIALIZED, false);
+	}
 }

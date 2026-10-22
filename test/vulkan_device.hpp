@@ -34,7 +34,7 @@ namespace lotus::test {
 struct VulkanProbe {
 	/// A Vulkan device the renderer could use (Vulkan 1.3) exists.
 	std::string no_device;
-	/// A window on SDL's offscreen video driver can get a headless surface.
+	/// The loader offers VK_EXT_headless_surface, so a surface needs no window.
 	std::string no_headless_surface;
 };
 
@@ -192,9 +192,10 @@ inline bool vulkan_required()
 		}                                                              \
 	} while (false)
 
-/// Skips the current test when a window on SDL's offscreen video driver cannot
-/// get a headless surface, which is a limit of the driver, not a bug. Unlike a
-/// missing device, LOTUS_REQUIRE_VULKAN does not turn it into a failure.
+/// Skips the current test when the loader lacks VK_EXT_headless_surface, so no
+/// surface can be made without a window system. That is a limit of the
+/// driver, not a bug: unlike a missing device, LOTUS_REQUIRE_VULKAN does not
+/// turn it into a failure.
 #define LOTUS_SKIP_WITHOUT_HEADLESS_SURFACE()                                  \
 	do {                                                                   \
 		const std::string& lotus_problem_ =                            \

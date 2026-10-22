@@ -1,7 +1,5 @@
 #pragma once
 
-#include <SDL3/SDL.h>
-
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -9,6 +7,8 @@
 #include <vector>
 
 #include "lotus/ecs.hpp"
+
+struct GLFWwindow;
 
 namespace lotus {
 
@@ -50,7 +50,9 @@ public:
 		std::function<std::vector<std::string>(Scene* scene)> dangling_refs;
 	};
 
-	bool init(SDL_Window* window, GpuRenderer& gpu);
+	/// Starts ImGui on \p window, whose GLFW callbacks the platform backend
+	/// takes over, chaining to the ones already installed.
+	bool init(GLFWwindow* window, GpuRenderer& gpu);
 	void shutdown();
 
 	void set_scene_controls(SceneControls controls)
@@ -66,8 +68,6 @@ public:
 	void set_console(Console* console) { console_ = console; }
 	/// Read-only keybind reference; the viewer never saves keybinds.
 	void set_keybinds(Keybinds* keybinds) { keybinds_ = keybinds; }
-
-	void process_event(const SDL_Event& event);
 
 	/// True when ImGui has keyboard focus (so keybinds must not fire).
 	bool captures_keyboard() const;

@@ -11,14 +11,9 @@ namespace fs = std::filesystem;
 
 namespace {
 
-SDL_Event key_event(SDL_Keycode key, SDL_Keymod mods, bool repeat = false)
+KeyEvent key_event(Key key, Mod mods, bool repeat = false)
 {
-	SDL_Event event{};
-	event.type            = SDL_EVENT_KEY_DOWN;
-	event.key.key         = key;
-	event.key.mod         = mods;
-	event.key.repeat      = repeat;
-	return event;
+	return KeyEvent{key, mods, true, repeat};
 }
 
 } // namespace
@@ -27,17 +22,17 @@ TEST(KeyChordTest, ParsesModifiersAndKey)
 {
 	const auto chord = parse_key_chord("Ctrl+Shift+Z");
 	ASSERT_TRUE(chord.has_value());
-	EXPECT_EQ(chord->key, SDLK_Z);
-	EXPECT_EQ(chord->mods & SDL_KMOD_CTRL, SDL_KMOD_CTRL);
-	EXPECT_EQ(chord->mods & SDL_KMOD_SHIFT, SDL_KMOD_SHIFT);
+	EXPECT_EQ(chord->key, Key::Z);
+	EXPECT_EQ(chord->mods & Mod::Ctrl, Mod::Ctrl);
+	EXPECT_EQ(chord->mods & Mod::Shift, Mod::Shift);
 }
 
 TEST(KeyChordTest, ParsesBareKey)
 {
 	const auto chord = parse_key_chord("F1");
 	ASSERT_TRUE(chord.has_value());
-	EXPECT_EQ(chord->key, SDLK_F1);
-	EXPECT_EQ(chord->mods, SDL_KMOD_NONE);
+	EXPECT_EQ(chord->key, Key::F1);
+	EXPECT_EQ(chord->mods, Mod::None);
 }
 
 TEST(KeyChordTest, RejectsUnknownNames)
@@ -58,14 +53,16 @@ TEST(KeyChordTest, RoundTripsThroughString)
 
 TEST(KeyChordTest, MatchesOnlyExactModifiers)
 {
-	const KeyChord chord{SDLK_Z, SDL_KMOD_CTRL};
-	EXPECT_TRUE(chord.matches(key_event(SDLK_Z, SDL_KMOD_CTRL)));
-	EXPECT_FALSE(chord.matches(key_event(SDLK_Z, SDL_KMOD_NONE)));
-	EXPECT_FALSE(chord.matches(key_event(SDLK_X, SDL_KMOD_CTRL)));
-	// Caps lock / num lock must not defeat a binding.
-	EXPECT_TRUE(chord.matches(key_event(SDLK_Z, SDL_KMOD_CTRL | SDL_KMOD_CAPS)));
+	const KeyChord chord{Key::Z, Mod::Ctrl};
+	EXPECT_TRUE(chord.matches(key_event(Key::Z, Mod::Ctrl)));
+	EXPECT_FALSE(chord.matches(key_event(Key::Z, Mod::None)));
+	EXPECT_FALSE(chord.matches(key_event(Key::X, Mod::Ctrl)));
+	// An extra modifier makes it a different chord.
+	EXPECT_FALSE(chord.matches(key_event(Key::Z, Mod::Ctrl | Mod::Shift)));
 	// Key repeats must not re-trigger.
-	EXPECT_FALSE(chord.matches(key_event(SDLK_Z, SDL_KMOD_CTRL, true)));
+	EXPECT_FALSE(chord.matches(key_event(Key::Z, Mod::Ctrl, true)));
+	// Letting go of the key is not a trigger either.
+	EXPECT_FALSE(chord.matches(KeyEvent{Key::Z, Mod::Ctrl, false, false}));
 }
 
 TEST(KeybindsTest, DefaultsAreDefined)
@@ -73,33 +70,33 @@ TEST(KeybindsTest, DefaultsAreDefined)
 	Keybinds keybinds = default_keybinds();
 	EXPECT_TRUE(keybinds.is_bound("undo"));
 	EXPECT_TRUE(keybinds.is_bound("scene.save"));
-	EXPECT_EQ(keybinds.action_for(key_event(SDLK_F1, SDL_KMOD_NONE)), "editor.toggle");
-	EXPECT_EQ(keybinds.action_for(key_event(SDLK_Z, SDL_KMOD_CTRL)), "undo");
-	EXPECT_EQ(keybinds.action_for(key_event(SDLK_S, SDL_KMOD_CTRL)), "scene.save");
-	EXPECT_TRUE(keybinds.action_for(key_event(SDLK_F9, SDL_KMOD_NONE)).empty());
+	EXPECT_EQ(keybinds.action_for(key_event(Key::F1, Mod::None)), "editor.toggle");
+	EXPECT_EQ(keybinds.action_for(key_event(Key::Z, Mod::Ctrl)), "undo");
+	EXPECT_EQ(keybinds.action_for(key_event(Key::S, Mod::Ctrl)), "scene.save");
+	EXPECT_TRUE(keybinds.action_for(key_event(Key::F9, Mod::None)).empty());
 }
 
 TEST(KeybindsTest, RebindChangesDispatch)
 {
 	Keybinds keybinds = default_keybinds();
-	keybinds.bind("undo", KeyChord{SDLK_U, SDL_KMOD_CTRL});
-	EXPECT_EQ(keybinds.action_for(key_event(SDLK_U, SDL_KMOD_CTRL)), "undo");
-	EXPECT_TRUE(keybinds.action_for(key_event(SDLK_Z, SDL_KMOD_CTRL)).empty());
+	keybinds.bind("undo", KeyChord{Key::U, Mod::Ctrl});
+	EXPECT_EQ(keybinds.action_for(key_event(Key::U, Mod::Ctrl)), "undo");
+	EXPECT_TRUE(keybinds.action_for(key_event(Key::Z, Mod::Ctrl)).empty());
 }
 
 TEST(KeybindsTest, ResetRestoresDefaults)
 {
 	Keybinds keybinds = default_keybinds();
-	keybinds.bind("undo", KeyChord{SDLK_U, SDL_KMOD_CTRL});
+	keybinds.bind("undo", KeyChord{Key::U, Mod::Ctrl});
 	keybinds.reset_to_defaults();
-	EXPECT_EQ(keybinds.action_for(key_event(SDLK_Z, SDL_KMOD_CTRL)), "undo");
+	EXPECT_EQ(keybinds.action_for(key_event(Key::Z, Mod::Ctrl)), "undo");
 }
 
 TEST(KeybindsTest, FileRoundTrip)
 {
 	const std::string path = (fs::temp_directory_path() / "lotus_keybinds.json").string();
 	Keybinds keybinds = default_keybinds();
-	keybinds.bind("undo", KeyChord{SDLK_U, SDL_KMOD_CTRL | SDL_KMOD_SHIFT});
+	keybinds.bind("undo", KeyChord{Key::U, Mod::Ctrl | Mod::Shift});
 
 	std::string error;
 	ASSERT_TRUE(keybinds.save(path, &error)) << error;
@@ -108,8 +105,8 @@ TEST(KeybindsTest, FileRoundTrip)
 	ASSERT_TRUE(loaded.load(path, &error)) << error;
 	const auto chord = loaded.chord("undo");
 	ASSERT_TRUE(chord.has_value());
-	EXPECT_EQ(chord->key, SDLK_U);
-	EXPECT_EQ(chord->mods & SDL_KMOD_SHIFT, SDL_KMOD_SHIFT);
+	EXPECT_EQ(chord->key, Key::U);
+	EXPECT_EQ(chord->mods & Mod::Shift, Mod::Shift);
 
 	std::remove(path.c_str());
 }
@@ -128,7 +125,7 @@ TEST(KeybindsTest, UnknownActionInFileIsIgnored)
 	EXPECT_TRUE(keybinds.load(path, &error));
 	EXPECT_FALSE(error.empty());
 	EXPECT_FALSE(keybinds.is_bound("not.an.action"));
-	EXPECT_EQ(keybinds.action_for(key_event(SDLK_U, SDL_KMOD_CTRL)), "undo");
+	EXPECT_EQ(keybinds.action_for(key_event(Key::U, Mod::Ctrl)), "undo");
 
 	std::remove(path.c_str());
 }
@@ -147,9 +144,9 @@ TEST(KeybindsTest, LoadAfterDefaultsOverridesWithoutWarnings)
 	std::string error;
 	EXPECT_TRUE(keybinds.load(path, &error));
 	EXPECT_TRUE(error.empty()) << error;
-	EXPECT_EQ(keybinds.action_for(key_event(SDLK_U, SDL_KMOD_CTRL)), "undo");
+	EXPECT_EQ(keybinds.action_for(key_event(Key::U, Mod::Ctrl)), "undo");
 	// Unlisted actions keep their defaults.
-	EXPECT_EQ(keybinds.action_for(key_event(SDLK_S, SDL_KMOD_CTRL)), "scene.save");
+	EXPECT_EQ(keybinds.action_for(key_event(Key::S, Mod::Ctrl)), "scene.save");
 
 	std::remove(path.c_str());
 }
@@ -186,16 +183,16 @@ TEST(KeybindsTest, ThirdPersonToggleDefaultIsF5)
 {
 	Keybinds keybinds = default_keybinds();
 	EXPECT_TRUE(keybinds.is_bound("camera.toggle_third_person"));
-	EXPECT_EQ(keybinds.action_for(key_event(SDLK_F5, SDL_KMOD_NONE)),
+	EXPECT_EQ(keybinds.action_for(key_event(Key::F5, Mod::None)),
 	          "camera.toggle_third_person");
 	// The new default leaves the established chords alone.
-	EXPECT_EQ(keybinds.action_for(key_event(SDLK_F1, SDL_KMOD_NONE)),
+	EXPECT_EQ(keybinds.action_for(key_event(Key::F1, Mod::None)),
 	          "editor.toggle");
-	EXPECT_EQ(keybinds.action_for(key_event(SDLK_F2, SDL_KMOD_NONE)),
+	EXPECT_EQ(keybinds.action_for(key_event(Key::F2, Mod::None)),
 	          "console.toggle");
 	EXPECT_TRUE(
-	        keybinds.action_for(key_event(SDLK_W, SDL_KMOD_NONE)).empty());
-	EXPECT_TRUE(keybinds.action_for(key_event(SDLK_SPACE, SDL_KMOD_NONE))
+	        keybinds.action_for(key_event(Key::W, Mod::None)).empty());
+	EXPECT_TRUE(keybinds.action_for(key_event(Key::Space, Mod::None))
 	                    .empty());
 }
 
@@ -215,8 +212,8 @@ TEST(KeybindsTest, BackfillCompletesStaleFileKeepingRebinds)
 
 	Keybinds reloaded = default_keybinds();
 	ASSERT_TRUE(reloaded.load(path, &error)) << error;
-	EXPECT_EQ(reloaded.action_for(key_event(SDLK_U, SDL_KMOD_CTRL)), "undo");
-	EXPECT_EQ(reloaded.action_for(key_event(SDLK_F5, SDL_KMOD_NONE)),
+	EXPECT_EQ(reloaded.action_for(key_event(Key::U, Mod::Ctrl)), "undo");
+	EXPECT_EQ(reloaded.action_for(key_event(Key::F5, Mod::None)),
 	          "camera.toggle_third_person");
 	// A complete file is left alone.
 	EXPECT_FALSE(reloaded.backfill(path, &error)) << error;

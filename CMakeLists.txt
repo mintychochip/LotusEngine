@@ -49,8 +49,9 @@ set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
 add_subdirectory(dependencies/glfw EXCLUDE_FROM_ALL)
+# Vulkan does the drawing: keep glfw3.h from including the system OpenGL header.
+target_compile_definitions(glfw INTERFACE GLFW_INCLUDE_NONE)
 
-include(FindLotusSDL3)
 include(FindLotusVulkanHeaders)
 
 # === Dear ImGui (debug overlay) ===
@@ -59,16 +60,16 @@ add_library(imgui STATIC
     dependencies/imgui/imgui_draw.cpp
     dependencies/imgui/imgui_tables.cpp
     dependencies/imgui/imgui_widgets.cpp
-    dependencies/imgui/backends/imgui_impl_sdl3.cpp
+    dependencies/imgui/backends/imgui_impl_glfw.cpp
     dependencies/imgui/backends/imgui_impl_vulkan.cpp
 )
 target_include_directories(imgui PUBLIC
     ${CMAKE_SOURCE_DIR}/dependencies/imgui
     ${CMAKE_SOURCE_DIR}/dependencies/imgui/backends
 )
-target_link_libraries(imgui PUBLIC SDL3::SDL3 Lotus::VulkanHeaders)
-# The renderer resolves every entry point at run time through the table SDL
-# loads (nothing links libvulkan); ImGui loads the same way via
+target_link_libraries(imgui PUBLIC glfw Lotus::VulkanHeaders)
+# The renderer resolves every entry point at run time through the loader it
+# opens itself (nothing links libvulkan); ImGui loads the same way via
 # ImGui_ImplVulkan_LoadFunctions().
 target_compile_definitions(imgui PUBLIC IMGUI_IMPL_VULKAN_NO_PROTOTYPES)
 
@@ -89,7 +90,7 @@ target_include_directories(lotus_engine PUBLIC
 
 target_link_libraries(lotus_engine
     PUBLIC
-    SDL3::SDL3
+    glfw
     Lotus::VulkanHeaders
     EnTT::EnTT
     nlohmann_json::nlohmann_json

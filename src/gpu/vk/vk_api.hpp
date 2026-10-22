@@ -30,6 +30,7 @@ namespace lotus::vk {
 	X(GetDeviceProcAddr)
 
 #define LOTUS_VK_INSTANCE_OPTIONAL_COMMANDS(X)                                 \
+	X(DestroySurfaceKHR)                                                       \
 	X(GetPhysicalDeviceSurfaceSupportKHR)                                      \
 	X(GetPhysicalDeviceSurfaceCapabilitiesKHR)                                 \
 	X(GetPhysicalDeviceSurfaceFormatsKHR)                                      \

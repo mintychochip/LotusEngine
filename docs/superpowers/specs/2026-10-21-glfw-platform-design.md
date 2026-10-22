@@ -52,7 +52,9 @@ Acceptance (all must hold):
   engine events, update its `Input`, and queue them; `poll_events` drains the queue into the caller's callback, so the
   per-event ordering the application loop relies on is unchanged. A window initialises GLFW on first use and
   terminates it with the last one, so no caller manages the library. A window that GLFW cannot create (no display)
-  throws with GLFW's message.
+  throws with GLFW's message. SDL turned SIGINT and SIGTERM into a quit event, and GLFW does not; while a window
+  exists it does the same (for signals still at their default), so Ctrl-C and `kill` end the loop and the shutdown
+  runs, as before.
 - **`PresentTarget`** (`include/lotus/gpu/present_target.hpp`) is what a renderer presents to: pixel size, Vulkan
   instance extensions, and surface creation. `Window` implements it; the swapchain test implements it with a headless
   surface, so the windowed code path is still exercised without a window system. `GpuRenderer::init` and
@@ -85,12 +87,13 @@ gamepads, multiple windows, relative-mouse capture, IME text entry beyond what I
 
 ## Verification
 
-Unit tests for key names, translation totality, `Input` state transitions, keybind matching and player movement from
-real key state. The whole suite on the three devices with validation. Windowed runs on Wayland and X11 with
-validation, close via the compositor, and the editor drawing. A fresh clone built from nothing. This machine has no
-way to inject real key or mouse events into a compositor (no `xdotool`/`wtype`/`ydotool`, and niri does not offer
-virtual keyboards), so the OS-to-GLFW leg of keyboard and mouse input is checked by running the application, and the
-rest by tests that feed engine events.
+Unit tests for key names, translation totality, `Input` state transitions, keybind matching, player movement from real
+key state, and `Window` fed the callbacks GLFW would call (on GLFW's null platform, no display). The whole suite on the
+three devices with validation. Windowed runs on Wayland and X11 with validation, close via the compositor, and the
+editor drawing. A fresh clone built from nothing. The operating-system-to-GLFW leg of the keyboard is checked on X11
+by injecting real key events with XTest (a bound key and an unbound control); Wayland and the mouse cannot be
+injected here (no `wtype`/`ydotool`, niri offers no virtual keyboard, and XTest pointer events would move the
+session's real cursor), so those are checked by running the application and by the tests above.
 
 ## Risks
 

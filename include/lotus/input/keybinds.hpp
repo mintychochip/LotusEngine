@@ -1,30 +1,28 @@
 #pragma once
 
-#include <SDL3/SDL.h>
-
 #include <map>
 #include <optional>
 #include <string>
+
+#include "lotus/input/input.hpp"
+#include "lotus/input/key.hpp"
 
 namespace lotus {
 
 /// A key plus modifier chord, e.g. Ctrl+Shift+Z.
 struct KeyChord {
-	SDL_Keycode key{SDLK_UNKNOWN};
-	SDL_Keymod mods{SDL_KMOD_NONE};
+	Key key{Key::Unknown};
+	Mod mods{Mod::None};
 
-	bool valid() const { return key != SDLK_UNKNOWN; }
+	bool valid() const { return key != Key::Unknown; }
 	/// True for a non-repeat key-down event matching key and modifiers.
-	bool matches(const SDL_Event& event) const;
+	bool matches(const KeyEvent& event) const;
 	/// Human-readable form, e.g. "Ctrl+Shift+Z".
 	std::string to_string() const;
 
 	friend bool operator==(const KeyChord& a, const KeyChord& b)
 	{
-		return a.key == b.key && (a.mods & SDL_KMOD_CTRL) == (b.mods & SDL_KMOD_CTRL) &&
-		       (a.mods & SDL_KMOD_SHIFT) == (b.mods & SDL_KMOD_SHIFT) &&
-		       (a.mods & SDL_KMOD_ALT) == (b.mods & SDL_KMOD_ALT) &&
-		       (a.mods & SDL_KMOD_GUI) == (b.mods & SDL_KMOD_GUI);
+		return a.key == b.key && a.mods == b.mods;
 	}
 };
 
@@ -44,7 +42,7 @@ public:
 	std::optional<KeyChord> chord(const std::string& action) const;
 
 	/// The action triggered by this event, or empty.
-	std::string action_for(const SDL_Event& event) const;
+	std::string action_for(const KeyEvent& event) const;
 
 	const std::map<std::string, KeyChord>& bindings() const { return bindings_; }
 	const std::map<std::string, KeyChord>& defaults() const { return defaults_; }
