@@ -44,18 +44,6 @@ target_link_libraries(lua PUBLIC m)
 include(FindLotusSDL3)
 include(FindLotusVulkanHeaders)
 
-# Graphics backend seam: only the selected backend directory is compiled.
-# Defined before the ImGui target so the renderer backend compiled into it
-# matches the engine backend.
-set(LOTUS_GPU_BACKEND "sdlgpu" CACHE STRING "Graphics backend: sdlgpu | vulkan | d3d12 | d3d11")
-if(LOTUS_GPU_BACKEND STREQUAL "vulkan")
-    set(LOTUS_IMGUI_RENDERER_BACKEND
-        dependencies/imgui/backends/imgui_impl_vulkan.cpp)
-else()
-    set(LOTUS_IMGUI_RENDERER_BACKEND
-        dependencies/imgui/backends/imgui_impl_sdlgpu3.cpp)
-endif()
-
 # === Dear ImGui (debug overlay) ===
 add_library(imgui STATIC
     dependencies/imgui/imgui.cpp
@@ -63,20 +51,17 @@ add_library(imgui STATIC
     dependencies/imgui/imgui_tables.cpp
     dependencies/imgui/imgui_widgets.cpp
     dependencies/imgui/backends/imgui_impl_sdl3.cpp
-    ${LOTUS_IMGUI_RENDERER_BACKEND}
+    dependencies/imgui/backends/imgui_impl_vulkan.cpp
 )
 target_include_directories(imgui PUBLIC
     ${CMAKE_SOURCE_DIR}/dependencies/imgui
     ${CMAKE_SOURCE_DIR}/dependencies/imgui/backends
 )
-target_link_libraries(imgui PUBLIC SDL3::SDL3)
-if(LOTUS_GPU_BACKEND STREQUAL "vulkan")
-    # The Vulkan backend resolves every entry point at run time through the
-    # table SDL loads (nothing links libvulkan); ImGui loads the same way
-    # via ImGui_ImplVulkan_LoadFunctions().
-    target_compile_definitions(imgui PUBLIC IMGUI_IMPL_VULKAN_NO_PROTOTYPES)
-    target_link_libraries(imgui PUBLIC Lotus::VulkanHeaders)
-endif()
+target_link_libraries(imgui PUBLIC SDL3::SDL3 Lotus::VulkanHeaders)
+# The renderer resolves every entry point at run time through the table SDL
+# loads (nothing links libvulkan); ImGui loads the same way via
+# ImGui_ImplVulkan_LoadFunctions().
+target_compile_definitions(imgui PUBLIC IMGUI_IMPL_VULKAN_NO_PROTOTYPES)
 
 # === Engine Library ===
 
@@ -86,20 +71,7 @@ list(REMOVE_ITEM LOTUS_SOURCES
     "${CMAKE_SOURCE_DIR}/src/main.cpp"
     "${CMAKE_SOURCE_DIR}/src/main.cc")
 
-# Graphics backend seam: only the selected backend directory is compiled
-# (LOTUS_GPU_BACKEND is defined above, before the ImGui target).
-foreach(backend sdlgpu vulkan d3d12 d3d11)
-    if(NOT LOTUS_GPU_BACKEND STREQUAL backend)
-        list(FILTER LOTUS_SOURCES EXCLUDE REGEX "src/gpu/${backend}/.*")
-    endif()
-endforeach()
 add_library(lotus_engine STATIC ${LOTUS_SOURCES})
-
-if(LOTUS_GPU_BACKEND STREQUAL "vulkan")
-    # Backend switch for shared code (the editor's platform backend, the
-    # window's Vulkan flag).
-    target_compile_definitions(lotus_engine PUBLIC LOTUS_GPU_BACKEND_VULKAN)
-endif()
 
 target_include_directories(lotus_engine PUBLIC
     ${CMAKE_SOURCE_DIR}/include

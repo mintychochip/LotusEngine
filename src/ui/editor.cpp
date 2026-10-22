@@ -60,18 +60,12 @@ bool Editor::init(SDL_Window* window, GpuRenderer& gpu)
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 	ImGui::StyleColorsDark();
 
-	// The platform backend matches the renderer backend compiled in (see
-	// CMakeLists): the renderer backend itself is owned by the GpuRenderer
-	// behind its UI hooks.
-#if defined(LOTUS_GPU_BACKEND_VULKAN)
+	// The platform backend only needs to know which graphics API the window
+	// serves; the renderer backend itself is owned by the GpuRenderer behind
+	// its UI hooks.
 	if (!ImGui_ImplSDL3_InitForVulkan(window)) {
 		return false;
 	}
-#else
-	if (!ImGui_ImplSDL3_InitForSDLGPU(window)) {
-		return false;
-	}
-#endif
 	if (!gpu.init_ui_backend()) {
 		ImGui_ImplSDL3_Shutdown();
 		return false;

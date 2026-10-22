@@ -9,19 +9,16 @@
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
-// Both slots are bound as read-write storage textures by
-// SDL_BeginGPUComputePass, because SDL_GPUStorageTextureReadWriteBinding is
-// the only SDL binding that carries a mip_level. The two addresses never
-// overlap within a dispatch, so simultaneous access is safe.
+// Each slot is a storage image view over one mip of the pyramid, both in
+// GENERAL layout. The two addresses never overlap within a dispatch, so
+// simultaneous access is safe.
 // GLSL 4.50 rejects an image that is neither readonly/writeonly nor carries
 // a format qualifier, so both spell out r32f to match the R32_FLOAT texture.
 //
-// set = 1, NOT 0. This device has no validation layer, so a mismatched set
-// does not raise an error: SDL_CreateGPUComputePipeline still returns a valid
-// handle, SDL_GetError() stays empty, and the dispatches silently do nothing,
-// leaving the whole pyramid at its zeroed initial contents. The compute
-// bindings live at set 1 (graphics stages use 1..3); set 0 is a plausible
-// looking default that never works here. Do not "tidy" this back to 0.
+// set = 1, NOT 0: the compute pipeline layout (hiz_layout_, built in
+// renderer_occlusion.cpp) keeps set 0 empty, like the graphics layouts (whose
+// stages use sets 1..3), and puts the two images at set 1. Do not "tidy" this
+// back to 0.
 layout(set = 1, binding = 0, r32f) readonly uniform image2D src;
 layout(set = 1, binding = 1, r32f) writeonly uniform image2D dst;
 

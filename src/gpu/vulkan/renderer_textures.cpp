@@ -43,10 +43,10 @@ void GpuRendererVulkan::create_samplers()
 	};
 	if (default_sampler_ == VK_NULL_HANDLE) {
 		// LINEAR/LINEAR/LINEAR-mip/REPEAT, no anisotropy/compare/LOD bias.
-		// maxLod is 0: the reference never sets SDL's max_lod, so its
-		// zero-initialised sampler clamps every lookup to mip 0 (the
-		// generated chain is sampled only at level 0). Matching that is
-		// what makes the pictures identical.
+		// maxLod is 0, so every lookup samples mip 0: the generated chain is
+		// never read. That is how the engine has always rendered, and the
+		// bench's golden image and exact hashes depend on it; sampling the
+		// chain would be a visual change, not a refactor.
 		default_sampler_ = make(VK_FILTER_LINEAR, VK_FILTER_LINEAR,
 		                        VK_SAMPLER_MIPMAP_MODE_LINEAR,
 		                        VK_SAMPLER_ADDRESS_MODE_REPEAT, 0.0f);

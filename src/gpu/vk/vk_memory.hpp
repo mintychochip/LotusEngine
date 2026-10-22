@@ -21,9 +21,9 @@ enum class MemoryClass {
 	/// Host-visible, written by the CPU and copied by the GPU: uploads.
 	Staging,
 	/// Host-visible and host-cached where possible: almost always read by the
-	/// CPU (frame capture, Hi-Z readback), so plain loads stay cheap — the
-	/// reason SDL_GPU's coherent-only download buffers cost 0.85 ms a frame on
-	/// the Intel iGPU.
+	/// CPU (frame capture, Hi-Z readback), so plain loads stay cheap. Reading
+	/// uncached (write-combined) memory instead costs 0.85 ms a frame on the
+	/// Intel iGPU.
 	Readback,
 };
 

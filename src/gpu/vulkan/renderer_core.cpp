@@ -249,10 +249,9 @@ void GpuRendererVulkan::wait_slot(FrameSlot& slot)
 	                                     VK_TRUE, UINT64_MAX),
 	          "vkWaitForFences");
 	// The wait just proved this slot's frame finished, and the queue runs
-	// in order, so every frame up to its serial is done: exactly what the
-	// reference records when its throttle wait lands (reap on block). Without
-	// this, a GPU-bound loop never observes completion in poll_pyramid and
-	// the pyramid never rebuilds.
+	// in order, so every frame up to its serial is done. Without this, a
+	// GPU-bound loop never observes completion in poll_pyramid and the
+	// pyramid never rebuilds.
 	if (slot.serial > completed_serial_) {
 		completed_serial_ = slot.serial;
 	}
@@ -587,7 +586,8 @@ bool GpuRendererVulkan::write_ppm(const std::string& path, std::string* error)
 void GpuRendererVulkan::set_viewport(VkCommandBuffer cmd, uint32_t width,
                                      uint32_t height, float max_depth)
 {
-	// The flip SDL applied: a negative height over the target.
+	// Y is flipped: a negative height over the target, so NDC +Y is
+	// framebuffer row 0 (the shaders and the CPU depth pyramid assume it).
 	VkViewport viewport{};
 	viewport.x         = 0.0f;
 	viewport.y         = static_cast<float>(height);
@@ -652,11 +652,8 @@ void GpuRendererVulkan::destroy_pipelines()
 
 namespace lotus {
 
-bool test_is_vulkan_backend(const GpuRenderer& gpu)
-{
-	return dynamic_cast<const GpuRendererVulkan*>(&gpu) != nullptr;
-}
-
+/// Test hook, declared by the tests that use it: the validation-layer
+/// messages the renderer's context has counted so far.
 uint32_t test_vulkan_validation_messages(const GpuRenderer& gpu)
 {
 	const auto* vulkan = dynamic_cast<const GpuRendererVulkan*>(&gpu);

@@ -24,8 +24,19 @@ namespace {
 
 /// Geometry in the lit pass is rasterised into the lower half of the depth
 /// range, [0, kGeometryDepthMax], through the viewport; the sky is drawn last,
-/// at depth 1.0, into the half no geometry reaches. See the reference for why
-/// a power of two keeps the picture pixel for pixel.
+/// at depth 1.0, into the half no geometry reaches.
+///
+/// The pipelines clamp depth rather than clip it, so geometry beyond the far
+/// plane lands at the top of its range. With the full range that is 1.0, the
+/// value a pixel nothing has touched keeps, and a sky drawn after the geometry
+/// could not tell the two apart: it would paint over every ground plane that
+/// runs past the far plane. With this range clamped geometry lands at 0.5 and
+/// "depth 1.0" means "untouched".
+///
+/// A power of two, so that this is exact. Depth is a float, and scaling a
+/// float by a power of two only moves its exponent: every depth the full range
+/// produces maps to a distinct value, in the same order, with the same ties.
+/// The picture is the one the full range gives, pixel for pixel.
 constexpr float kGeometryDepthMax = 0.5f;
 
 /// 1024px D16 depth rendered from the light each frame, sampled by lit.frag

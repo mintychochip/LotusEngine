@@ -1,6 +1,5 @@
-// Smoke test for the Vulkan backend's first half: offscreen core, geometry,
-// textures and the shadow/lit/sky passes. Backend-agnostic: on other backends
-// it skips (the weak helpers below are overridden by the Vulkan backend).
+// Smoke test for the Vulkan backend's offscreen path: core, geometry, textures
+// and the shadow/lit/sky passes.
 
 #include <gtest/gtest.h>
 
@@ -19,21 +18,9 @@ using namespace lotus;
 
 namespace lotus {
 
-// True when \p gpu is the Vulkan backend. Weak fallback for non-Vulkan
-// builds, where the backend never is; the Vulkan backend overrides it.
-__attribute__((weak)) bool test_is_vulkan_backend(const GpuRenderer& gpu)
-{
-	(void)gpu;
-	return false;
-}
-
-// Validation-layer messages reported so far. Weak fallback for non-Vulkan
-// builds; the Vulkan backend overrides it.
-__attribute__((weak)) uint32_t test_vulkan_validation_messages(const GpuRenderer& gpu)
-{
-	(void)gpu;
-	return 0;
-}
+/// Validation-layer messages the renderer's context has counted so far; defined
+/// by the Vulkan backend as a test hook.
+uint32_t test_vulkan_validation_messages(const GpuRenderer& gpu);
 
 } // namespace lotus
 
@@ -132,9 +119,6 @@ TEST_F(VulkanRendererSmoke, OffscreenFrameRendersGeometryAndSky)
 {
 	const std::unique_ptr<GpuRenderer> owned = create_gpu_renderer();
 	GpuRenderer& gpu = *owned;
-	if (!test_is_vulkan_backend(gpu)) {
-		GTEST_SKIP() << "not the Vulkan backend";
-	}
 	ASSERT_NO_THROW(gpu.init_offscreen(kWidth, kHeight));
 	EXPECT_NE(std::string(gpu.device_name()), "");
 	EXPECT_NE(std::string(gpu.driver_name()), "");
@@ -183,9 +167,6 @@ TEST_F(VulkanRendererSmoke, ResizeOffscreenKeepsRendering)
 {
 	const std::unique_ptr<GpuRenderer> owned = create_gpu_renderer();
 	GpuRenderer& gpu = *owned;
-	if (!test_is_vulkan_backend(gpu)) {
-		GTEST_SKIP() << "not the Vulkan backend";
-	}
 	ASSERT_NO_THROW(gpu.init_offscreen(kWidth, kHeight));
 	EXPECT_TRUE(gpu.resize_offscreen(kWidth / 2, kHeight / 2));
 	Scene scene = make_scene();

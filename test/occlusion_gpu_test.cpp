@@ -16,8 +16,9 @@ using namespace lotus;
 
 namespace {
 /// A headless Vulkan device still needs SDL's video subsystem: there is no
-/// window, but SDL_CreateGPUDevice refuses to run uninitialised. The offscreen
-/// video driver needs no display, which is what lets this run in a container.
+/// window, but the Vulkan loader comes from SDL, which must be initialised.
+/// The offscreen video driver needs no display, which is what lets this run in
+/// a container.
 class OcclusionGpuTest : public ::testing::Test {
 protected:
 	void SetUp() override

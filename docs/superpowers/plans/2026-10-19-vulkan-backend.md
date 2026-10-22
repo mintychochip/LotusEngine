@@ -61,10 +61,13 @@ export VVL='VK_ADD_LAYER_PATH=/tmp/vvl/root/usr/share/vulkan/explicit_layer.d LD
 
 ## Phase 2 — Stage 2: window, editor, cleanup
 
-- [ ] **W1** Swapchain/present/resize; headless-surface test on lavapipe + Intel; `LOTUS_PRESENT_MODE`.
-- [ ] **W2** `imgui_impl_vulkan` (dynamic rendering) behind the UI hooks; `ImGui_ImplSDL3_InitForVulkan`;
+- [x] **W1** Swapchain/present/resize; headless-surface test on Intel (lavapipe cannot: Mesa 26.0.3's
+      headless WSI crashes there, so it is covered on the real Wayland/X11 surface; see the spec's
+      acceptance 3); `LOTUS_PRESENT_MODE`.
+- [x] **W2** `imgui_impl_vulkan` (dynamic rendering) behind the UI hooks; `ImGui_ImplSDL3_InitForVulkan`;
       `SDL_WINDOW_VULKAN`; smoke on the Wayland session (launch, N frames, clean exit, validation clean).
-- [ ] **W3** Remove SDL_GPU and `imgui_impl_sdlgpu3` from the tree/CMake; README + AGENTS.md + env table.
+- [x] **W3** Remove SDL_GPU and `imgui_impl_sdlgpu3` from the tree/CMake; README + env table (AGENTS.md
+      never named a backend). The `LOTUS_GPU_BACKEND` selector went with it.
 - [ ] **W4** Whole-branch review (reviewer agent), fix wave, merge into the autoresearch branch, log the experiment.
 
 ## Phase 3 — Vulkan-only optimisations (each A/B'd vs the faithful port)
@@ -81,11 +84,10 @@ both behind the same seam; SDL_GPU is not retained. Toolchain on this machine:
 `/tmp/vkd3d/root/usr/bin/vkd3d-compiler` (needs `LD_LIBRARY_PATH=/tmp/vkd3d/root/usr/lib64`;
 target type is `dxbc-tpf`, source type `hlsl`).
 
-- [ ] **D1** Seam: `include/lotus/gpu/renderer.hpp` becomes an abstract `GpuRenderer` (API only, no
-      backend types) plus `create_gpu_renderer()`; the SDL implementation becomes
-      `src/gpu/sdlgpu/` (class renamed, members unchanged), the Vulkan one lives in
-      `src/gpu/vulkan/`; `LOTUS_GPU_BACKEND` picks which is compiled (default `sdlgpu` until Vulkan
-      passes per-frame verification, then `vulkan`). Callers take a `GpuRenderer&` from the factory.
+- [x] **D1** Seam: `include/lotus/gpu/renderer.hpp` is an abstract `GpuRenderer` (API only, no
+      backend types) plus `create_gpu_renderer()`; the Vulkan backend lives in `src/gpu/vulkan/`.
+      Callers take a `GpuRenderer&` from the factory. The `LOTUS_GPU_BACKEND` selector that chose
+      between SDL_GPU and Vulkan went with SDL_GPU (W3); the first D3D backend adds a selector.
 - [ ] **D2** `scripts/compile-check-d3d.sh`: extracts the MinGW toolchain if missing and compiles
       every `src/gpu/d3d*/` translation unit; kept in the loop while writing D3D code.
 - [ ] **D3** HLSL ports (lit.vert/frag, shadow.vert, sky.vert/frag, fxaa.vert/frag, ssao.vert/frag,

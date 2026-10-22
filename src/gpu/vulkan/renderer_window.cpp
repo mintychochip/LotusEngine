@@ -1,12 +1,11 @@
 // Windowed path: swapchain, present and the ImGui backend.
 //
-// Behavioural reference: src/gpu/sdlgpu/renderer_sdlgpu.cpp (begin_frame's
-// acquire, end_frame's submit, init_ui_backend/render_ui). The swapchain
-// honours FIFO by default with LOTUS_PRESENT_MODE=mailbox|immediate opting
-// into the tearing/latency modes when the surface offers them, carries
-// max(3, minImageCount) images, and is rebuilt on OUT_OF_DATE/SUBOPTIMAL and
-// on resize. The shaders sRGB-encode, so the format is never an _SRGB one:
-// B8G8R8A8_UNORM preferred, R8G8B8A8_UNORM fallback.
+// The swapchain honours FIFO by default, with
+// LOTUS_PRESENT_MODE=mailbox|immediate opting into the tearing/latency modes
+// when the surface offers them, carries max(3, minImageCount) images, and is
+// rebuilt on OUT_OF_DATE/SUBOPTIMAL and on resize. The shaders sRGB-encode, so
+// the format is never an _SRGB one: B8G8R8A8_UNORM preferred, R8G8B8A8_UNORM
+// fallback.
 //
 // The session's colour format follows the swapchain (see
 // pipeline_color_format_): offscreen sessions never come here, so their

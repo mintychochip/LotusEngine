@@ -2,6 +2,9 @@
 
 Status: approved by the user on 2026-10-19 (staged full replacement, Vulkan 1.3 core).
 Branch: `vulkan-backend` (worktree `../LotusEngine-vulkan`), based on `9a85f69`.
+Stage 2 (W1-W3) landed 2026-10-21: the windowed path is complete and SDL_GPU is removed from the tree
+(last present at `adb7a77`; `git show adb7a77:src/gpu/sdlgpu/renderer_sdlgpu.cpp` is the old
+behavioural reference).
 
 ## Goal
 
@@ -64,13 +67,13 @@ committed as headers, exactly like the SPIR-V ones.
 ### The seam
 
 `include/lotus/gpu/renderer.hpp` declares an abstract `GpuRenderer`: the API only, no backend types.
-`create_gpu_renderer()` returns the backend the build selected — `LOTUS_GPU_BACKEND=sdlgpu|vulkan|d3d12|d3d11`,
-default `sdlgpu` until the Vulkan backend passes per-frame verification, then `vulkan`. Each backend is
-a concrete class in its own directory (`src/gpu/sdlgpu/`, `src/gpu/vulkan/`, `src/gpu/d3d12/`,
-`src/gpu/d3d11/`) implementing that interface; nothing else in the engine names a backend type. While
-more than one backend exists, every caller keeps compiling unchanged: it holds a `GpuRenderer&` from the
-factory. SDL_GPU is removed only after the Vulkan backend is verified (the user's explicit sequencing),
-so the tree keeps a working backend throughout.
+`create_gpu_renderer()` returns the renderer the build links. Each backend is a concrete class in its
+own directory (`src/gpu/vulkan/`, later `src/gpu/d3d12/` and `src/gpu/d3d11/`) implementing that
+interface; nothing else in the engine names a backend type, and every caller holds a `GpuRenderer&`
+from the factory. While SDL_GPU and Vulkan coexisted, a `LOTUS_GPU_BACKEND` CMake variable
+(`sdlgpu|vulkan`) chose between them, defaulting to `sdlgpu` until the Vulkan backend passed per-frame
+verification. SDL_GPU was removed only after that (the user's explicit sequencing), and the variable
+with it: with one backend it selected nothing. The first Direct3D backend reintroduces a selector.
 
 ### Verification: per frame
 

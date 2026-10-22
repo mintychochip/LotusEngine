@@ -6,7 +6,7 @@
 
 namespace lotus {
 
-/// The backend this build selected (LOTUS_GPU_BACKEND). Never null.
+/// The renderer this build links: the Vulkan backend. Never null.
 std::unique_ptr<GpuRenderer> create_gpu_renderer()
 {
 	return std::make_unique<GpuRendererVulkan>();

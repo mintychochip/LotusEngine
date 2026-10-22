@@ -27,9 +27,8 @@
 // matrix (v_world_position was already available, so no vertex stream change).
 // A 3x3 PCF with constant bias + normal-offset scales the direct lobe only;
 // ambient is never shadowed. shadow_params.x == 0 restores the exact legacy
-// unshadowed path. UV flip: every SDL_GPU backend renders with a flipped
-// viewport (Vulkan backend negates height "for consistency with other
-// backends"), so NDC +Y lands on framebuffer row 0, which samples as v = 0.
+// unshadowed path. UV flip: the renderer uses a flipped viewport (a negative
+// height), so NDC +Y lands on framebuffer row 0, which samples as v = 0.
 //
 // Decode-then-multiply: vertex color and texel are each sRGB-encoded, so each
 // is decoded to linear first and then multiplied (decoding the product washed
@@ -162,7 +161,7 @@ float shadow_factor(vec3 world_position, vec3 n)
         return 1.0;
     }
     vec3 suv = clip.xyz / clip.w;
-    // SDL_GPU viewports are Y-flipped on every backend: NDC +Y is row 0.
+    // The viewport is Y-flipped: NDC +Y is row 0.
     suv.xy = vec2(suv.x * 0.5 + 0.5, 0.5 - suv.y * 0.5);
     if (suv.x < 0.0 || suv.x > 1.0 || suv.y < 0.0 || suv.y > 1.0 ||
         suv.z < 0.0 || suv.z > 1.0) {

@@ -15,7 +15,7 @@ namespace lotus {
 /// The shape mirrors the renderer's occlusion fence: start the work, then poll
 /// it. There is deliberately no blocking accessor -- a caller that wants the
 /// result waits for poll() to say Ready, exactly as begin_frame never waits on
-/// SDL_QueryGPUFence.
+/// that fence.
 ///
 /// The parse runs on a worker and produces a whole Scene. The live scene is
 /// never touched by the worker; poll() moves the finished scene in on the

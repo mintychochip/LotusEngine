@@ -1,10 +1,7 @@
 // FXAA, SSAO and the editor viewport pass.
 //
-// Behavioural reference: src/gpu/sdlgpu/renderer_sdlgpu.cpp (ensure_fxaa_*,
-// fxaa_resolve, ensure_ssao_*, run_ssao_pass, resize_viewport,
-// begin/end_viewport_pass, capture_viewport_rgba, download_rgba,
-// resize_offscreen). Pass order, uniform contents, clear values and every
-// degradation message match it; the comments there explain why.
+// Pass order, uniform contents, clear values and every degradation message
+// are part of the pinned picture (see renderer_vulkan.hpp).
 
 #include "gpu/vulkan/renderer_vulkan.hpp"
 
@@ -120,8 +117,8 @@ std::vector<uint8_t> GpuRendererVulkan::download_image_rgba(
         vk::Image& image, vk::ImageState& state, uint32_t width,
         uint32_t height)
 {
-	// Like the reference: the GPU goes idle first, so no frame is still
-	// reading the target while it is copied out.
+	// The GPU goes idle first, so no frame is still reading the target while
+	// it is copied out.
 	wait_idle();
 	const uint64_t pitch_alignment =
 	        context_.properties.limits.optimalBufferCopyRowPitchAlignment;

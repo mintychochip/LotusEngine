@@ -1,11 +1,11 @@
 // Windowed-path tests for the Vulkan backend: swapchain acquire, scene
 // rendering in the swapchain format, present, capture and validation silence.
 //
-// Backend-agnostic: on other backends they skip. The surface comes from SDL's
-// offscreen video driver, which creates a VK_EXT_headless_surface one: Intel's
-// driver presents to it. NVIDIA does not, so init throws "no suitable Vulkan
-// device" there, and lavapipe cannot either (see SetUp). Both skip cleanly;
-// their swapchains are covered by running the windowed application.
+// The surface comes from SDL's offscreen video driver, which creates a
+// VK_EXT_headless_surface one: Intel's driver presents to it. NVIDIA does not,
+// so init throws "no suitable Vulkan device" there, and lavapipe cannot either
+// (see SetUp). Both skip cleanly; their swapchains are covered by running the
+// windowed application.
 
 #include <gtest/gtest.h>
 
@@ -28,11 +28,8 @@ using namespace lotus;
 
 namespace lotus {
 
-/// True when \p gpu is the Vulkan backend. Declared here, defined weakly by
-/// the smoke test (fallback) and strongly by the Vulkan backend.
-bool test_is_vulkan_backend(const GpuRenderer& gpu);
-
-/// Validation-layer messages reported so far. Same linkage as above.
+/// Validation-layer messages the renderer's context has counted so far; defined
+/// by the Vulkan backend as a test hook.
 uint32_t test_vulkan_validation_messages(const GpuRenderer& gpu);
 
 } // namespace lotus
@@ -60,9 +57,6 @@ protected:
 		ASSERT_TRUE(owned_sdl_) << SDL_GetError();
 
 		gpu_ = create_gpu_renderer();
-		if (!test_is_vulkan_backend(*gpu_)) {
-			GTEST_SKIP() << "not the Vulkan backend";
-		}
 		window_ = SDL_CreateWindow("lotus-vk-window-test", 320, 240,
 		                           SDL_WINDOW_VULKAN | SDL_WINDOW_HIDDEN);
 		ASSERT_NE(window_, nullptr) << SDL_GetError();

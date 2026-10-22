@@ -13,7 +13,7 @@ struct BoundingSphere {
 /// View frustum extracted from a view-projection matrix, used for
 /// bounding-sphere culling.
 ///
-/// Assumes a **zero-to-one** depth range (SDL_GPU / Vulkan / D3D), not
+/// Assumes a **zero-to-one** depth range (Vulkan / D3D), not
 /// OpenGL's minus-one-to-one: the near plane comes from row 2 alone. Feeding
 /// this an OpenGL-style projection would produce a wrong near plane.
 struct Frustum {

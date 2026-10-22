@@ -1,6 +1,6 @@
 # LotusEngine
 
-A small C++ game engine: ECS scenes, SDL GPU renderer with Hi-Z occlusion, Jolt
+A small C++ game engine: ECS scenes, a Vulkan renderer with Hi-Z occlusion, Jolt
 physics, transform animation, region streaming, Lua scripts, and an in-engine
 editor.
 
@@ -16,15 +16,9 @@ cd build && ./bin/lotus
 Working directory should be `build/` so `scenes/`, `assets/`, and `prefabs/`
 resolve correctly.
 
-The renderer backend is chosen at configure time with
-`-DLOTUS_GPU_BACKEND=sdlgpu|vulkan` (default `sdlgpu`). `vulkan` is the direct
-Vulkan 1.3 backend (dynamic rendering and synchronization2; nothing links
-libvulkan, entry points load through SDL); configure it in its own build
-directory:
-
-```bash
-cmake -B build_vk -G Ninja -DLOTUS_GPU_BACKEND=vulkan
-```
+Rendering uses Vulkan 1.3 directly (dynamic rendering and synchronization2;
+nothing links libvulkan, entry points load through SDL), so a Vulkan 1.3 device
+is required; lavapipe (software) is enough for the tests and headless runs.
 
 ### Sample hub (`scenes/main.json`)
 

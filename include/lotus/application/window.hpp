@@ -10,7 +10,7 @@
 
 namespace lotus {
 
-/// SDL window used with SDL3 GPU (Vulkan backend on Linux).
+/// SDL window the Vulkan renderer presents to.
 class Window {
 public:
 	Window(int width, int height, const std::string& title)
@@ -21,15 +21,11 @@ public:
 		if (!Global::flag(LOTUS_SDL_INITIALIZED)) {
 			throw std::runtime_error("SDL is not initialized");
 		}
-		// The raw-Vulkan backend creates its surface from this window, which
-		// needs the Vulkan flag; the SDL_GPU backend claims windows itself.
-#if defined(LOTUS_GPU_BACKEND_VULKAN)
+		// The renderer creates its Vulkan surface from this window, which
+		// needs the Vulkan flag.
 		constexpr SDL_WindowFlags flags =
 		        static_cast<SDL_WindowFlags>(SDL_WINDOW_RESIZABLE |
 		                                     SDL_WINDOW_VULKAN);
-#else
-		constexpr SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE;
-#endif
 		handle_ = SDL_CreateWindow(title.c_str(), width, height, flags);
 		if (!handle_) {
 			throw std::runtime_error(SDL_GetError());

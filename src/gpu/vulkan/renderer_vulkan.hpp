@@ -4,9 +4,12 @@
 // shadow/lit/sky passes, FXAA, SSAO, Hi-Z occlusion, the editor viewport
 // pass, the windowed swapchain (renderer_window.cpp) and the ImGui backend.
 //
-// Behavioural reference: src/gpu/sdlgpu/renderer_sdlgpu.cpp. Mesh-cache
-// semantics, pass order, uniform contents, clear values and degradation
-// messages match it; the comments there explain why.
+// The picture is pinned: `lotus_render_bench` compares its frame with
+// bench/golden/render_bench.png, and `--frame-hashes N` prints a per-frame
+// hash sequence for comparing two builds, which is what catches the
+// history-dependent state (the Hi-Z pyramid's one-frame lag, SSAO's lag,
+// frames in flight). Mesh-cache semantics, pass order, uniform contents, clear
+// values and degradation messages are part of that contract.
 //
 // Translation units, by concern:
 //   renderer_core.cpp      device, frame ring, targets, frame lifecycle, capture
@@ -18,11 +21,12 @@
 //   renderer_window.cpp    swapchain, present, ImGui backend
 //   factory.cpp            create_gpu_renderer()
 //
-// Descriptor sets keep the committed SPIR-V's numbers (sets 1/2/3 from SDL's
-// Vulkan backend), so the shader headers stay byte-identical: set 1 is the
-// vertex UBO (dynamic), set 2 the fragment samplers (albedo, shadow, SSAO),
-// set 3 the fragment UBO (dynamic). The pipeline layouts carry an empty set 0
-// so the indices line up. No push constants.
+// The shaders declare their uniforms at sets 1, 2 and 3 and leave set 0
+// empty. That numbering is part of the committed SPIR-V, and re-laying it out
+// is a deliberate change to be measured on its own (see the Vulkan backend
+// spec). Set 1 is the vertex UBO (dynamic), set 2 the fragment samplers
+// (albedo, shadow, SSAO), set 3 the fragment UBO (dynamic). The pipeline
+// layouts carry an empty set 0 so the indices line up. No push constants.
 
 #include <array>
 #include <cstdint>
@@ -335,7 +339,7 @@ private:
 	// --- FXAA -------------------------------------------------------------------
 	// The scene renders into fxaa_source_; end_scene_pass()/end_viewport_pass()
 	// resolve it onto the real target with a fullscreen triangle. Disabled or
-	// unavailable renders straight to the target, exactly as the reference.
+	// unavailable renders straight to the target.
 	vk::Image fxaa_source_;
 	vk::ImageState fxaa_source_state_;
 	uint32_t fxaa_width_{0};

@@ -200,8 +200,7 @@ bool DepthPyramid::occluded(const glm::mat4& view,
 	const float height_f = static_cast<float>(height_);
 	const float min_x = (screen_min.x * 0.5f + 0.5f) * width_f;
 	const float max_x = (screen_max.x * 0.5f + 0.5f) * width_f;
-	// Y is flipped. SDL's Vulkan backend sets a negative viewport height
-	// "for consistency with other backends" (SDL_gpu_vulkan.c:7366-7368), so
+	// Y is flipped. The renderer sets a negative viewport height, so
 	// ndc.y = +1 lands in framebuffer row 0, not row height-1. The pyramid is
 	// built from, and downloaded in, framebuffer order, so the conversion must
 	// flip too. Flipping also swaps the extremes, hence max feeds min_y.

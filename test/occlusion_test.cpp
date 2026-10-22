@@ -99,8 +99,8 @@ DepthPyramid split_wall_rows(uint32_t size, float depth)
 
 TEST(DepthPyramidOcclusion, VerticalSplitIsNotReadMirrored)
 {
-	// The wall covers rows [0, half) and the sky is below. SDL's Vulkan backend
-	// flips the viewport, so ndc.y = +1 is framebuffer row 0. A query that
+	// The wall covers rows [0, half) and the sky is below. The renderer flips
+	// the viewport, so ndc.y = +1 is framebuffer row 0. A query that
 	// forgot the flip would look the sphere up in the sky half, find nothing,
 	// and report it visible here -- and, worse, would cull a sphere that really
 	// is behind the wall. Both directions are checked below.
@@ -185,7 +185,7 @@ float world_offset_for_pixel(float target, uint32_t size, float view_depth)
 
 /// Same conversion as world_offset_for_pixel, but for the framebuffer ROW axis.
 ///
-/// SDL's Vulkan backend sets a negative viewport height, so framebuffer row 0
+/// The renderer sets a negative viewport height, so framebuffer row 0
 /// is ndc.y = +1 (the top of the image), the mirror of the left-to-right axis
 /// world_offset_for_pixel assumes. Row-targeted tests must use this, or they
 /// silently place their sphere in the opposite half of the image.

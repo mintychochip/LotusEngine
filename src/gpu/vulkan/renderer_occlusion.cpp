@@ -2,11 +2,10 @@
 // readback and its adoption as the CPU depth pyramid the next frame culls
 // against.
 //
-// Behavioural reference: src/gpu/sdlgpu/renderer_sdlgpu.cpp (record_pyramid,
-// poll_pyramid_fence, ensure_pyramid_texture, create_occlusion_pipeline).
-// Per-frame identity with the reference requires identical culling, so this
-// runs every frame the scene pass ran: the one-frame lag matches the
-// reference exactly (frame N culls against frame N-1's pyramid).
+// The reduction runs every frame the scene pass ran, so culling is the same
+// frame by frame: frame N culls against frame N-1's pyramid. That one-frame
+// lag is part of the contract (the per-frame hashes pin it), not an accident
+// of the readback.
 
 #include "gpu/vulkan/renderer_vulkan.hpp"
 
@@ -22,8 +21,8 @@ namespace {
 
 constexpr VkFormat kPyramidFormat = VK_FORMAT_R32_SFLOAT;
 
-/// Row pitch of the mip K download, matching the reference: D3D12 asks 256,
-/// so every backend pads to it.
+/// Row pitch alignment of the mip K download: 256, the strictest any API asks
+/// (D3D12), used on every device so the readback layout never depends on it.
 constexpr uint32_t kTransferRowAlignment = 256;
 
 uint32_t pyramid_levels()

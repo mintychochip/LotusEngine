@@ -2,9 +2,9 @@
 
 // Fullscreen-triangle vertex stage for the SSAO pass. No vertex buffers: the
 // triangle is generated from gl_VertexIndex, so the pipeline binds zero vertex
-// state. UVs follow the SDL_GPU sampling convention (v = 0.5 - ndc.y * 0.5:
-// every backend renders Y-flipped, so NDC +Y is framebuffer row 0, which
-// samples as v = 0). Same pattern as fxaa.vert.
+// state. UVs follow the renderer's Y-flipped viewport (a negative height): NDC
+// +Y is framebuffer row 0, which samples as v = 0, so v = 0.5 - ndc.y * 0.5.
+// Same pattern as fxaa.vert.
 
 layout(location = 0) out vec2 v_uv;
 

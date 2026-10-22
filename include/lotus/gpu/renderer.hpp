@@ -274,9 +274,9 @@ struct LightingSettings {
 	bool ssao_enabled{true};
 };
 
-/// Rendering backend interface. Every backend (SDL3-GPU, raw Vulkan,
-/// D3D12, D3D11) implements this contract; callers only ever touch this
-/// header and construct through create_gpu_renderer().
+/// Rendering backend interface. The Vulkan backend (src/gpu/vulkan/)
+/// implements this contract; callers only ever touch this header and
+/// construct through create_gpu_renderer().
 ///
 /// Frame stages (all on one command buffer):
 ///   begin_frame()  -> acquire command buffer + swapchain (+ depth resize)
@@ -517,7 +517,7 @@ public:
 
 };
 
-/// The backend this build selected (LOTUS_GPU_BACKEND). Never null.
+/// The renderer this build links: the Vulkan backend. Never null.
 std::unique_ptr<GpuRenderer> create_gpu_renderer();
 
 

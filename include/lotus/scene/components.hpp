@@ -158,7 +158,7 @@ struct BlobCaster {
 
 /// Perspective camera.
 ///
-/// SDL_GPU uses a zero-to-one depth range (D3D/Metal convention), so this uses
+/// Vulkan uses a zero-to-one depth range (as D3D and Metal do), so this uses
 /// glm's RH zero-to-one projection rather than the OpenGL default.
 struct Camera3D {
 	glm::vec3 position{3.0f, 2.5f, 4.0f};
